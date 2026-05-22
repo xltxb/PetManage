@@ -30,3 +30,22 @@ SESSION 0b — 技术栈更新 [2026-05-23]
 下一步: 运行 coding agent 开始实现 F001（项目骨架搭建）
 
 ================================================================================
+SESSION 1 — F001 项目骨架搭建 [2026-05-23 00:54 CST]
+================================================================================
+
+- 实现 internal/config/config.go: Config 结构体 + Load 函数，使用 yaml.v3 解析 config.yaml
+- 实现 pkg/logger/logger.go: zap Logger 封装，支持 debug/info/warn/error 日志级别
+- 重写 cmd/server/main.go:
+  - 从 config.yaml 加载配置（端口可配置）
+  - /health 健康检查端点返回 {"status":"ok"} (HTTP 200)
+  - 未匹配路径返回 JSON 404 {"error":"not found","path":"..."}
+  - 请求日志中间件：记录 method、path、status、duration
+- 端到端验证全部 5 个步骤通过:
+  ✓ go mod init 模块初始化确认
+  ✓ curl /health → 200 {"status":"ok"}
+  ✓ 修改 config.yaml 端口 → 重启后监听新端口
+  ✓ 不存在的路径 → 404 JSON 响应
+  ✓ 日志输出包含请求方法、路径、响应时间
+- 提交: 5606662 feat(F001): project skeleton — config loading, health check, JSON 404, request logging
+
+================================================================================

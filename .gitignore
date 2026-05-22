@@ -48,4 +48,4 @@ temp/
 # Frontend
 frontend/node_modules/
 frontend/dist/
-server
+/server

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -54,6 +55,16 @@ type LogConfig struct {
 	Level    string `yaml:"level"`
 	Output   string `yaml:"output"`
 	FilePath string `yaml:"file_path"`
+}
+
+// DSN builds a PostgreSQL connection string from database config.
+func (c *Config) DSN() string {
+	return "host=" + c.Database.Host +
+		" port=" + fmt.Sprintf("%d", c.Database.Port) +
+		" user=" + c.Database.User +
+		" password=" + c.Database.Password +
+		" dbname=" + c.Database.DBName +
+		" sslmode=disable"
 }
 
 func Load(path string) (*Config, error) {
