@@ -15,6 +15,7 @@ import (
 	"github.com/xltxb/PetManage/internal/config"
 	"github.com/xltxb/PetManage/internal/contract"
 	"github.com/xltxb/PetManage/internal/database"
+	"github.com/xltxb/PetManage/internal/dictionary"
 	"github.com/xltxb/PetManage/internal/merchant"
 	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/pkg/apperrors"
@@ -74,6 +75,9 @@ func main() {
 	// Initialize contract service.
 	contractService := contract.NewService(db, "uploads/contracts")
 
+	// Initialize dictionary service.
+	dictService := dictionary.NewService(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -103,6 +107,20 @@ func main() {
 	mux.Handle("GET /api/v1/contracts/merchant/{id}/current", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractCurrentHandler(contractService))))
 	mux.Handle("POST /api/v1/contracts/merchant/{id}/renew", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractRenewHandler(contractService))))
 	mux.Handle("GET /api/v1/contracts/reminders", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractRemindersHandler(contractService))))
+
+	// Dictionary management — Categories (auth-protected).
+	mux.Handle("POST /api/v1/dict/categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictCreateCategoryHandler(dictService))))
+	mux.Handle("GET /api/v1/dict/categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictListCategoriesHandler(dictService))))
+	mux.Handle("PUT /api/v1/dict/categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictUpdateCategoryHandler(dictService))))
+	mux.Handle("DELETE /api/v1/dict/categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictDeleteCategoryHandler(dictService))))
+	mux.Handle("POST /api/v1/dict/categories/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictToggleCategoryHandler(dictService))))
+
+	// Dictionary management — Breeds (auth-protected).
+	mux.Handle("POST /api/v1/dict/breeds", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictCreateBreedHandler(dictService))))
+	mux.Handle("GET /api/v1/dict/breeds", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictListBreedsHandler(dictService))))
+	mux.Handle("PUT /api/v1/dict/breeds/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictUpdateBreedHandler(dictService))))
+	mux.Handle("DELETE /api/v1/dict/breeds/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictDeleteBreedHandler(dictService))))
+	mux.Handle("POST /api/v1/dict/breeds/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictToggleBreedHandler(dictService))))
 
 	// Protected routes.
 	protected := http.NewServeMux()
@@ -855,6 +873,316 @@ func makeContractRemindersHandler(svc *contract.Service) http.HandlerFunc {
 				return
 			}
 			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get reminders", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// --- Dictionary handlers ---
+
+func makeDictCreateCategoryHandler(svc *dictionary.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		var req dictionary.CreateCategoryRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		// Determine if this is a merchant-level request.
+		// Platform admins (no merchant_id in claims or role_id <= super_admin) get merchantID=0.
+		merchantID := int64(0)
+		if claims.MerchantID != nil {
+			merchantID = *claims.MerchantID
+		}
+
+		cat, err := svc.CreateCategory(r.Context(), req, merchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create category", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(cat)
+	}
+}
+
+func makeDictListCategoriesHandler(svc *dictionary.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		merchantID := int64(0)
+		if claims.MerchantID != nil {
+			merchantID = *claims.MerchantID
+		}
+
+		cats, err := svc.ListCategories(r.Context(), merchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list categories", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"categories": cats,
+		})
+	}
+}
+
+func makeDictUpdateCategoryHandler(svc *dictionary.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid category id"))
+			return
+		}
+
+		var req dictionary.UpdateCategoryRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		merchantID := int64(0)
+		if claims.MerchantID != nil {
+			merchantID = *claims.MerchantID
+		}
+
+		cat, err := svc.UpdateCategory(r.Context(), id, req, merchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update category", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(cat)
+	}
+}
+
+func makeDictDeleteCategoryHandler(svc *dictionary.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid category id"))
+			return
+		}
+
+		merchantID := int64(0)
+		if claims.MerchantID != nil {
+			merchantID = *claims.MerchantID
+		}
+
+		if err := svc.DeleteCategory(r.Context(), id, merchantID); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to delete category", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "category deleted"})
+	}
+}
+
+func makeDictToggleCategoryHandler(svc *dictionary.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid category id"))
+			return
+		}
+
+		merchantID := int64(0)
+		if claims.MerchantID != nil {
+			merchantID = *claims.MerchantID
+		}
+
+		resp, err := svc.ToggleCategory(r.Context(), id, merchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to toggle category", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeDictCreateBreedHandler(svc *dictionary.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req dictionary.CreateBreedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		breed, err := svc.CreateBreed(r.Context(), req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create breed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(breed)
+	}
+}
+
+func makeDictListBreedsHandler(svc *dictionary.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		petType := r.URL.Query().Get("pet_type")
+
+		merchantID := int64(0)
+		if claims.MerchantID != nil {
+			merchantID = *claims.MerchantID
+		}
+
+		resp, err := svc.ListBreeds(r.Context(), petType, merchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list breeds", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeDictUpdateBreedHandler(svc *dictionary.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid breed id"))
+			return
+		}
+
+		var req dictionary.UpdateBreedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		breed, err := svc.UpdateBreed(r.Context(), id, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update breed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(breed)
+	}
+}
+
+func makeDictDeleteBreedHandler(svc *dictionary.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid breed id"))
+			return
+		}
+
+		if err := svc.DeleteBreed(r.Context(), id); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to delete breed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "breed deleted"})
+	}
+}
+
+func makeDictToggleBreedHandler(svc *dictionary.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid breed id"))
+			return
+		}
+
+		resp, err := svc.ToggleBreed(r.Context(), id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to toggle breed", err))
 			return
 		}
 

@@ -9,9 +9,10 @@ import (
 // Claims contains the JWT token claims for platform users.
 type Claims struct {
 	jwt.RegisteredClaims
-	UserID   int64  `json:"user_id"`
-	Username string `json:"username"`
-	RoleID   int64  `json:"role_id"`
+	UserID     int64  `json:"user_id"`
+	Username   string `json:"username"`
+	RoleID     int64  `json:"role_id"`
+	MerchantID *int64 `json:"merchant_id,omitempty"`
 }
 
 // TokenPair holds an access token and refresh token.
@@ -40,13 +41,13 @@ func NewJWTManager(secret string, accessTTL, refreshTTL int) *JWTManager {
 }
 
 // GenerateTokenPair creates both access and refresh tokens.
-func (m *JWTManager) GenerateTokenPair(userID int64, username string, roleID int64) (*TokenPair, error) {
-	accessToken, err := m.generateToken(userID, username, roleID, m.accessTokenTTL)
+func (m *JWTManager) GenerateTokenPair(userID int64, username string, roleID int64, merchantID *int64) (*TokenPair, error) {
+	accessToken, err := m.generateToken(userID, username, roleID, merchantID, m.accessTokenTTL)
 	if err != nil {
 		return nil, err
 	}
 
-	refreshToken, err := m.generateToken(userID, username, roleID, m.refreshTokenTTL)
+	refreshToken, err := m.generateToken(userID, username, roleID, merchantID, m.refreshTokenTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +60,7 @@ func (m *JWTManager) GenerateTokenPair(userID int64, username string, roleID int
 	}, nil
 }
 
-func (m *JWTManager) generateToken(userID int64, username string, roleID int64, ttl time.Duration) (string, error) {
+func (m *JWTManager) generateToken(userID int64, username string, roleID int64, merchantID *int64, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := &Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -67,9 +68,10 @@ func (m *JWTManager) generateToken(userID int64, username string, roleID int64, 
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 			Issuer:    "pet-manage",
 		},
-		UserID:   userID,
-		Username: username,
-		RoleID:   roleID,
+		UserID:     userID,
+		Username:   username,
+		RoleID:     roleID,
+		MerchantID: merchantID,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

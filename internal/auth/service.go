@@ -35,15 +35,16 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenPair, erro
 	var roleID int64
 	var mustChangePassword bool
 	var merchantStatus sql.NullString
+	var merchantID sql.NullInt64
 
 	err := s.db.QueryRowContext(ctx,
 		`SELECT u.id, u.username, u.password_hash, COALESCE(u.role_id, 0), COALESCE(u.must_change_password, false),
-			m.status
+			m.status, u.merchant_id
 		 FROM platform_users u
 		 LEFT JOIN merchants m ON u.merchant_id = m.id AND m.deleted_at IS NULL
 		 WHERE u.username = $1 AND u.deleted_at IS NULL AND u.status = 'active'`,
 		req.Username,
-	).Scan(&userID, &username, &passwordHash, &roleID, &mustChangePassword, &merchantStatus)
+	).Scan(&userID, &username, &passwordHash, &roleID, &mustChangePassword, &merchantStatus, &merchantID)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apperrors.AppError{
@@ -88,7 +89,7 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenPair, erro
 		userID,
 	)
 
-	tokenPair, err := s.jwt.GenerateTokenPair(userID, username, roleID)
+	tokenPair, err := s.jwt.GenerateTokenPair(userID, username, roleID, nullableToPtr(merchantID))
 	if err != nil {
 		return nil, &apperrors.AppError{
 			Code:    apperrors.CodeInternalError,
@@ -160,7 +161,14 @@ func (s *Service) RefreshToken(ctx context.Context, req RefreshRequest) (*TokenP
 		}
 	}
 
-	return s.jwt.GenerateTokenPair(claims.UserID, claims.Username, claims.RoleID)
+	return s.jwt.GenerateTokenPair(claims.UserID, claims.Username, claims.RoleID, claims.MerchantID)
+}
+
+func nullableToPtr(n sql.NullInt64) *int64 {
+	if n.Valid {
+		return &n.Int64
+	}
+	return nil
 }
 
 // ChangePasswordRequest is the change password request body.
