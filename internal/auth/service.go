@@ -34,13 +34,16 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenPair, erro
 	var passwordHash string
 	var roleID int64
 	var mustChangePassword bool
+	var merchantStatus sql.NullString
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, COALESCE(role_id, 0), COALESCE(must_change_password, false)
-		 FROM platform_users
-		 WHERE username = $1 AND deleted_at IS NULL AND status = 'active'`,
+		`SELECT u.id, u.username, u.password_hash, COALESCE(u.role_id, 0), COALESCE(u.must_change_password, false),
+			m.status
+		 FROM platform_users u
+		 LEFT JOIN merchants m ON u.merchant_id = m.id AND m.deleted_at IS NULL
+		 WHERE u.username = $1 AND u.deleted_at IS NULL AND u.status = 'active'`,
 		req.Username,
-	).Scan(&userID, &username, &passwordHash, &roleID, &mustChangePassword)
+	).Scan(&userID, &username, &passwordHash, &roleID, &mustChangePassword, &merchantStatus)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apperrors.AppError{
@@ -53,6 +56,22 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenPair, erro
 			Code:    apperrors.CodeInternalError,
 			Message: "authentication failed",
 			Err:     err,
+		}
+	}
+
+	// Check merchant status for merchant-level users.
+	if merchantStatus.Valid {
+		switch merchantStatus.String {
+		case "frozen":
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeMerchantFrozen,
+				Message: "merchant account has been frozen, please contact platform administrator",
+			}
+		case "closed":
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeMerchantClosed,
+				Message: "merchant account has been permanently closed",
+			}
 		}
 	}
 
@@ -102,15 +121,17 @@ func (s *Service) RefreshToken(ctx context.Context, req RefreshRequest) (*TokenP
 		}
 	}
 
-	// Verify the user still exists and is active.
-	var status string
+	// Verify the user still exists and is active, and check merchant status.
+	var userStatus string
+	var merchantStatus sql.NullString
 	err = s.db.QueryRowContext(ctx,
-		`SELECT status FROM platform_users
-		 WHERE id = $1 AND deleted_at IS NULL`,
+		`SELECT u.status, m.status FROM platform_users u
+		 LEFT JOIN merchants m ON u.merchant_id = m.id AND m.deleted_at IS NULL
+		 WHERE u.id = $1 AND u.deleted_at IS NULL`,
 		claims.UserID,
-	).Scan(&status)
+	).Scan(&userStatus, &merchantStatus)
 
-	if errors.Is(err, sql.ErrNoRows) || status != "active" {
+	if errors.Is(err, sql.ErrNoRows) || userStatus != "active" {
 		return nil, &apperrors.AppError{
 			Code:    apperrors.CodeUnauthorized,
 			Message: "user account is no longer active",
@@ -121,6 +142,21 @@ func (s *Service) RefreshToken(ctx context.Context, req RefreshRequest) (*TokenP
 			Code:    apperrors.CodeInternalError,
 			Message: "token refresh failed",
 			Err:     err,
+		}
+	}
+
+	if merchantStatus.Valid {
+		switch merchantStatus.String {
+		case "frozen":
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeMerchantFrozen,
+				Message: "merchant account has been frozen, please contact platform administrator",
+			}
+		case "closed":
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeMerchantClosed,
+				Message: "merchant account has been permanently closed",
+			}
 		}
 	}
 

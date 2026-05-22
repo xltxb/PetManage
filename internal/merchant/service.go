@@ -622,6 +622,275 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 	}, nil
 }
 
+// StatusControlRequest is the request body for freeze/unfreeze/close operations.
+type StatusControlRequest struct {
+	Reason string `json:"reason"`
+}
+
+// StatusControlResponse is returned after a status control operation.
+type StatusControlResponse struct {
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
+
+// OperationLogEntry is a single operation log record.
+type OperationLogEntry struct {
+	ID         int64  `json:"id"`
+	UserID     int64  `json:"user_id"`
+	Action     string `json:"action"`
+	TargetType string `json:"target_type"`
+	TargetID   int64  `json:"target_id"`
+	Detail     string `json:"detail,omitempty"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// Freeze sets a merchant's status to 'frozen' and records the operation.
+func (s *Service) Freeze(ctx context.Context, merchantID int64, reason string, operatorID int64) (*StatusControlResponse, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to begin transaction",
+			Err:     err,
+		}
+	}
+	defer tx.Rollback()
+
+	var status string
+	err = tx.QueryRowContext(ctx,
+		`SELECT status FROM merchants WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+		merchantID,
+	).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeNotFound,
+			Message: "merchant not found",
+		}
+	}
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to look up merchant",
+			Err:     err,
+		}
+	}
+	if status != "approved" {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeConflict,
+			Message: "only approved merchants can be frozen, current status: " + status,
+		}
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`UPDATE merchants SET status = 'frozen', updated_at = NOW() WHERE id = $1`,
+		merchantID,
+	)
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to freeze merchant",
+			Err:     err,
+		}
+	}
+
+	detail := map[string]string{"reason": reason}
+	detailJSON, _ := json.Marshal(detail)
+	if err := s.recordOperationTx(ctx, tx, operatorID, "freeze_merchant", "merchant", merchantID, detailJSON); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to commit freeze",
+			Err:     err,
+		}
+	}
+
+	return &StatusControlResponse{
+		Message: "merchant frozen successfully",
+		Status:  "frozen",
+	}, nil
+}
+
+// Unfreeze restores a merchant's status from 'frozen' to 'approved' and records the operation.
+func (s *Service) Unfreeze(ctx context.Context, merchantID int64, reason string, operatorID int64) (*StatusControlResponse, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to begin transaction",
+			Err:     err,
+		}
+	}
+	defer tx.Rollback()
+
+	var status string
+	err = tx.QueryRowContext(ctx,
+		`SELECT status FROM merchants WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+		merchantID,
+	).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeNotFound,
+			Message: "merchant not found",
+		}
+	}
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to look up merchant",
+			Err:     err,
+		}
+	}
+	if status != "frozen" {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeConflict,
+			Message: "only frozen merchants can be unfrozen, current status: " + status,
+		}
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`UPDATE merchants SET status = 'approved', updated_at = NOW() WHERE id = $1`,
+		merchantID,
+	)
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to unfreeze merchant",
+			Err:     err,
+		}
+	}
+
+	detail := map[string]string{"reason": reason}
+	detailJSON, _ := json.Marshal(detail)
+	if err := s.recordOperationTx(ctx, tx, operatorID, "unfreeze_merchant", "merchant", merchantID, detailJSON); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to commit unfreeze",
+			Err:     err,
+		}
+	}
+
+	return &StatusControlResponse{
+		Message: "merchant unfrozen successfully",
+		Status:  "approved",
+	}, nil
+}
+
+// Close permanently closes a merchant and records the operation.
+func (s *Service) Close(ctx context.Context, merchantID int64, reason string, operatorID int64) (*StatusControlResponse, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to begin transaction",
+			Err:     err,
+		}
+	}
+	defer tx.Rollback()
+
+	var status string
+	err = tx.QueryRowContext(ctx,
+		`SELECT status FROM merchants WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+		merchantID,
+	).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeNotFound,
+			Message: "merchant not found",
+		}
+	}
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to look up merchant",
+			Err:     err,
+		}
+	}
+	if status != "approved" && status != "frozen" {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeConflict,
+			Message: "only approved or frozen merchants can be closed, current status: " + status,
+		}
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`UPDATE merchants SET status = 'closed', updated_at = NOW() WHERE id = $1`,
+		merchantID,
+	)
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to close merchant",
+			Err:     err,
+		}
+	}
+
+	detail := map[string]string{"reason": reason}
+	detailJSON, _ := json.Marshal(detail)
+	if err := s.recordOperationTx(ctx, tx, operatorID, "close_merchant", "merchant", merchantID, detailJSON); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to commit close",
+			Err:     err,
+		}
+	}
+
+	return &StatusControlResponse{
+		Message: "merchant permanently closed",
+		Status:  "closed",
+	}, nil
+}
+
+// GetOperationLogs returns operation logs for a specific merchant.
+func (s *Service) GetOperationLogs(ctx context.Context, merchantID int64) ([]OperationLogEntry, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, user_id, action, target_type, target_id, COALESCE(detail::text, ''), created_at
+		 FROM operation_logs
+		 WHERE target_type = 'merchant' AND target_id = $1
+		 ORDER BY created_at DESC`,
+		merchantID,
+	)
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to query operation logs",
+			Err:     err,
+		}
+	}
+	defer rows.Close()
+
+	var logs []OperationLogEntry
+	for rows.Next() {
+		var entry OperationLogEntry
+		var createdAt time.Time
+		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.Action,
+			&entry.TargetType, &entry.TargetID, &entry.Detail, &createdAt); err != nil {
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeInternalError,
+				Message: "failed to scan operation log",
+				Err:     err,
+			}
+		}
+		entry.CreatedAt = createdAt.Format(time.RFC3339)
+		logs = append(logs, entry)
+	}
+
+	if logs == nil {
+		logs = []OperationLogEntry{}
+	}
+	return logs, nil
+}
+
 func validateRequired(req ApplyRequest) []string {
 	var missing []string
 	if strings.TrimSpace(req.Name) == "" {

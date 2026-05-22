@@ -87,6 +87,12 @@ func main() {
 	mux.Handle("POST /api/v1/merchants/{id}/reject", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRejectHandler(merchantService))))
 	mux.Handle("PUT /api/v1/merchants/{id}/apply", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantResubmitHandler(merchantService))))
 
+	// Merchant status control (auth-protected).
+	mux.Handle("POST /api/v1/merchants/{id}/freeze", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantFreezeHandler(merchantService))))
+	mux.Handle("POST /api/v1/merchants/{id}/unfreeze", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantUnfreezeHandler(merchantService))))
+	mux.Handle("POST /api/v1/merchants/{id}/close", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantCloseHandler(merchantService))))
+	mux.Handle("GET /api/v1/operation-logs/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantLogsHandler(merchantService))))
+
 	// Protected routes.
 	protected := http.NewServeMux()
 	protected.HandleFunc("/api/v1/demo/protected", demoProtectedHandler)
@@ -515,5 +521,158 @@ func makeMerchantResubmitHandler(svc *merchant.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeMerchantFreezeHandler(svc *merchant.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid merchant id"))
+			return
+		}
+
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		if strings.TrimSpace(body.Reason) == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("freeze reason is required"))
+			return
+		}
+
+		resp, err := svc.Freeze(r.Context(), id, body.Reason, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("freeze failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeMerchantUnfreezeHandler(svc *merchant.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid merchant id"))
+			return
+		}
+
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		if strings.TrimSpace(body.Reason) == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("unfreeze reason is required"))
+			return
+		}
+
+		resp, err := svc.Unfreeze(r.Context(), id, body.Reason, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("unfreeze failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeMerchantCloseHandler(svc *merchant.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid merchant id"))
+			return
+		}
+
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		if strings.TrimSpace(body.Reason) == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("close reason is required"))
+			return
+		}
+
+		resp, err := svc.Close(r.Context(), id, body.Reason, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("close failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeMerchantLogsHandler(svc *merchant.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid merchant id"))
+			return
+		}
+
+		logs, err := svc.GetOperationLogs(r.Context(), id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to retrieve operation logs", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"logs":  logs,
+			"total": len(logs),
+		})
 	}
 }

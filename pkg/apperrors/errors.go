@@ -16,7 +16,9 @@ const (
 	CodeInternalError     = "INTERNAL_ERROR"
 	CodeInvalidCredentials = "INVALID_CREDENTIALS"
 	CodeTokenExpired      = "TOKEN_EXPIRED"
-	CodeDuplicateLicense  = "DUPLICATE_LICENSE"
+	CodeDuplicateLicense = "DUPLICATE_LICENSE"
+	CodeMerchantFrozen   = "MERCHANT_FROZEN"
+	CodeMerchantClosed   = "MERCHANT_CLOSED"
 )
 
 var codeToStatus = map[string]int{
@@ -28,7 +30,9 @@ var codeToStatus = map[string]int{
 	CodeInternalError:     http.StatusInternalServerError,
 	CodeInvalidCredentials: http.StatusUnauthorized,
 	CodeTokenExpired:      http.StatusUnauthorized,
-	CodeDuplicateLicense:  http.StatusConflict,
+	CodeDuplicateLicense: http.StatusConflict,
+	CodeMerchantFrozen:   http.StatusForbidden,
+	CodeMerchantClosed:   http.StatusForbidden,
 }
 
 // AppError is a structured application error.
