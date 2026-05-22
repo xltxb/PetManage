@@ -23,6 +23,7 @@ import (
 	"github.com/xltxb/PetManage/internal/contract"
 	"github.com/xltxb/PetManage/internal/dashboard"
 	"github.com/xltxb/PetManage/internal/database"
+	"github.com/xltxb/PetManage/internal/employee"
 	"github.com/xltxb/PetManage/internal/dictionary"
 	"github.com/xltxb/PetManage/internal/merchant"
 	"github.com/xltxb/PetManage/internal/middleware"
@@ -139,6 +140,9 @@ func main() {
 	// Initialize pet service.
 	petService := pet.NewService(db)
 
+	// Initialize employee service.
+	employeeService := employee.NewService(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -235,6 +239,14 @@ func main() {
 	mux.Handle("GET /api/v1/merchant/members/{id}/pets/{petId}", middleware.Auth(jwtManager)(http.HandlerFunc(makePetGetHandler(petService))))
 	mux.Handle("PUT /api/v1/merchant/members/{id}/pets/{petId}", middleware.Auth(jwtManager)(http.HandlerFunc(makePetUpdateHandler(petService))))
 	mux.Handle("DELETE /api/v1/merchant/members/{id}/pets/{petId}", middleware.Auth(jwtManager)(http.HandlerFunc(makePetDeleteHandler(petService))))
+
+	// Employee management (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/employees", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeCreateHandler(employeeService))))
+	mux.Handle("GET /api/v1/merchant/employees", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeListHandler(employeeService))))
+	mux.Handle("GET /api/v1/merchant/employees/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeGetHandler(employeeService))))
+	mux.Handle("PUT /api/v1/merchant/employees/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeUpdateHandler(employeeService))))
+	mux.Handle("POST /api/v1/merchant/employees/{id}/resign", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeResignHandler(employeeService))))
+	mux.Handle("POST /api/v1/merchant/employees/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeToggleStatusHandler(employeeService))))
 
 	// Checkout (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService))))
@@ -4393,5 +4405,221 @@ func makePetDeleteHandler(svc *pet.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"message": "pet deleted"})
+	}
+}
+
+// --- Employee handlers ---
+
+func makeEmployeeCreateHandler(svc *employee.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		var req employee.CreateEmployeeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		e, err := svc.Create(r.Context(), *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create employee", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(e)
+	}
+}
+
+func makeEmployeeListHandler(svc *employee.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+
+		params := employee.ListParams{
+			Status:   r.URL.Query().Get("status"),
+			Position: r.URL.Query().Get("position"),
+			Keyword:  r.URL.Query().Get("keyword"),
+			Page:     page,
+			PageSize: pageSize,
+		}
+
+		resp, err := svc.List(r.Context(), *claims.MerchantID, params)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list employees", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeEmployeeGetHandler(svc *employee.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid employee id"))
+			return
+		}
+
+		e, err := svc.GetByID(r.Context(), *claims.MerchantID, id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get employee", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(e)
+	}
+}
+
+func makeEmployeeUpdateHandler(svc *employee.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid employee id"))
+			return
+		}
+
+		var req employee.UpdateEmployeeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		e, err := svc.Update(r.Context(), *claims.MerchantID, id, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update employee", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(e)
+	}
+}
+
+func makeEmployeeResignHandler(svc *employee.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid employee id"))
+			return
+		}
+
+		e, err := svc.Resign(r.Context(), *claims.MerchantID, id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to resign employee", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(e)
+	}
+}
+
+func makeEmployeeToggleStatusHandler(svc *employee.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid employee id"))
+			return
+		}
+
+		e, err := svc.ToggleStatus(r.Context(), *claims.MerchantID, id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to toggle employee status", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(e)
 	}
 }
