@@ -23,6 +23,36 @@ const router = createRouter({
       name: 'merchant',
       component: () => import('@/views/MerchantDashboard.vue'),
     },
+    {
+      path: '/merchant/products',
+      name: 'merchant-products',
+      component: () => import('@/views/Placeholder.vue'),
+    },
+    {
+      path: '/merchant/orders',
+      name: 'merchant-orders',
+      component: () => import('@/views/Placeholder.vue'),
+    },
+    {
+      path: '/merchant/appointments',
+      name: 'merchant-appointments',
+      component: () => import('@/views/Placeholder.vue'),
+    },
+    {
+      path: '/merchant/members',
+      name: 'merchant-members',
+      component: () => import('@/views/Placeholder.vue'),
+    },
+    {
+      path: '/merchant/inventory',
+      name: 'merchant-inventory',
+      component: () => import('@/views/Placeholder.vue'),
+    },
+    {
+      path: '/merchant/services',
+      name: 'merchant-services',
+      component: () => import('@/views/Placeholder.vue'),
+    },
   ],
 })
 

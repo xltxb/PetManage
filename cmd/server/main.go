@@ -122,6 +122,9 @@ func main() {
 	// Dashboard routes (auth-protected).
 	mux.Handle("GET /api/v1/dashboard/overview", middleware.Auth(jwtManager)(http.HandlerFunc(makeDashboardOverviewHandler(dashboardService))))
 
+	// Merchant dashboard routes (auth-protected).
+	mux.Handle("GET /api/v1/merchant/dashboard", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantDashboardHandler(merchantService))))
+
 	// Contract management (auth-protected).
 	mux.Handle("POST /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractUploadHandler(contractService))))
 	mux.Handle("GET /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractListHandler(contractService))))
@@ -1855,6 +1858,31 @@ func makeUserAssignRoleHandler(svc *role.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"message": "role assigned successfully"})
+	}
+}
+
+// --- Merchant dashboard handler ---
+
+func makeMerchantDashboardHandler(svc *merchant.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		resp, err := svc.GetDashboard(r.Context(), *claims.MerchantID)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get merchant dashboard", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 

@@ -107,6 +107,21 @@ class ApiClient {
     this.setToken(null)
   }
 
+  getMerchantDashboard() {
+    return this.request<{
+      today_revenue: number
+      today_orders: number
+      today_new_members: number
+      today_appointments: number
+      today_service_complete: number
+      stock_warnings: number
+      pending_appointments: number
+      birthday_reminders: number
+      revenue_trend: number[]
+      merchant_id: number
+    }>('/api/v1/merchant/dashboard')
+  }
+
   getDashboardOverview(period = 'all') {
     return this.request<{
       total_merchants: number
