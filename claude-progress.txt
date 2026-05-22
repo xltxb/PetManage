@@ -209,3 +209,23 @@ SESSION 7 — F007 商户入驻审核 [2026-05-23 01:39 CST]
   ✓ 重新提交 → status 变回 "pending"，更新信息生效，old review_remark 清除
   ✓ 操作日志记录: operation_logs 含 4 条记录(approve/reject/approve/resubmit)，包含 user_id, action, detail, created_at
 - 提交: 22856de feat(F007): merchant application review — approve, reject with reason, resubmit, audit log
+
+================================================================================
+SESSION 8 — F008 商户列表与管理 [2026-05-23 01:43 CST]
+================================================================================
+
+- 在 internal/merchant/service.go 新增 List 方法:
+  - 支持关键字搜索 (name ILIKE '%keyword%')
+  - 支持状态筛选 (pending/approved/rejected/frozen)
+  - 支持分页 (page, page_size, 默认20, 最大100)
+  - 按 created_at DESC 排序
+  - 返回 ListResponse {merchants, total, page, page_size}
+- 在 cmd/server/main.go 注册 GET /api/v1/merchants (需认证)
+  - 通过 query params 传递 keyword, status, page, page_size
+- 端到端验证全部 5 个步骤通过:
+  ✓ 商户列表按入驻时间倒序排列 (6 条 merchant 按 DESC 排列)
+  ✓ 按商户名称关键字搜索 (keyword=月亮 → 2 条匹配)
+  ✓ 按状态筛选 (pending=2, approved=3, rejected=1, frozen=0)
+  ✓ 分页查询 (page_size=2, page=2 → 返回第 2 页 2 条, total=6)
+  ✓ 点击商户查看详情 (基础信息、经营状态、入驻时间齐全)
+- 提交: 26e7e96 feat(F008): merchant list and management — search, filter by status, pagination
