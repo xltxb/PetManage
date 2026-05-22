@@ -255,3 +255,40 @@ SESSION 9 — F009 商户状态管控 [2026-05-23 01:53 CST]
   ✓ 每次状态变更记录操作日志: freeze_merchant/unfreeze_merchant/close_merchant，detail JSONB 含 reason
   ✓ 商户违规历史可查询: /api/v1/operation-logs/merchant/9 返回 4 条日志
 - 提交: 62a02ba feat(F009): merchant status control — freeze, unfreeze, close with audit logging
+
+================================================================================
+SESSION 10 — F010 商户合同管理 [2026-05-23 02:03 CST]
+================================================================================
+
+- 创建迁移 007: merchant_contracts 表
+  - 字段: merchant_id (FK), contract_number, file_name, file_path, file_size,
+    start_date, end_date, status (active/expired), is_current, prev_contract_id,
+    uploaded_by, created_at, updated_at, deleted_at
+  - 部分唯一索引: (merchant_id, is_current) WHERE is_current = true 保证每商户只有一个当前合同
+- 创建 internal/contract/service.go:
+  - Upload: 接收 multipart/form-data (contract_number, start_date, end_date, file),
+    验证商户状态(approved)，保存文件到 uploads/contracts/{merchant_id}/，
+    事务内设置 is_current=true + 记录操作日志
+  - List: 按创建时间倒序查询，自动计算 days_remaining 和 expiry_reminder (7天内)
+  - GetCurrent: 查询当前生效合同，含到期天数与提醒标志
+  - Renew: 上传新合同，事务内将旧合同标记为 expired+is_current=false，
+    新合同链入 prev_contract_id，操作日志记录续签动作
+  - GetReminders: 查询所有 active + is_current 且 end_date 在 7 天内的合同
+- 更新 internal/merchant/service.go:
+  - ApplicationDetail/MerchantSummary 新增 contract_status 字段
+  - GetByID/List 使用 LEFT JOIN merchant_contracts 获取合同状态
+- 更新 cmd/server/main.go:
+  - POST /api/v1/contracts/merchant/{id} — 上传合同 (multipart)
+  - GET /api/v1/contracts/merchant/{id} — 合同列表
+  - GET /api/v1/contracts/merchant/{id}/current — 当前合同
+  - POST /api/v1/contracts/merchant/{id}/renew — 续签合同
+  - GET /api/v1/contracts/reminders — 到期提醒列表
+  - 注意: 使用 /api/v1/contracts/ 前缀避免与 /api/v1/merchants/apply/{id} 路由冲突
+- 端到端验证全部 5 个步骤通过:
+  ✓ 上传合同文件 → 保存成功，文件写入 uploads/contracts/ 目录
+  ✓ 合同有效期设置 + 到期前7天提醒 → expiry_reminder:true, days_remaining:6
+  ✓ 合同过期 → 商户详情/列表显示 contract_status:"expired"
+  ✓ 合同续签 → 新合同 is_current，prev_contract_id 链接旧合同，
+    contract_status 变回 active
+  ✓ 合同历史可追溯 → 按时间倒序列出所有合同，含 prev_contract_id 链
+- 提交: 73d6940 feat(F010): merchant contract management — upload, validity period, expiry reminders, renewal, history
