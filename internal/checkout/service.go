@@ -3,6 +3,7 @@ package checkout
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strconv"
 	"time"
 
@@ -11,8 +12,9 @@ import (
 
 // CheckoutItem represents a single item in the checkout.
 type CheckoutItem struct {
-	ProductID int64 `json:"product_id"`
-	Quantity  int   `json:"quantity"`
+	ProductID int64  `json:"product_id"`
+	SkuID     *int64 `json:"sku_id"`
+	Quantity  int    `json:"quantity"`
 }
 
 // CheckoutPayment represents a payment in the checkout.
@@ -42,10 +44,12 @@ type CheckoutResponse struct {
 
 // OrderItemDetail is an item in the order response.
 type OrderItemDetail struct {
-	ProductID   int64  `json:"product_id"`
-	ProductName string `json:"product_name"`
-	PriceCents  int    `json:"price_cents"`
-	Quantity    int    `json:"quantity"`
+	ProductID   int64             `json:"product_id"`
+	ProductName string            `json:"product_name"`
+	SkuID       *int64            `json:"sku_id,omitempty"`
+	SkuSpecInfo map[string]string `json:"sku_spec_info,omitempty"`
+	PriceCents  int               `json:"price_cents"`
+	Quantity    int               `json:"quantity"`
 }
 
 // PaymentDetail is a payment in the order response.
@@ -79,7 +83,7 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 	}
 	defer tx.Rollback()
 
-	// Calculate total and validate products.
+	// Calculate total and validate products/SKUs.
 	var totalCents int
 	var itemDetails []OrderItemDetail
 	for _, item := range req.Items {
@@ -90,25 +94,53 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 		var priceCents int
 		var name string
 		var stock int
-		err := tx.QueryRowContext(ctx,
-			`SELECT name, price_cents, stock FROM products
-			 WHERE id = $1 AND merchant_id = $2 AND status = 'active' AND deleted_at IS NULL
-			 FOR UPDATE`, item.ProductID, merchantID,
-		).Scan(&name, &priceCents, &stock)
-		if err == sql.ErrNoRows {
-			return nil, apperrors.NewNotFoundError("product not found or inactive: " + strconv.FormatInt(item.ProductID, 10))
-		}
-		if err != nil {
-			return nil, apperrors.NewInternalError("failed to query product", err)
+		var skuSpecInfo map[string]string
+
+		if item.SkuID != nil {
+			// SKU-based item: query product_skus.
+			var specJSON []byte
+			err := tx.QueryRowContext(ctx,
+				`SELECT ps.price_cents, ps.stock, ps.spec_info, p.name
+				 FROM product_skus ps
+				 JOIN products p ON p.id = ps.product_id
+				 WHERE ps.id = $1 AND ps.status = 'active' AND ps.deleted_at IS NULL
+				   AND p.merchant_id = $2 AND p.status = 'active' AND p.deleted_at IS NULL
+				 FOR UPDATE OF ps`,
+				*item.SkuID, merchantID,
+			).Scan(&priceCents, &stock, &specJSON, &name)
+			if err == sql.ErrNoRows {
+				return nil, apperrors.NewNotFoundError("SKU not found or inactive: " + strconv.FormatInt(*item.SkuID, 10))
+			}
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to query SKU", err)
+			}
+			if specJSON != nil {
+				json.Unmarshal(specJSON, &skuSpecInfo)
+			}
+		} else {
+			// Product-level item: query products.
+			err := tx.QueryRowContext(ctx,
+				`SELECT name, price_cents, stock FROM products
+				 WHERE id = $1 AND merchant_id = $2 AND status = 'active' AND deleted_at IS NULL
+				 FOR UPDATE`, item.ProductID, merchantID,
+			).Scan(&name, &priceCents, &stock)
+			if err == sql.ErrNoRows {
+				return nil, apperrors.NewNotFoundError("product not found or inactive: " + strconv.FormatInt(item.ProductID, 10))
+			}
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to query product", err)
+			}
 		}
 		if stock < item.Quantity {
-			return nil, apperrors.NewValidationError("insufficient stock for product: " + name)
+			return nil, apperrors.NewValidationError("insufficient stock for: " + name)
 		}
 
 		totalCents += priceCents * item.Quantity
 		itemDetails = append(itemDetails, OrderItemDetail{
 			ProductID:   item.ProductID,
 			ProductName: name,
+			SkuID:       item.SkuID,
+			SkuSpecInfo: skuSpecInfo,
 			PriceCents:  priceCents,
 			Quantity:    item.Quantity,
 		})
@@ -150,34 +182,68 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 	}
 
 	// Create order items, deduct inventory, record stock flows.
-	for _, item := range req.Items {
-		_, err := tx.ExecContext(ctx,
-			`INSERT INTO order_items (order_id, product_id, product_name, price_cents, quantity)
-			 SELECT $1, $2, name, price_cents, $3 FROM products WHERE id = $2`,
-			orderID, item.ProductID, item.Quantity,
-		)
-		if err != nil {
-			return nil, apperrors.NewInternalError("failed to create order item", err)
+	for i, item := range req.Items {
+		detail := itemDetails[i]
+
+		var skuSpecJSON []byte
+		if detail.SkuSpecInfo != nil {
+			skuSpecJSON, _ = json.Marshal(detail.SkuSpecInfo)
 		}
 
-		// Deduct inventory.
-		_, err = tx.ExecContext(ctx,
-			`UPDATE products SET stock = stock - $1, updated_at = NOW()
-			 WHERE id = $2 AND merchant_id = $3`,
-			item.Quantity, item.ProductID, merchantID,
-		)
-		if err != nil {
-			return nil, apperrors.NewInternalError("failed to deduct inventory", err)
-		}
+		if item.SkuID != nil {
+			_, err := tx.ExecContext(ctx,
+				`INSERT INTO order_items (order_id, product_id, product_name, price_cents, quantity, product_sku_id, sku_spec_info)
+				 SELECT $1, $2, name, $3, $4, $5, $6 FROM products WHERE id = $2`,
+				orderID, item.ProductID, detail.PriceCents, item.Quantity, *item.SkuID, skuSpecJSON,
+			)
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to create order item", err)
+			}
 
-		// Record stock flow.
-		_, err = tx.ExecContext(ctx,
-			`INSERT INTO stock_flows (merchant_id, product_id, order_id, type, quantity_change)
-			 VALUES ($1, $2, $3, 'sale', $4)`,
-			merchantID, item.ProductID, orderID, -item.Quantity,
-		)
-		if err != nil {
-			return nil, apperrors.NewInternalError("failed to record stock flow", err)
+			_, err = tx.ExecContext(ctx,
+				`UPDATE product_skus SET stock = stock - $1, updated_at = NOW()
+				 WHERE id = $2`,
+				item.Quantity, *item.SkuID,
+			)
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to deduct SKU inventory", err)
+			}
+
+			_, err = tx.ExecContext(ctx,
+				`INSERT INTO stock_flows (merchant_id, product_id, product_sku_id, order_id, type, quantity_change)
+				 VALUES ($1, $2, $3, $4, 'sale', $5)`,
+				merchantID, item.ProductID, *item.SkuID, orderID, -item.Quantity,
+			)
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to record stock flow", err)
+			}
+		} else {
+			_, err := tx.ExecContext(ctx,
+				`INSERT INTO order_items (order_id, product_id, product_name, price_cents, quantity)
+				 SELECT $1, $2, name, $3, $4 FROM products WHERE id = $2`,
+				orderID, item.ProductID, detail.PriceCents, item.Quantity,
+			)
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to create order item", err)
+			}
+
+			_, err = tx.ExecContext(ctx,
+				`UPDATE products SET stock = stock - $1, updated_at = NOW()
+				 WHERE id = $2 AND merchant_id = $3`,
+				item.Quantity, item.ProductID, merchantID,
+			)
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to deduct inventory", err)
+			}
+
+			_, err = tx.ExecContext(ctx,
+				`INSERT INTO stock_flows (merchant_id, product_id, order_id, type, quantity_change)
+				 VALUES ($1, $2, $3, 'sale', $4)`,
+				merchantID, item.ProductID, orderID, -item.Quantity,
+			)
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to record stock flow", err)
+			}
 		}
 	}
 

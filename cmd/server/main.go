@@ -163,12 +163,19 @@ func main() {
 	mux.Handle("POST /api/v1/merchant/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductCreateHandler(productService))))
 	mux.Handle("GET /api/v1/merchant/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductListHandler(productService))))
 	mux.Handle("POST /api/v1/merchant/products/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductToggleStatusHandler(productService))))
-		mux.Handle("GET /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductGetHandler(productService))))
-		mux.Handle("PUT /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductUpdateHandler(productService))))
-		mux.Handle("DELETE /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductDeleteHandler(productService))))
+	mux.Handle("GET /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductGetHandler(productService))))
+	mux.Handle("PUT /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductUpdateHandler(productService))))
+	mux.Handle("DELETE /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductDeleteHandler(productService))))
 
+	// SKU management (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/products/{id}/skus", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuCreateHandler(productService))))
+	mux.Handle("GET /api/v1/merchant/products/{id}/skus", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuListHandler(productService))))
+	mux.Handle("GET /api/v1/merchant/products/{id}/skus/{skuId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuGetHandler(productService))))
+	mux.Handle("PUT /api/v1/merchant/products/{id}/skus/{skuId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuUpdateHandler(productService))))
+	mux.Handle("DELETE /api/v1/merchant/products/{id}/skus/{skuId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuDeleteHandler(productService))))
+	mux.Handle("POST /api/v1/merchant/products/{id}/skus/{skuId}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuToggleStatusHandler(productService))))
 
-		// Category management (auth-protected, merchant-only).
+	// Category management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeCategoryCreateHandler(categoryService))))
 		mux.Handle("GET /api/v1/merchant/categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeCategoryListHandler(categoryService))))
 		mux.Handle("PUT /api/v1/merchant/categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeCategoryUpdateHandler(categoryService))))
@@ -2305,7 +2312,7 @@ func makeProductGetHandler(svc *product.Service) http.HandlerFunc {
 			return
 		}
 
-		p, err := svc.GetByID(r.Context(), id, *claims.MerchantID)
+		p, err := svc.GetByIDWithSKUs(r.Context(), id, *claims.MerchantID)
 		if err != nil {
 			if appErr, ok := err.(*apperrors.AppError); ok {
 				apperrors.WriteError(w, r, appErr)
@@ -2424,6 +2431,227 @@ func makeProductToggleStatusHandler(svc *product.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(p)
+	}
+}
+
+// --- SKU handlers ---
+
+func makeSkuCreateHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		productID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || productID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid product id"))
+			return
+		}
+
+		var req product.CreateSkuRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		sku, err := svc.CreateSKU(r.Context(), productID, *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create SKU", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(sku)
+	}
+}
+
+func makeSkuListHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		productID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || productID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid product id"))
+			return
+		}
+
+		skus, err := svc.ListSKUs(r.Context(), productID, *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list SKUs", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"skus":  skus,
+			"total": len(skus),
+		})
+	}
+}
+
+func makeSkuGetHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		skuIDStr := r.PathValue("skuId")
+		skuID, err := strconv.ParseInt(skuIDStr, 10, 64)
+		if err != nil || skuID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid SKU id"))
+			return
+		}
+
+		sku, err := svc.GetSKU(r.Context(), skuID, *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get SKU", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sku)
+	}
+}
+
+func makeSkuUpdateHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		skuIDStr := r.PathValue("skuId")
+		skuID, err := strconv.ParseInt(skuIDStr, 10, 64)
+		if err != nil || skuID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid SKU id"))
+			return
+		}
+
+		var req product.UpdateSkuRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		sku, err := svc.UpdateSKU(r.Context(), skuID, *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update SKU", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sku)
+	}
+}
+
+func makeSkuDeleteHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		skuIDStr := r.PathValue("skuId")
+		skuID, err := strconv.ParseInt(skuIDStr, 10, 64)
+		if err != nil || skuID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid SKU id"))
+			return
+		}
+
+		if err := svc.DeleteSKU(r.Context(), skuID, *claims.MerchantID); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to delete SKU", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "SKU deleted"})
+	}
+}
+
+func makeSkuToggleStatusHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		skuIDStr := r.PathValue("skuId")
+		skuID, err := strconv.ParseInt(skuIDStr, 10, 64)
+		if err != nil || skuID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid SKU id"))
+			return
+		}
+
+		sku, err := svc.ToggleSKUStatus(r.Context(), skuID, *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to toggle SKU status", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sku)
 	}
 }
 

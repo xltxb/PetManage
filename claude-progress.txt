@@ -731,3 +731,71 @@ SESSION 24 — F023 商品分类管理 [2026-05-23 04:14 CST]
   ✓ 编辑分类名称，子分类不受影响（子分类仍在 children 中）
   ✓ 删除前检查：有关联商品→拒删提示；有子分类→拒删提示；无关联→删除成功
 - 提交: 522f908 feat(F023): merchant product category management
+
+================================================================================
+SESSION 25 — F024 商品档案CRUD [2026-05-23 04:24 CST]
+================================================================================
+
+- 迁移 015: products 表新增 brand, specification, alert_stock, expiry_date 列
+- 重写 internal/product/service.go:
+  - Product/CreateProductRequest 结构体新增 Brand, Specification, AlertStock, ExpiryDate, CategoryID 字段
+  - 新增 UpdateProductRequest (部分更新) 和 ListParams (搜索+分页)
+  - 新增 GetByID, Update (仅更新非nil字段), Delete (软删除)
+  - Delete 前置检查: stock > 0 拒删, 有未退款订单 (completed) 拒删
+  - List 支持 keyword (条码/名称 ILIKE 搜索), status 过滤, page/page_size 分页
+  - List 返回 ListResult (含 total, page, page_size)
+- 新增 3 个 API 端点:
+  - GET /api/v1/merchant/products/{id} — 商品详情
+  - PUT /api/v1/merchant/products/{id} — 编辑商品（部分更新）
+  - DELETE /api/v1/merchant/products/{id} — 删除商品（含库存和订单检查）
+- 前端:
+  - api/client.ts: 新增 getProducts, getProduct, createProduct, updateProduct, deleteProduct, toggleProductStatus
+  - MerchantProducts.vue: 完整商品管理页面（表格展示、条码/名称搜索、新建/编辑对话框、上架/下架、删除确认）
+  - 路由更新: /merchant/products → MerchantProducts.vue
+- 修复: platform_users 表缺失 must_change_password 列导致商户登录失败
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建商品（完整字段：条码、名称、品牌、规格、售价、进价、库存、预警值、有效期）
+  ✓ 商品列表按创建时间倒序，支持条码/名称搜索
+  ✓ 编辑商品售价（258→288元），其他字段不变
+  ✓ 上架/下架切换（active ↔ inactive）
+  ✓ 删除前检查：有库存→拒删；有未完成订单→拒删；清空库存且无订单→删除成功
+- 提交: 56eb5a1 feat(F024): product archive CRUD
+
+================================================================================
+SESSION 26 — F025 商品多规格管理 [2026-05-23 04:37 CST]
+================================================================================
+
+- 创建迁移 016: product_skus 表（product_id FK, sku_code, spec_info JSONB, price/cost/stock/alert_stock/status）
+- order_items 表新增 product_sku_id 和 sku_spec_info 列
+- stock_flows 表新增 product_sku_id 列
+- 实现 internal/product/service.go: SKU CRUD
+  - CreateSKU: 创建规格变体，验证产品和价格
+  - ListSKUs: 按产品查询所有规格
+  - GetSKU: 单规格查询含商户权限校验
+  - UpdateSKU: 按需更新字段（部分更新模式）
+  - DeleteSKU: 软删除，有库存时拒删
+  - ToggleSKUStatus: active↔inactive
+  - GetByIDWithSKUs: 产品详情含所有SKU
+  - SKUInfoForCheckout: 收银时查询SKU价格/库存
+- 更新 internal/checkout/service.go: 收银支持SKU
+  - CheckoutItem 新增 SkuID 字段
+  - SKU模式下查询 product_skus 价格和库存
+  - 库存扣减按SKU维度（product_skus.stock）
+  - order_items 记录 product_sku_id 和 sku_spec_info
+  - stock_flows 记录 product_sku_id
+- 注册 6 个 API 端点:
+  - POST   /api/v1/merchant/products/{id}/skus — 创建SKU
+  - GET    /api/v1/merchant/products/{id}/skus — 规格列表
+  - GET    /api/v1/merchant/products/{id}/skus/{skuId} — 规格详情
+  - PUT    /api/v1/merchant/products/{id}/skus/{skuId} — 编辑规格
+  - DELETE /api/v1/merchant/products/{id}/skus/{skuId} — 删除规格
+  - POST   /api/v1/merchant/products/{id}/skus/{skuId}/toggle-status — 启用/禁用
+- 产品详情接口改为返回 ProductDetail（含 skus 数组）
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建商品时添加规格（chicken/1kg, chicken/5kg, beef/1kg）含独立定价和库存
+  ✓ 产品详情包含所有 3 个规格，每个规格有独立 price_cents 和 stock
+  ✓ 收银端选择SKU（chicken/1kg），价格自动使用SKU价格（5000×2=10000）
+  ✓ 库存按SKU维度扣减（SKU1:100→98, SKU2:50 不变）
+  ✓ 编辑SKU价格（5000→6000）后新订单使用新价格，历史订单不受影响
+  ✓ 额外验证: 规格启用/禁用切换, 有库存规格无法删除
+- 提交: (待提交)

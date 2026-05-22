@@ -3,6 +3,7 @@ package product
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -337,4 +338,298 @@ func (s *Service) ToggleStatus(ctx context.Context, productID, merchantID int64)
 		return nil, apperrors.NewInternalError("failed to toggle product status", err)
 	}
 	return p, nil
+}
+
+// --- SKU (multi-spec variant) management ---
+
+// ProductSku represents a single SKU variant of a product.
+type ProductSku struct {
+	ID         int64                  `json:"id"`
+	ProductID  int64                  `json:"product_id"`
+	SkuCode    string                 `json:"sku_code"`
+	SpecInfo   map[string]string      `json:"spec_info"`
+	PriceCents int                    `json:"price_cents"`
+	CostCents  int                    `json:"cost_cents"`
+	Stock      int                    `json:"stock"`
+	AlertStock int                    `json:"alert_stock"`
+	Status     string                 `json:"status"`
+	CreatedAt  time.Time              `json:"created_at"`
+	UpdatedAt  time.Time              `json:"updated_at"`
+}
+
+// CreateSkuRequest is the request body for creating a SKU.
+type CreateSkuRequest struct {
+	SkuCode    string            `json:"sku_code"`
+	SpecInfo   map[string]string `json:"spec_info"`
+	PriceCents int               `json:"price_cents"`
+	CostCents  int               `json:"cost_cents"`
+	Stock      int               `json:"stock"`
+	AlertStock int               `json:"alert_stock"`
+}
+
+// UpdateSkuRequest is the request body for updating a SKU.
+type UpdateSkuRequest struct {
+	SkuCode    *string            `json:"sku_code"`
+	SpecInfo   map[string]string  `json:"spec_info"`
+	PriceCents *int               `json:"price_cents"`
+	CostCents  *int               `json:"cost_cents"`
+	Stock      *int               `json:"stock"`
+	AlertStock *int               `json:"alert_stock"`
+}
+
+const skuColumns = `id, product_id, sku_code, spec_info, price_cents, cost_cents, stock, alert_stock, status, created_at, updated_at`
+
+func scanSkuRow(row *sql.Row) (*ProductSku, error) {
+	s := &ProductSku{}
+	var specJSON []byte
+	err := row.Scan(&s.ID, &s.ProductID, &s.SkuCode, &specJSON, &s.PriceCents, &s.CostCents, &s.Stock, &s.AlertStock, &s.Status, &s.CreatedAt, &s.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if specJSON != nil {
+		json.Unmarshal(specJSON, &s.SpecInfo)
+	}
+	if s.SpecInfo == nil {
+		s.SpecInfo = map[string]string{}
+	}
+	return s, nil
+}
+
+func scanSkuRows(rows *sql.Rows) (*ProductSku, error) {
+	s := &ProductSku{}
+	var specJSON []byte
+	err := rows.Scan(&s.ID, &s.ProductID, &s.SkuCode, &specJSON, &s.PriceCents, &s.CostCents, &s.Stock, &s.AlertStock, &s.Status, &s.CreatedAt, &s.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if specJSON != nil {
+		json.Unmarshal(specJSON, &s.SpecInfo)
+	}
+	if s.SpecInfo == nil {
+		s.SpecInfo = map[string]string{}
+	}
+	return s, nil
+}
+
+// CreateSKU creates a SKU variant for a product.
+func (s *Service) CreateSKU(ctx context.Context, productID, merchantID int64, req CreateSkuRequest) (*ProductSku, error) {
+	// Verify product belongs to merchant.
+	var exists bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM products WHERE id = $1 AND merchant_id = $2 AND deleted_at IS NULL)`,
+		productID, merchantID,
+	).Scan(&exists)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to verify product", err)
+	}
+	if !exists {
+		return nil, apperrors.NewNotFoundError("product not found")
+	}
+
+	if req.PriceCents < 0 {
+		return nil, apperrors.NewValidationError("price_cents must be non-negative")
+	}
+	if req.Stock < 0 {
+		return nil, apperrors.NewValidationError("stock must be non-negative")
+	}
+
+	specJSON, _ := json.Marshal(req.SpecInfo)
+	sku, err := scanSkuRow(s.db.QueryRowContext(ctx,
+		`INSERT INTO product_skus (product_id, sku_code, spec_info, price_cents, cost_cents, stock, alert_stock)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING `+skuColumns,
+		productID, req.SkuCode, specJSON, req.PriceCents, req.CostCents, req.Stock, req.AlertStock,
+	))
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to create SKU", err)
+	}
+	return sku, nil
+}
+
+// ListSKUs returns all SKUs for a product.
+func (s *Service) ListSKUs(ctx context.Context, productID, merchantID int64) ([]ProductSku, error) {
+	// Verify product belongs to merchant.
+	var exists bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM products WHERE id = $1 AND merchant_id = $2 AND deleted_at IS NULL)`,
+		productID, merchantID,
+	).Scan(&exists)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to verify product", err)
+	}
+	if !exists {
+		return nil, apperrors.NewNotFoundError("product not found")
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+skuColumns+` FROM product_skus
+		 WHERE product_id = $1 AND deleted_at IS NULL ORDER BY id ASC`,
+		productID,
+	)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to list SKUs", err)
+	}
+	defer rows.Close()
+
+	var skus []ProductSku
+	for rows.Next() {
+		sku, err := scanSkuRows(rows)
+		if err != nil {
+			return nil, apperrors.NewInternalError("failed to scan SKU", err)
+		}
+		skus = append(skus, *sku)
+	}
+	if skus == nil {
+		skus = []ProductSku{}
+	}
+	return skus, rows.Err()
+}
+
+// GetSKU returns a single SKU by ID.
+func (s *Service) GetSKU(ctx context.Context, skuID, merchantID int64) (*ProductSku, error) {
+	sku, err := scanSkuRow(s.db.QueryRowContext(ctx,
+		`SELECT `+skuColumns+` FROM product_skus
+		 WHERE id = $1 AND deleted_at IS NULL`,
+		skuID,
+	))
+	if err == sql.ErrNoRows {
+		return nil, apperrors.NewNotFoundError("SKU not found")
+	}
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to get SKU", err)
+	}
+
+	// Verify product belongs to merchant.
+	var ownerID int64
+	err = s.db.QueryRowContext(ctx,
+		`SELECT merchant_id FROM products WHERE id = $1 AND deleted_at IS NULL`, sku.ProductID,
+	).Scan(&ownerID)
+	if err != nil || ownerID != merchantID {
+		return nil, apperrors.NewNotFoundError("SKU not found")
+	}
+
+	return sku, nil
+}
+
+// UpdateSKU updates a SKU's fields. Only non-nil fields are applied.
+func (s *Service) UpdateSKU(ctx context.Context, skuID, merchantID int64, req UpdateSkuRequest) (*ProductSku, error) {
+	existing, err := s.GetSKU(ctx, skuID, merchantID)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.SkuCode != nil {
+		existing.SkuCode = *req.SkuCode
+	}
+	if req.SpecInfo != nil {
+		existing.SpecInfo = req.SpecInfo
+	}
+	if req.PriceCents != nil {
+		if *req.PriceCents < 0 {
+			return nil, apperrors.NewValidationError("price_cents must be non-negative")
+		}
+		existing.PriceCents = *req.PriceCents
+	}
+	if req.CostCents != nil {
+		existing.CostCents = *req.CostCents
+	}
+	if req.Stock != nil {
+		if *req.Stock < 0 {
+			return nil, apperrors.NewValidationError("stock must be non-negative")
+		}
+		existing.Stock = *req.Stock
+	}
+	if req.AlertStock != nil {
+		existing.AlertStock = *req.AlertStock
+	}
+
+	specJSON, _ := json.Marshal(existing.SpecInfo)
+	sku, err := scanSkuRow(s.db.QueryRowContext(ctx,
+		`UPDATE product_skus SET sku_code = $1, spec_info = $2, price_cents = $3, cost_cents = $4,
+		 stock = $5, alert_stock = $6, updated_at = NOW()
+		 WHERE id = $7 AND deleted_at IS NULL
+		 RETURNING `+skuColumns,
+		existing.SkuCode, specJSON, existing.PriceCents, existing.CostCents,
+		existing.Stock, existing.AlertStock, skuID,
+	))
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to update SKU", err)
+	}
+	return sku, nil
+}
+
+// DeleteSKU soft-deletes a SKU after checking stock.
+func (s *Service) DeleteSKU(ctx context.Context, skuID, merchantID int64) error {
+	sku, err := s.GetSKU(ctx, skuID, merchantID)
+	if err != nil {
+		return err
+	}
+
+	if sku.Stock > 0 {
+		return apperrors.NewValidationError("cannot delete SKU with remaining stock, please clear inventory first")
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE product_skus SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`,
+		skuID,
+	)
+	if err != nil {
+		return apperrors.NewInternalError("failed to delete SKU", err)
+	}
+	return nil
+}
+
+// ProductDetail wraps a product with its SKUs.
+type ProductDetail struct {
+	Product
+	Skus []ProductSku `json:"skus"`
+}
+
+// GetByIDWithSKUs returns a product with all its SKUs.
+func (s *Service) GetByIDWithSKUs(ctx context.Context, productID, merchantID int64) (*ProductDetail, error) {
+	p, err := s.GetByID(ctx, productID, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	skus, err := s.ListSKUs(ctx, productID, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	return &ProductDetail{Product: *p, Skus: skus}, nil
+}
+
+// SKUInfoForCheckout returns price, stock, and name info for a SKU used in checkout.
+func (s *Service) SKUInfoForCheckout(ctx context.Context, skuID int64) (priceCents int, stock int, specInfo map[string]string, err error) {
+	var specJSON []byte
+	err = s.db.QueryRowContext(ctx,
+		`SELECT price_cents, stock, spec_info FROM product_skus
+		 WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`,
+		skuID,
+	).Scan(&priceCents, &stock, &specJSON)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	if specJSON != nil {
+		json.Unmarshal(specJSON, &specInfo)
+	}
+	return priceCents, stock, specInfo, nil
+}
+
+// ToggleSKUStatus toggles a SKU between active and inactive.
+func (s *Service) ToggleSKUStatus(ctx context.Context, skuID, merchantID int64) (*ProductSku, error) {
+	if _, err := s.GetSKU(ctx, skuID, merchantID); err != nil {
+		return nil, err
+	}
+
+	sku, err := scanSkuRow(s.db.QueryRowContext(ctx,
+		`UPDATE product_skus SET status = CASE WHEN status = 'active' THEN 'inactive' ELSE 'active' END,
+		 updated_at = NOW()
+		 WHERE id = $1 AND deleted_at IS NULL
+		 RETURNING `+skuColumns,
+		skuID,
+	))
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to toggle SKU status", err)
+	}
+	return sku, nil
 }
