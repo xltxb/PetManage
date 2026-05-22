@@ -33,6 +33,7 @@ import (
 	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/purchase"
+	"github.com/xltxb/PetManage/internal/replenishment"
 	"github.com/xltxb/PetManage/internal/report"
 	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
@@ -145,6 +146,9 @@ func main() {
 	// Initialize purchase service.
 	purchaseService := purchase.NewService(db)
 
+	// Initialize replenishment service.
+	replenishmentService := replenishment.NewService(db)
+
 	// Initialize service management service.
 	serviceMgmtService := servicemgmt.NewService(db)
 
@@ -232,7 +236,10 @@ func main() {
 	mux.Handle("POST /api/v1/merchant/purchases/{id}/confirm", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseConfirmHandler(purchaseService))))
 	mux.Handle("POST /api/v1/merchant/purchases/{id}/receive", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseReceiveHandler(purchaseService))))
 	mux.Handle("POST /api/v1/merchant/purchases/{id}/void", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseVoidHandler(purchaseService))))
-	// Service management (auth-protected, merchant-only).
+		// Replenishment suggestions (auth-protected, merchant-only).
+		mux.Handle("GET /api/v1/merchant/replenishment/suggestions", middleware.Auth(jwtManager)(http.HandlerFunc(makeReplenishSuggestionsHandler(replenishmentService))))
+		mux.Handle("POST /api/v1/merchant/replenishment/generate-po", middleware.Auth(jwtManager)(http.HandlerFunc(makeReplenishGeneratePOHandler(replenishmentService, purchaseService))))
+		// Service management (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryCreateHandler(serviceMgmtService))))
 	mux.Handle("GET /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryListHandler(serviceMgmtService))))
 	mux.Handle("PUT /api/v1/merchant/service-categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryUpdateHandler(serviceMgmtService))))
@@ -4783,5 +4790,73 @@ func maskEmployee(e *employee.Employee) {
 func maskEmployeeList(result *employee.ListResult) {
 	for i := range result.Employees {
 		result.Employees[i].Phone = cryptopkg.MaskPhone(result.Employees[i].Phone)
+	}
+}
+
+// --- Replenishment handlers ---
+
+func makeReplenishSuggestionsHandler(svc *replenishment.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		groupBySupplier := r.URL.Query().Get("group_by_supplier") == "true"
+
+		result, err := svc.GetSuggestions(r.Context(), *claims.MerchantID, groupBySupplier)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get replenishment suggestions", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeReplenishGeneratePOHandler(replenishSvc *replenishment.Service, purchaseSvc *purchase.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		var req replenishment.GeneratePORequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		results, err := replenishSvc.GeneratePO(r.Context(), *claims.MerchantID, claims.UserID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to generate purchase order", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"purchase_orders": results,
+			"total":           len(results),
+		})
 	}
 }
