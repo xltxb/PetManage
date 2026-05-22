@@ -13,6 +13,7 @@ import (
 
 	"github.com/xltxb/PetManage/internal/auth"
 	"github.com/xltxb/PetManage/internal/config"
+	"github.com/xltxb/PetManage/internal/contract"
 	"github.com/xltxb/PetManage/internal/database"
 	"github.com/xltxb/PetManage/internal/merchant"
 	"github.com/xltxb/PetManage/internal/middleware"
@@ -70,6 +71,9 @@ func main() {
 	// Initialize merchant service.
 	merchantService := merchant.NewService(db)
 
+	// Initialize contract service.
+	contractService := contract.NewService(db, "uploads/contracts")
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -92,6 +96,13 @@ func main() {
 	mux.Handle("POST /api/v1/merchants/{id}/unfreeze", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantUnfreezeHandler(merchantService))))
 	mux.Handle("POST /api/v1/merchants/{id}/close", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantCloseHandler(merchantService))))
 	mux.Handle("GET /api/v1/operation-logs/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantLogsHandler(merchantService))))
+
+	// Contract management (auth-protected).
+	mux.Handle("POST /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractUploadHandler(contractService))))
+	mux.Handle("GET /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractListHandler(contractService))))
+	mux.Handle("GET /api/v1/contracts/merchant/{id}/current", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractCurrentHandler(contractService))))
+	mux.Handle("POST /api/v1/contracts/merchant/{id}/renew", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractRenewHandler(contractService))))
+	mux.Handle("GET /api/v1/contracts/reminders", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractRemindersHandler(contractService))))
 
 	// Protected routes.
 	protected := http.NewServeMux()
@@ -674,5 +685,180 @@ func makeMerchantLogsHandler(svc *merchant.Service) http.HandlerFunc {
 			"logs":  logs,
 			"total": len(logs),
 		})
+	}
+}
+
+// --- Contract handlers ---
+
+func makeContractUploadHandler(svc *contract.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		merchantID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || merchantID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid merchant id"))
+			return
+		}
+
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("failed to parse multipart form: "+err.Error()))
+			return
+		}
+
+		contractNumber := strings.TrimSpace(r.FormValue("contract_number"))
+		startDate := strings.TrimSpace(r.FormValue("start_date"))
+		endDate := strings.TrimSpace(r.FormValue("end_date"))
+
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("file is required"))
+			return
+		}
+		file.Close()
+
+		req := contract.UploadRequest{
+			ContractNumber: contractNumber,
+			StartDate:      startDate,
+			EndDate:        endDate,
+			FileHeader:     header,
+		}
+
+		resp, err := svc.Upload(r.Context(), merchantID, req, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("contract upload failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeContractListHandler(svc *contract.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		merchantID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || merchantID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid merchant id"))
+			return
+		}
+
+		resp, err := svc.List(r.Context(), merchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list contracts", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeContractCurrentHandler(svc *contract.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		merchantID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || merchantID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid merchant id"))
+			return
+		}
+
+		resp, err := svc.GetCurrent(r.Context(), merchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get current contract", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeContractRenewHandler(svc *contract.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		merchantID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || merchantID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid merchant id"))
+			return
+		}
+
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("failed to parse multipart form: "+err.Error()))
+			return
+		}
+
+		contractNumber := strings.TrimSpace(r.FormValue("contract_number"))
+		startDate := strings.TrimSpace(r.FormValue("start_date"))
+		endDate := strings.TrimSpace(r.FormValue("end_date"))
+
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("file is required"))
+			return
+		}
+		file.Close()
+
+		req := contract.UploadRequest{
+			ContractNumber: contractNumber,
+			StartDate:      startDate,
+			EndDate:        endDate,
+			FileHeader:     header,
+		}
+
+		resp, err := svc.Renew(r.Context(), merchantID, req, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("contract renewal failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeContractRemindersHandler(svc *contract.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		resp, err := svc.GetReminders(r.Context())
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get reminders", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }

@@ -46,17 +46,18 @@ type ApplicationResponse struct {
 
 // ApplicationDetail is the full application detail.
 type ApplicationDetail struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
-	LicenseNumber string `json:"license_number"`
-	LegalPerson   string `json:"legal_person"`
-	ContactPhone  string `json:"contact_phone"`
-	ContactEmail  string `json:"contact_email"`
-	Address       string `json:"address"`
-	Status        string `json:"status"`
-	ReviewRemark  string `json:"review_remark,omitempty"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	LicenseNumber  string `json:"license_number"`
+	LegalPerson    string `json:"legal_person"`
+	ContactPhone   string `json:"contact_phone"`
+	ContactEmail   string `json:"contact_email"`
+	Address        string `json:"address"`
+	Status         string `json:"status"`
+	ReviewRemark   string `json:"review_remark,omitempty"`
+	ContractStatus string `json:"contract_status,omitempty"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 // Apply submits a new merchant application and returns the application ID with pending status.
@@ -117,14 +118,20 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*ApplicationResp
 func (s *Service) GetByID(ctx context.Context, id int64) (*ApplicationDetail, error) {
 	var detail ApplicationDetail
 	var contactEmail, licenseNumber, legalPerson, contactPhone, address, reviewRemark sql.NullString
+	var contractStatus sql.NullString
 	var createdAt, updatedAt time.Time
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, license_number, legal_person, contact_phone, contact_email, address, status, review_remark, created_at, updated_at
-		 FROM merchants WHERE id = $1 AND deleted_at IS NULL`,
+		`SELECT m.id, m.name, m.license_number, m.legal_person, m.contact_phone,
+		        m.contact_email, m.address, m.status, m.review_remark,
+		        mc.status, m.created_at, m.updated_at
+		 FROM merchants m
+		 LEFT JOIN merchant_contracts mc ON mc.merchant_id = m.id AND mc.is_current = true AND mc.deleted_at IS NULL
+		 WHERE m.id = $1 AND m.deleted_at IS NULL`,
 		id,
 	).Scan(&detail.ID, &detail.Name, &licenseNumber, &legalPerson,
-		&contactPhone, &contactEmail, &address, &detail.Status, &reviewRemark, &createdAt, &updatedAt)
+		&contactPhone, &contactEmail, &address, &detail.Status, &reviewRemark,
+		&contractStatus, &createdAt, &updatedAt)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apperrors.AppError{
@@ -146,6 +153,9 @@ func (s *Service) GetByID(ctx context.Context, id int64) (*ApplicationDetail, er
 	detail.ContactEmail = contactEmail.String
 	detail.Address = address.String
 	detail.ReviewRemark = reviewRemark.String
+	if contractStatus.Valid {
+		detail.ContractStatus = contractStatus.String
+	}
 	detail.CreatedAt = createdAt.Format(time.RFC3339)
 	detail.UpdatedAt = updatedAt.Format(time.RFC3339)
 
@@ -518,13 +528,14 @@ func generatePassword(length int) string {
 
 // MerchantSummary is a compact row for the merchant list.
 type MerchantSummary struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	LicenseNumber string `json:"license_number"`
-	LegalPerson  string `json:"legal_person"`
-	ContactPhone string `json:"contact_phone"`
-	Status       string `json:"status"`
-	CreatedAt    string `json:"created_at"`
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	LicenseNumber  string `json:"license_number"`
+	LegalPerson    string `json:"legal_person"`
+	ContactPhone   string `json:"contact_phone"`
+	Status         string `json:"status"`
+	ContractStatus string `json:"contract_status,omitempty"`
+	CreatedAt      string `json:"created_at"`
 }
 
 // ListResponse is the paginated merchant list response.
@@ -574,15 +585,17 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 
 	// Fetch paginated results.
 	offset := (params.Page - 1) * params.PageSize
-	dataQuery := `SELECT id, name, license_number, legal_person, contact_phone, status, created_at
-		FROM merchants WHERE deleted_at IS NULL`
-	dataQuery += ` AND ($1 = '%%' OR name ILIKE $1)`
+	dataQuery := `SELECT m.id, m.name, m.license_number, m.legal_person, m.contact_phone, m.status, mc.status, m.created_at
+		FROM merchants m
+		LEFT JOIN merchant_contracts mc ON mc.merchant_id = m.id AND mc.is_current = true AND mc.deleted_at IS NULL
+		WHERE m.deleted_at IS NULL`
+	dataQuery += ` AND ($1 = '%%' OR m.name ILIKE $1)`
 	if params.Status != "" {
-		dataQuery += ` AND status = $2`
+		dataQuery += ` AND m.status = $2`
 	} else {
-		dataQuery += ` AND ($2 = '' OR status = $2)`
+		dataQuery += ` AND ($2 = '' OR m.status = $2)`
 	}
-	dataQuery += ` ORDER BY created_at DESC LIMIT $3 OFFSET $4`
+	dataQuery += ` ORDER BY m.created_at DESC LIMIT $3 OFFSET $4`
 
 	rows, err := s.db.QueryContext(ctx, dataQuery, keyword, params.Status, params.PageSize, offset)
 	if err != nil {
@@ -597,14 +610,18 @@ func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, e
 	var merchants []MerchantSummary
 	for rows.Next() {
 		var m MerchantSummary
+		var contractStatus sql.NullString
 		var createdAt time.Time
 		if err := rows.Scan(&m.ID, &m.Name, &m.LicenseNumber, &m.LegalPerson,
-			&m.ContactPhone, &m.Status, &createdAt); err != nil {
+			&m.ContactPhone, &m.Status, &contractStatus, &createdAt); err != nil {
 			return nil, &apperrors.AppError{
 				Code:    apperrors.CodeInternalError,
 				Message: "failed to scan merchant row",
 				Err:     err,
 			}
+		}
+		if contractStatus.Valid {
+			m.ContractStatus = contractStatus.String
 		}
 		m.CreatedAt = createdAt.Format(time.RFC3339)
 		merchants = append(merchants, m)

@@ -37,6 +37,9 @@ config/config.local.yaml
 logs/
 *.log
 
+# Uploads
+uploads/
+
 # Build
 build/
 dist/
