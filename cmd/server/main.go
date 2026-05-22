@@ -15,6 +15,7 @@ import (
 
 	"github.com/xltxb/PetManage/internal/announcement"
 	"github.com/xltxb/PetManage/internal/auth"
+	"github.com/xltxb/PetManage/internal/checkout"
 	"github.com/xltxb/PetManage/internal/config"
 	"github.com/xltxb/PetManage/internal/contract"
 	"github.com/xltxb/PetManage/internal/dashboard"
@@ -23,6 +24,7 @@ import (
 	"github.com/xltxb/PetManage/internal/merchant"
 	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/internal/operationlog"
+	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/role"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	"github.com/xltxb/PetManage/pkg/logger"
@@ -97,6 +99,12 @@ func main() {
 	// Initialize dashboard service.
 	dashboardService := dashboard.NewService(db)
 
+	// Initialize product service.
+	productService := product.NewService(db)
+
+	// Initialize checkout service.
+	checkoutService := checkout.NewService(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -131,6 +139,14 @@ func main() {
 	mux.Handle("GET /api/v1/merchant/shop-settings", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantShopSettingsGetHandler(merchantService))))
 	mux.Handle("PUT /api/v1/merchant/shop-settings", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantShopSettingsUpdateHandler(merchantService))))
 	mux.Handle("POST /api/v1/merchant/shop-settings/logo", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantShopSettingsLogoHandler(merchantService))))
+
+	// Product management (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductCreateHandler(productService))))
+	mux.Handle("GET /api/v1/merchant/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductListHandler(productService))))
+	mux.Handle("POST /api/v1/merchant/products/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductToggleStatusHandler(productService))))
+
+	// Checkout (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, productService))))
 
 	// Contract management (auth-protected).
 	mux.Handle("POST /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractUploadHandler(contractService))))
@@ -2046,6 +2062,143 @@ func makeDashboardOverviewHandler(svc *dashboard.Service) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// --- Product handlers ---
+
+func makeProductCreateHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		var req product.CreateProductRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		p, err := svc.Create(r.Context(), *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create product", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(p)
+	}
+}
+
+func makeProductListHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		status := r.URL.Query().Get("status")
+		products, err := svc.List(r.Context(), *claims.MerchantID, status)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list products", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"products": products,
+			"total":    len(products),
+		})
+	}
+}
+
+func makeProductToggleStatusHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid product id"))
+			return
+		}
+
+		p, err := svc.ToggleStatus(r.Context(), id, *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to toggle product status", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(p)
+	}
+}
+
+// --- Checkout handler ---
+
+func makeCheckoutHandler(checkoutSvc *checkout.Service, productSvc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		var req checkout.CheckoutRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		resp, err := checkoutSvc.Checkout(r.Context(), *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("checkout failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(resp)
 	}
 }
