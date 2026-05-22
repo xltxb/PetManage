@@ -162,3 +162,25 @@ SESSION 5 — F005 平台超级管理员初始化 [2026-05-23 01:25 CST]
   ✓ 修改密码 → 新密码登录成功 + must_change_password:false
   ✓ 旧密码登录失败 → 401 INVALID_CREDENTIALS
 - 提交: 6693b1d feat(F005): platform admin initialization — must_change_password flag, change password endpoint
+
+================================================================================
+SESSION 6 — F006 商户入驻申请 [2026-05-23 01:30 CST]
+================================================================================
+
+- 创建 internal/merchant/service.go: 商户入驻申请服务
+  - Apply: 提交入驻申请（name, license_number, legal_person, contact_phone, address）
+  - GetByID: 查询申请详情和审核状态
+  - validateRequired: 必填字段校验，返回缺失字段名列表
+  - 营业执照号重复 → DUPLICATE_LICENSE (409 Conflict)
+  - 手机号重复 → CONFLICT (409 Conflict)
+- 更新 pkg/apperrors/errors.go: 新增 DUPLICATE_LICENSE 错误码
+- 更新 cmd/server/main.go:
+  - POST /api/v1/merchants/apply — 提交入驻申请
+  - GET /api/v1/merchants/apply/{id} — 查询申请详情和状态
+- 端到端验证全部 5 个步骤通过:
+  ✓ 提交完整入驻信息 → 返回申请ID(1) + status:"pending"
+  ✓ 必填字段缺失 → INVALID_PARAMS + "missing required fields: license_number, legal_person, contact_phone, address"
+  ✓ 营业执照号重复 → DUPLICATE_LICENSE (409) + "license number already exists: SC20240001"
+  ✓ 查询申请状态 → status:"pending" 显示当前审核进度
+  ✓ 查询申请详情 → 完整信息含 name, license_number, legal_person, contact_phone, address, created_at
+- 提交: 5372823 feat(F006): merchant onboarding application — submit, validate, deduplicate, query
