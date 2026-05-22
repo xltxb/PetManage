@@ -893,3 +893,33 @@ SESSION 29 — F033 会员二维码 [2026-05-23 05:20 CST]
   ✓ 支持下载二维码图片用于打印会员卡（Content-Disposition: attachment; filename=member_M202605230001_qrcode.png）
 - 额外验证: 跨商户越权扫码被拒绝 (FORBIDDEN "QR code does not belong to your merchant")
 - 提交: 00bb16b
+
+================================================================================
+SESSION 30 — F037 宠物档案管理 [2026-05-23 05:22 CST]
+================================================================================
+
+- 创建迁移 019: pets 表（member_id FK, name, breed, gender, age, weight,
+  vaccine_records JSONB, deworming_records JSONB, allergy_history, notes, status）
+- 创建 internal/pet/service.go: 宠物 CRUD 服务
+  - Create: 验证必填字段 name, gender (M/F), 写入疫苗/驱虫 JSONB 记录
+  - ListByMember: 按会员查询所有宠物（按创建时间倒序）
+  - GetByID: 单只宠物查询，含商户+会员权限校验
+  - Update: 部分更新（pointer fields），疫苗/驱虫/过敏史可编辑
+  - Delete: 软删除（deleted_at），保留历史记录
+- 注册 5 个 API 端点（auth-protected, merchant-only）:
+  - POST   /api/v1/merchant/members/{id}/pets — 创建宠物
+  - GET    /api/v1/merchant/members/{id}/pets — 宠物列表
+  - GET    /api/v1/merchant/members/{id}/pets/{petId} — 宠物详情
+  - PUT    /api/v1/merchant/members/{id}/pets/{petId} — 编辑宠物
+  - DELETE /api/v1/merchant/members/{id}/pets/{petId} — 删除宠物
+- 更新 member/service.go:
+  - MemberDetail.Pets 类型改为 []pet.Pet（替换 []interface{}）
+  - GetDetail 实际查询 pets 表填充数据
+- 端到端验证全部 5 个步骤通过:
+  ✓ 会员详情页添加宠物：录入品种(金毛)、名字(旺财)、性别(M)、年龄(3)、体重(25kg)
+  ✓ 一个会员可绑定多只宠物：会员1绑定了旺财+咪咪(布偶猫)，列表显示2只
+  ✓ 编辑宠物健康信息：增1条疫苗(犬瘟热)+1条驱虫(大宠爱)，过敏史更新 → 全部持久化
+  ✓ 宠物过往服务记录自动关联显示：会员详情同时返回pets(2只)+consumption_records+total_orders
+  ✓ 删除宠物(咪咪)→ 返回404 NOT_FOUND，会员数据完整保留，旺财不受影响
+  ✓ 额外验证：缺名→INVALID_PARAMS "pet name is required"；性别X→"gender must be M or F"；无auth→401
+- 提交: 60e629d
