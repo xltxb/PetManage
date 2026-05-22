@@ -142,3 +142,23 @@ SESSION 4 — F004 JWT认证框架 [2026-05-23 01:20 CST]
   ✓ 过期 Token → 401 TOKEN_EXPIRED
   ✓ refresh_token → 新 access_token + refresh_token
 - 提交: 91be5ed feat(F004): JWT authentication framework — login, auth middleware, token refresh
+
+================================================================================
+SESSION 5 — F005 平台超级管理员初始化 [2026-05-23 01:25 CST]
+================================================================================
+
+- 创建迁移 005: 添加 must_change_password 列到 platform_users，admin 默认需要改密
+- 更新 TokenPair 结构体: 新增 must_change_password 字段
+- 更新 Login 流程: 查询并返回 must_change_password 标志
+- 新增 ChangePassword 方法:
+  - 验证旧密码、新密码长度≥6
+  - bcrypt 哈希存储新密码
+  - 成功后清除 must_change_password 标志
+- 注册 POST /api/v1/auth/change-password 端点（需认证）
+- 端到端验证全部 5 个步骤通过:
+  ✓ 首次启动后 admin 账号存在
+  ✓ admin/admin123 登录 → access_token + refresh_token + must_change_password:true
+  ✓ 首次登录强制修改密码提示 (must_change_password 字段)
+  ✓ 修改密码 → 新密码登录成功 + must_change_password:false
+  ✓ 旧密码登录失败 → 401 INVALID_CREDENTIALS
+- 提交: 6693b1d feat(F005): platform admin initialization — must_change_password flag, change password endpoint
