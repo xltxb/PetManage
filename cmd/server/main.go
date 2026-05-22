@@ -19,6 +19,7 @@ import (
 	"github.com/xltxb/PetManage/internal/dictionary"
 	"github.com/xltxb/PetManage/internal/merchant"
 	"github.com/xltxb/PetManage/internal/middleware"
+	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/role"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	"github.com/xltxb/PetManage/pkg/logger"
@@ -87,6 +88,9 @@ func main() {
 	// Initialize announcement service.
 	announcementService := announcement.NewService(db)
 
+	// Initialize operation log service.
+	opLogService := operationlog.New(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -108,6 +112,7 @@ func main() {
 	mux.Handle("POST /api/v1/merchants/{id}/unfreeze", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantUnfreezeHandler(merchantService))))
 	mux.Handle("POST /api/v1/merchants/{id}/close", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantCloseHandler(merchantService))))
 	mux.Handle("GET /api/v1/operation-logs/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantLogsHandler(merchantService))))
+	mux.Handle("GET /api/v1/operation-logs", middleware.Auth(jwtManager)(http.HandlerFunc(makeOperationLogsHandler(opLogService))))
 
 	// Contract management (auth-protected).
 	mux.Handle("POST /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractUploadHandler(contractService))))
@@ -218,6 +223,7 @@ func main() {
 	h = notFoundWrapper(h)
 	h = loggingMiddleware(lgr)(h)
 	h = middleware.RequestID(h)
+	h = middleware.WithClientIP(h)
 	h = middleware.Recovery(lgr)(h)
 
 	addr := ":" + cfg.Server.Port
@@ -788,6 +794,60 @@ func makeMerchantLogsHandler(svc *merchant.Service) http.HandlerFunc {
 			"logs":  logs,
 			"total": len(logs),
 		})
+	}
+}
+
+func makeOperationLogsHandler(svc *operationlog.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+
+		params := operationlog.QueryParams{}
+
+		if v := q.Get("user_id"); v != "" {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				apperrors.WriteError(w, r, apperrors.NewValidationError("invalid user_id"))
+				return
+			}
+			params.UserID = &id
+		}
+		if v := q.Get("action"); v != "" {
+			params.Action = &v
+		}
+		if v := q.Get("target_type"); v != "" {
+			params.TargetType = &v
+		}
+		if v := q.Get("start_time"); v != "" {
+			params.StartTime = &v
+		}
+		if v := q.Get("end_time"); v != "" {
+			params.EndTime = &v
+		}
+		if v := q.Get("page"); v != "" {
+			page, err := strconv.Atoi(v)
+			if err == nil {
+				params.Page = page
+			}
+		}
+		if v := q.Get("page_size"); v != "" {
+			size, err := strconv.Atoi(v)
+			if err == nil {
+				params.PageSize = size
+			}
+		}
+
+		resp, err := svc.Query(r.Context(), params)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to query operation logs", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 

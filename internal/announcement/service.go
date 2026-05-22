@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 )
 
@@ -165,10 +166,11 @@ func (s *Service) CreateAnnouncement(ctx context.Context, req CreateAnnouncement
 		"scope":  req.Scope,
 		"pinned": req.IsPinned,
 	})
+		ip := middleware.ClientIPFromContext(ctx)
 	_, _ = tx.ExecContext(ctx,
-		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		createdBy, "create_announcement", "announcement", a.ID, string(detail), time.Now())
+		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail, ip_address, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		createdBy, "create_announcement", "announcement", a.ID, string(detail), ip, time.Now())
 
 	if err := tx.Commit(); err != nil {
 		return nil, apperrors.NewInternalError("commit failed", err)

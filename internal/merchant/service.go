@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -501,20 +502,22 @@ func (s *Service) Resubmit(ctx context.Context, id int64, req ApplyRequest) (*Ap
 
 // recordOperation inserts an operation log (standalone, outside a transaction).
 func (s *Service) recordOperation(ctx context.Context, userID int64, action, targetType string, targetID int64, detail json.RawMessage) error {
+	ip := middleware.ClientIPFromContext(ctx)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		userID, action, targetType, targetID, detail,
+		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail, ip_address)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		userID, action, targetType, targetID, detail, ip,
 	)
 	return err
 }
 
 // recordOperationTx inserts an operation log within a transaction.
 func (s *Service) recordOperationTx(ctx context.Context, tx *sql.Tx, userID int64, action, targetType string, targetID int64, detail json.RawMessage) error {
+	ip := middleware.ClientIPFromContext(ctx)
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		userID, action, targetType, targetID, detail,
+		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail, ip_address)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		userID, action, targetType, targetID, detail, ip,
 	)
 	return err
 }
@@ -658,6 +661,7 @@ type OperationLogEntry struct {
 	TargetType string `json:"target_type"`
 	TargetID   int64  `json:"target_id"`
 	Detail     string `json:"detail,omitempty"`
+	IPAddress  string `json:"ip_address,omitempty"`
 	CreatedAt  string `json:"created_at"`
 }
 
@@ -871,7 +875,7 @@ func (s *Service) Close(ctx context.Context, merchantID int64, reason string, op
 // GetOperationLogs returns operation logs for a specific merchant.
 func (s *Service) GetOperationLogs(ctx context.Context, merchantID int64) ([]OperationLogEntry, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, action, target_type, target_id, COALESCE(detail::text, ''), created_at
+		`SELECT id, user_id, action, target_type, target_id, COALESCE(detail::text, ''), COALESCE(ip_address, ''), created_at
 		 FROM operation_logs
 		 WHERE target_type = 'merchant' AND target_id = $1
 		 ORDER BY created_at DESC`,
@@ -891,7 +895,7 @@ func (s *Service) GetOperationLogs(ctx context.Context, merchantID int64) ([]Ope
 		var entry OperationLogEntry
 		var createdAt time.Time
 		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.Action,
-			&entry.TargetType, &entry.TargetID, &entry.Detail, &createdAt); err != nil {
+			&entry.TargetType, &entry.TargetID, &entry.Detail, &entry.IPAddress, &createdAt); err != nil {
 			return nil, &apperrors.AppError{
 				Code:    apperrors.CodeInternalError,
 				Message: "failed to scan operation log",

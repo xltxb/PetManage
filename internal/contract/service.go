@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 )
 
@@ -242,10 +243,11 @@ func (s *Service) Upload(ctx context.Context, merchantID int64, req UploadReques
 		"start_date":      req.StartDate,
 		"end_date":        req.EndDate,
 	})
+		ip := middleware.ClientIPFromContext(ctx)
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail)
-		 VALUES ($1, 'upload_contract', 'contract', $2, $3)`,
-		operatorID, id, detail,
+		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail, ip_address)
+		 VALUES ($1, 'upload_contract', 'contract', $2, $3, $4)`,
+		operatorID, id, detail, ip,
 	)
 	if err != nil {
 		os.Remove(destPath)
@@ -551,10 +553,11 @@ func (s *Service) Renew(ctx context.Context, merchantID int64, req UploadRequest
 		"prev_contract_id":  currentContractID,
 		"action":            "renewal",
 	})
+		ip := middleware.ClientIPFromContext(ctx)
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail)
-		 VALUES ($1, 'renew_contract', 'contract', $2, $3)`,
-		operatorID, id, detail,
+		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail, ip_address)
+		 VALUES ($1, 'renew_contract', 'contract', $2, $3, $4)`,
+		operatorID, id, detail, ip,
 	)
 	if err != nil {
 		os.Remove(destPath)

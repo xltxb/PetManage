@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -436,9 +437,10 @@ func (s *Service) recordLog(ctx context.Context, userID int64, action, targetTyp
 	if err != nil {
 		return
 	}
+	ip := middleware.ClientIPFromContext(ctx)
 	_, _ = s.db.ExecContext(ctx,
-		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail)
-		 VALUES ($1, $2, $3, $4, $5::jsonb)`,
-		userID, action, targetType, targetID, string(detailJSON),
+		`INSERT INTO operation_logs (user_id, action, target_type, target_id, detail, ip_address)
+		 VALUES ($1, $2, $3, $4, $5::jsonb, $6)`,
+		userID, action, targetType, targetID, string(detailJSON), ip,
 	)
 }
