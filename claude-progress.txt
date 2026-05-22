@@ -292,3 +292,40 @@ SESSION 10 — F010 商户合同管理 [2026-05-23 02:03 CST]
     contract_status 变回 active
   ✓ 合同历史可追溯 → 按时间倒序列出所有合同，含 prev_contract_id 链
 - 提交: 73d6940 feat(F010): merchant contract management — upload, validity period, expiry reminders, renewal, history
+
+================================================================================
+SESSION 11 — F011 系统基础数据配置 [2026-05-23 02:15 CST]
+================================================================================
+
+- 创建迁移 008: system_categories 和 system_breeds 表
+  - system_categories: id, name, parent_id (自引用 FK，支持两级), level CHECK (1|2),
+    sort_order, status CHECK (enabled|disabled), is_platform, merchant_id (FK),
+    created_at, updated_at, deleted_at
+  - system_breeds: id, name, pet_type, sort_order, status CHECK (enabled|disabled),
+    created_at, updated_at, deleted_at
+  - 索引: parent_id, merchant_id, is_platform, pet_type
+- 创建 internal/dictionary/service.go:
+  - Category CRUD: Create (支持平台/商户, max depth 2), List (树形结构, 商户视图过滤禁用+仅显示自有),
+    Update (权限隔离: 商户不可修改平台分类), Delete (软删除, 有子分类时拒绝), Toggle (启用/禁用)
+  - Breed CRUD: Create, List (按 pet_type 筛选, 商户视图仅 enabled), Update, Delete (软删除), Toggle
+- 更新 auth/jwt.go: Claims 新增 MerchantID 字段
+- 更新 auth/service.go: Login/RefreshToken 传递 merchant_id 到 JWT claims
+- 更新 cmd/server/main.go: 注册 10 个字典管理路由
+  - POST /api/v1/dict/categories — 创建分类
+  - GET /api/v1/dict/categories — 获取分类树
+  - PUT /api/v1/dict/categories/{id} — 编辑分类
+  - DELETE /api/v1/dict/categories/{id} — 软删除分类
+  - POST /api/v1/dict/categories/{id}/toggle — 启用/禁用分类
+  - POST /api/v1/dict/breeds — 创建品种
+  - GET /api/v1/dict/breeds — 查询品种列表
+  - PUT /api/v1/dict/breeds/{id} — 编辑品种
+  - DELETE /api/v1/dict/breeds/{id} — 软删除品种
+  - POST /api/v1/dict/breeds/{id}/toggle — 启用/禁用品种
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建一级分类「主粮」(level=1) + 二级「狗粮」「猫粮」(level=2)，树形结构正确
+  ✓ 禁用「猫粮」后商户端不显示，平台端仍可见（status:disabled）
+  ✓ 创建「金毛」「布偶猫」「泰迪」品种，按 pet_type=dog 筛选返回 2 条
+  ✓ 编辑分类名称（狗粮→狗粮-天然粮），编辑品种名称，软删除「泰迪」
+  ✓ 商户创建自定义分类「日用品」(is_platform:false, merchant_id:12)，
+    修改平台分类被拒 (403 FORBIDDEN)，删除平台分类被拒
+- 提交: 83ab0fd feat(F011): system data dictionary — categories, breeds with hierarchical tree, enable/disable, soft delete, merchant isolation
