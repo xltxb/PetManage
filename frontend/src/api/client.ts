@@ -6,6 +6,17 @@ interface RequestOptions {
   headers?: Record<string, string>
 }
 
+interface Category {
+  id: number
+  merchant_id: number
+  parent_id: number | null
+  name: string
+  sort_order: number
+  children?: Category[]
+  created_at: string
+  updated_at: string
+}
+
 function parseJWT(token: string): any {
   try {
     const payload = token.split('.')[1]
@@ -224,6 +235,32 @@ class ApiClient {
     const filename = match ? match[1] : 'download.xlsx'
 
     return { blob: await res.blob(), filename }
+  }
+
+  // --- Category APIs ---
+
+  getCategories() {
+    return this.request<{ categories: Category[] }>('/api/v1/merchant/categories')
+  }
+
+  createCategory(data: { name: string; parent_id?: number | null; sort_order?: number }) {
+    return this.request<Category>('/api/v1/merchant/categories', {
+      method: 'POST',
+      body: data,
+    })
+  }
+
+  updateCategory(id: number, data: { name: string; parent_id?: number | null; sort_order?: number }) {
+    return this.request<Category>(`/api/v1/merchant/categories/${id}`, {
+      method: 'PUT',
+      body: data,
+    })
+  }
+
+  deleteCategory(id: number) {
+    return this.request<{ message: string }>(`/api/v1/merchant/categories/${id}`, {
+      method: 'DELETE',
+    })
   }
 
   async uploadShopLogo(file: File) {
