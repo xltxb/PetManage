@@ -49,3 +49,27 @@ SESSION 1 — F001 项目骨架搭建 [2026-05-23 00:54 CST]
 - 提交: 5606662 feat(F001): project skeleton — config loading, health check, JSON 404, request logging
 
 ================================================================================
+
+================================================================================
+SESSION 2 — F002 数据库Schema设计与迁移框架 [2026-05-23 01:04 CST]
+================================================================================
+
+- 创建 internal/database/migration.go: 轻量级迁移框架
+  - Migration 结构体: version, description, upSQL, downSQL
+  - Migrator: LoadMigrations, Migrate (up), Rollback (down), Status
+  - 幂等性: IF NOT EXISTS + pet_migrations 追踪表 + ON CONFLICT DO NOTHING
+  - PostgreSQL 连接: lib/pq 驱动, config.DSN() 构建连接串
+- 创建 3 个核心表的 up/down 迁移 SQL (migrations/ 目录):
+  - 001: merchants 商户表 (name, license_number UNIQUE, contact_phone UNIQUE, status)
+  - 002: platform_roles 角色表 (code UNIQUE, permissions JSONB)
+  - 003: platform_users 用户表 (FK→platform_roles, FK→merchants, phone UNIQUE)
+- 所有表包含 id, created_at, updated_at, deleted_at 标准字段
+- CLI 命令: --migrate (执行), --rollback (回滚), --migrate-status (状态)
+- 修复 .gitignore: /server 仅匹配根目录，避免误忽略 cmd/server/
+- Supabase 端到端验证全部 5 个步骤通过:
+  ✓ 运行迁移后 merchants, platform_roles, platform_users 三张表自动创建
+  ✓ 所有表包含 id, created_at, updated_at, deleted_at 标准字段
+  ✓ 约束正确: phone/username/license_number UNIQUE, FK 外键, 部分唯一索引
+  ✓ 重复运行迁移不报错 (IF NOT EXISTS + ON CONFLICT DO NOTHING)
+  ✓ 回滚后表删除，重新迁移恢复
+- 提交: 4378374 feat(F002): database migration framework + core schema
