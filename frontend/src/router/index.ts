@@ -58,6 +58,11 @@ const router = createRouter({
       name: 'merchant-settings',
       component: () => import('@/views/MerchantSettings.vue'),
     },
+    {
+      path: '/merchants/:id/analysis',
+      name: 'merchant-analysis',
+      component: () => import('@/views/MerchantAnalysis.vue'),
+    },
   ],
 })
 

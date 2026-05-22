@@ -170,6 +170,41 @@ class ApiClient {
     })
   }
 
+  getMerchantList(params?: { keyword?: string; status?: string; page?: number; page_size?: number }) {
+    const search = new URLSearchParams()
+    if (params?.keyword) search.set('keyword', params.keyword)
+    if (params?.status) search.set('status', params.status)
+    if (params?.page) search.set('page', String(params.page))
+    if (params?.page_size) search.set('page_size', String(params.page_size))
+    const qs = search.toString()
+    return this.request<{
+      merchants: Array<{ id: number; name: string; license_number: string; legal_person: string; contact_phone: string; status: string; contract_status?: string; created_at: string }>
+      total: number
+      page: number
+      page_size: number
+    }>(`/api/v1/merchants${qs ? '?' + qs : ''}`)
+  }
+
+  getMerchantAnalysis(merchantId: number, period = 'all') {
+    return this.request<{
+      merchant_id: number
+      merchant_name: string
+      period: string
+      today_revenue: number
+      today_orders: number
+      today_new_members: number
+      total_revenue: number
+      total_orders: number
+      revenue_rank: number
+      product_sales_rank: Array<{ product_id: number; product_name: string; quantity: number; revenue: number; rank: number }>
+      service_popularity: Array<{ service_id: number; service_name: string; order_count: number; revenue: number; rank: number }>
+    }>(`/api/v1/dashboard/merchant/${merchantId}/analysis?period=${period}`)
+  }
+
+  getMerchantsRevenueRanking(period = 'all') {
+    return this.request<Array<{ merchant_id: number; merchant_name: string; total_revenue: number; rank: number }>>(`/api/v1/dashboard/merchants/ranking?period=${period}`)
+  }
+
   async uploadShopLogo(file: File) {
     const formData = new FormData()
     formData.append('logo', file)

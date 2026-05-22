@@ -131,6 +131,8 @@ func main() {
 
 	// Dashboard routes (auth-protected).
 	mux.Handle("GET /api/v1/dashboard/overview", middleware.Auth(jwtManager)(http.HandlerFunc(makeDashboardOverviewHandler(dashboardService))))
+	mux.Handle("GET /api/v1/dashboard/merchant/{id}/analysis", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantAnalysisHandler(dashboardService))))
+	mux.Handle("GET /api/v1/dashboard/merchants/ranking", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantsRankingHandler(dashboardService))))
 
 	// Merchant dashboard routes (auth-protected).
 	mux.Handle("GET /api/v1/merchant/dashboard", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantDashboardHandler(merchantService))))
@@ -2199,6 +2201,59 @@ func makeCheckoutHandler(checkoutSvc *checkout.Service, productSvc *product.Serv
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// --- Merchant analysis handlers ---
+
+func makeMerchantAnalysisHandler(dashSvc *dashboard.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		merchantIDStr := r.PathValue("id")
+		merchantID, err := strconv.ParseInt(merchantIDStr, 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid merchant id"))
+			return
+		}
+
+		period := r.URL.Query().Get("period")
+		if period == "" {
+			period = "all"
+		}
+
+		resp, err := dashSvc.GetMerchantAnalysis(r.Context(), merchantID, period)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get merchant analysis", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeMerchantsRankingHandler(dashSvc *dashboard.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		period := r.URL.Query().Get("period")
+		if period == "" {
+			period = "all"
+		}
+
+		resp, err := dashSvc.GetMerchantsRevenueRanking(r.Context(), period)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get ranking", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}
 }

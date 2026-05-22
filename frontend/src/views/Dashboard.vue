@@ -12,11 +12,38 @@ interface Metric {
   label: string
 }
 
+interface MerchantItem {
+  id: number
+  name: string
+  license_number: string
+  status: string
+  contract_status?: string
+  created_at: string
+}
+
 const metrics = ref<Metric[]>([])
 const loading = ref(true)
 const noData = ref(false)
 const period = ref('all')
 const lastUpdated = ref('')
+const merchants = ref<MerchantItem[]>([])
+const merchantsLoading = ref(false)
+
+const statusLabels: Record<string, string> = {
+  pending: '待审核',
+  approved: '已通过',
+  rejected: '已驳回',
+  frozen: '已冻结',
+  closed: '已关停',
+}
+
+const statusColors: Record<string, string> = {
+  pending: 'bg-yellow-100 text-yellow-700',
+  approved: 'bg-green-100 text-green-700',
+  rejected: 'bg-red-100 text-red-700',
+  frozen: 'bg-blue-100 text-blue-700',
+  closed: 'bg-gray-100 text-gray-700',
+}
 
 const periodLabels: Record<string, string> = {
   all: '全部',
@@ -54,6 +81,18 @@ async function fetchOverview() {
   }
 }
 
+async function fetchMerchants() {
+  merchantsLoading.value = true
+  try {
+    const data = await api.getMerchantList({ page_size: 100 })
+    merchants.value = data.merchants
+  } catch {
+    merchants.value = []
+  } finally {
+    merchantsLoading.value = false
+  }
+}
+
 function switchPeriod(p: string) {
   period.value = p
   fetchOverview()
@@ -71,6 +110,7 @@ onMounted(() => {
     return
   }
   fetchOverview()
+  fetchMerchants()
 })
 </script>
 
@@ -147,6 +187,69 @@ onMounted(() => {
           <p class="text-xs text-gray-400 mt-2">
             {{ periodLabels[period] }}统计
           </p>
+        </div>
+      </div>
+
+      <!-- Merchant list -->
+      <div class="mt-8">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-lg font-semibold text-gray-900">商户列表</h2>
+          <router-link to="/merchants/ranking" class="text-sm text-blue-500 hover:underline">
+            营收排行
+          </router-link>
+        </div>
+
+        <div v-if="merchantsLoading" class="flex justify-center py-8">
+          <div class="animate-spin h-6 w-6 border-3 border-blue-500 border-t-transparent rounded-full" />
+        </div>
+
+        <div v-else-if="merchants.length === 0" class="text-center py-8 text-gray-400">
+          暂无商户数据
+        </div>
+
+        <div v-else class="bg-white rounded-lg shadow-sm overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-500">
+              <tr>
+                <th class="text-left px-4 py-3">商户名称</th>
+                <th class="text-left px-4 py-3">营业执照号</th>
+                <th class="text-left px-4 py-3">状态</th>
+                <th class="text-left px-4 py-3">合同状态</th>
+                <th class="text-left px-4 py-3">入驻时间</th>
+                <th class="text-right px-4 py-3">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="m in merchants"
+                :key="m.id"
+                class="border-t border-gray-100 hover:bg-gray-50 transition-colors"
+              >
+                <td class="px-4 py-3 font-medium text-gray-900">{{ m.name }}</td>
+                <td class="px-4 py-3 text-gray-500">{{ m.license_number }}</td>
+                <td class="px-4 py-3">
+                  <span :class="['inline-block px-2 py-0.5 rounded text-xs font-medium', statusColors[m.status] || 'bg-gray-100 text-gray-600']">
+                    {{ statusLabels[m.status] || m.status }}
+                  </span>
+                </td>
+                <td class="px-4 py-3">
+                  <span v-if="m.contract_status" :class="['inline-block px-2 py-0.5 rounded text-xs font-medium', m.contract_status === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700']">
+                    {{ m.contract_status === 'active' ? '有效' : '已过期' }}
+                  </span>
+                  <span v-else class="text-gray-300 text-xs">-</span>
+                </td>
+                <td class="px-4 py-3 text-gray-500">{{ m.created_at?.slice(0, 10) }}</td>
+                <td class="px-4 py-3 text-right">
+                  <router-link
+                    :to="`/merchants/${m.id}/analysis`"
+                    class="text-blue-500 hover:underline text-xs"
+                  >
+                    经营分析
+                  </router-link>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </main>
