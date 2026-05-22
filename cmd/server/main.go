@@ -17,6 +17,7 @@ import (
 	"github.com/xltxb/PetManage/internal/announcement"
 	"github.com/xltxb/PetManage/internal/auth"
 	"github.com/xltxb/PetManage/internal/checkout"
+	"github.com/xltxb/PetManage/internal/complaint"
 	"github.com/xltxb/PetManage/internal/config"
 	"github.com/xltxb/PetManage/internal/contract"
 	"github.com/xltxb/PetManage/internal/dashboard"
@@ -113,6 +114,9 @@ func main() {
 
 	// Initialize risk control service.
 	riskService := risk.NewService(db)
+
+	// Initialize complaint service.
+	complaintService := complaint.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -225,6 +229,51 @@ func main() {
 		middleware.Auth(jwtManager)(
 			permChecker.RequirePermission("risk:manage")(
 				http.HandlerFunc(makeRiskAlertStatusHandler(riskService)),
+			),
+		),
+	)
+
+	// Complaint ticket management (auth-protected).
+	mux.Handle("POST /api/v1/complaints", middleware.Auth(jwtManager)(http.HandlerFunc(makeComplaintCreateHandler(complaintService))))
+	mux.Handle("GET /api/v1/complaints",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("complaint:view")(
+				http.HandlerFunc(makeComplaintListHandler(complaintService)),
+			),
+		),
+	)
+	mux.Handle("GET /api/v1/complaints/{id}",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("complaint:view")(
+				http.HandlerFunc(makeComplaintGetHandler(complaintService)),
+			),
+		),
+	)
+	mux.Handle("PUT /api/v1/complaints/{id}/assign",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("complaint:manage")(
+				http.HandlerFunc(makeComplaintAssignHandler(complaintService)),
+			),
+		),
+	)
+	mux.Handle("PUT /api/v1/complaints/{id}/progress",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("complaint:manage")(
+				http.HandlerFunc(makeComplaintUpdateProgressHandler(complaintService)),
+			),
+		),
+	)
+	mux.Handle("PUT /api/v1/complaints/{id}/status",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("complaint:manage")(
+				http.HandlerFunc(makeComplaintUpdateStatusHandler(complaintService)),
+			),
+		),
+	)
+	mux.Handle("GET /api/v1/complaints/stats",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("complaint:view")(
+				http.HandlerFunc(makeComplaintStatsHandler(complaintService)),
 			),
 		),
 	)
@@ -2763,5 +2812,207 @@ func makeRiskAlertStatusHandler(svc *risk.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(alert)
+	}
+}
+
+// --- Complaint ticket handlers ---
+
+func makeComplaintCreateHandler(svc *complaint.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req complaint.CreateTicketRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		ticket, err := svc.CreateTicket(r.Context(), req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create ticket", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(ticket)
+	}
+}
+
+func makeComplaintListHandler(svc *complaint.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+
+		params := complaint.ListParams{}
+
+		if v := q.Get("merchant_id"); v != "" {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				apperrors.WriteError(w, r, apperrors.NewValidationError("invalid merchant_id"))
+				return
+			}
+			params.MerchantID = id
+		}
+		params.Status = q.Get("status")
+		params.ComplaintType = q.Get("complaint_type")
+
+		if v := q.Get("assigned_to"); v != "" {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				apperrors.WriteError(w, r, apperrors.NewValidationError("invalid assigned_to"))
+				return
+			}
+			params.AssignedTo = id
+		}
+		if v := q.Get("page"); v != "" {
+			page, err := strconv.Atoi(v)
+			if err == nil {
+				params.Page = page
+			}
+		}
+		if v := q.Get("page_size"); v != "" {
+			size, err := strconv.Atoi(v)
+			if err == nil {
+				params.PageSize = size
+			}
+		}
+
+		resp, err := svc.ListTickets(r.Context(), params)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list tickets", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeComplaintGetHandler(svc *complaint.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid ticket id"))
+			return
+		}
+
+		ticket, err := svc.GetTicket(r.Context(), id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get ticket", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ticket)
+	}
+}
+
+func makeComplaintAssignHandler(svc *complaint.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid ticket id"))
+			return
+		}
+
+		var req complaint.AssignTicketRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		ticket, err := svc.AssignTicket(r.Context(), id, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to assign ticket", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ticket)
+	}
+}
+
+func makeComplaintUpdateProgressHandler(svc *complaint.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid ticket id"))
+			return
+		}
+
+		var req complaint.UpdateProgressRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		ticket, err := svc.UpdateProgress(r.Context(), id, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update progress", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ticket)
+	}
+}
+
+func makeComplaintUpdateStatusHandler(svc *complaint.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid ticket id"))
+			return
+		}
+
+		var req complaint.UpdateStatusRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		ticket, err := svc.UpdateStatus(r.Context(), id, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update status", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ticket)
+	}
+}
+
+func makeComplaintStatsHandler(svc *complaint.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		stats, err := svc.GetComplaintStats(r.Context())
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get stats", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(stats)
 	}
 }

@@ -640,3 +640,34 @@ SESSION 21 — F017 平台数据报表导出 [2026-05-23 03:39 CST]
   ✓ 导出 1 年数据完成时间 0.004s（远低于 30s 要求）
   ✓ 无权限用户调用返回 401 UNAUTHORIZED
 - 提交: f02bea0 feat(F017): platform data report export
+
+================================================================================
+SESSION 22 — F018 交易风控预警 [2026-05-23 04:02 CST]
+================================================================================
+
+- 创建迁移 012: risk_rules 和 risk_alerts 表
+  - risk_rules: 风控规则配置（large_refund/high_frequency），支持阈值金额、笔数、时间窗口
+  - risk_alerts: 预警记录（关联规则、商户、订单、会员），支持 pending/processed/ignored 状态
+  - 种子数据: 2 条默认规则（退款>5000元、1小时>10笔）
+- 创建 internal/risk/service.go: 风控引擎服务
+  - 规则 CRUD: CreateRule, ListRules, GetRule, UpdateRule, DeleteRule, ToggleRule
+  - 预警管理: ListAlerts（支持商户/类型/状态筛选+分页）, GetAlert, UpdateAlertStatus
+  - 风控检查: CheckLargeRefund（订单退款金额超阈值→创建预警）
+  - 风控检查: CheckHighFrequency（会员在时间窗口内交易超阈值→创建预警）
+- 新增退款接口 POST /api/v1/merchant/orders/{id}/refund:
+  - 事务内完成订单状态变更(completed→refunded)、库存恢复、stock_flows 记录
+  - 退款后自动触发大额退款风控检查，返回 risk_alert 信息
+- 在收银开单完成后自动触发高频交易风控检查 (member_id 非空时)
+- 注册 12 个 API 端点:
+  - 规则管理: GET/POST/PUT/DELETE /api/v1/risk/rules, POST /api/v1/risk/rules/{id}/toggle
+  - 预警管理: GET /api/v1/risk/alerts, GET /api/v1/risk/alerts/{id}, PUT /api/v1/risk/alerts/{id}/status
+  - 退款: POST /api/v1/merchant/orders/{id}/refund
+- 新增权限点: risk:view（风控查看）, risk:manage（风控管理）
+- 路由受 auth + permission 中间件保护（risk:view 查看类, risk:manage 管理类）
+- 端到端验证全部 5 个步骤通过:
+  ✓ 配置规则：单笔退款金额阈值可配置（测试改为1元），规则启用/禁用
+  ✓ 创建800分订单后退款，预警列表出现 large_refund 预警（"单笔退款金额8元，超过阈值1元"）
+  ✓ 配置规则：同一用户1小时内>10笔交易触发预警（默认10笔/60分钟）
+  ✓ 模拟11笔高频交易后系统自动生成 high_frequency 预警
+  ✓ 预警单支持「已处理/已忽略」状态变更，状态持久化
+- 提交: [next] feat(F018): transaction risk control — configurable rules, large refund and high-frequency alerts, refund endpoint

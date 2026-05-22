@@ -429,6 +429,8 @@ func (s *Service) GetAvailablePermissions() []PermissionItem {
 		{Key: "announcement:manage", Name: "公告管理", Category: "公告管理", Description: "发布、编辑、删除公告"},
 		{Key: "risk:view", Name: "风控查看", Category: "风控管理", Description: "查看风控规则与预警"},
 		{Key: "risk:manage", Name: "风控管理", Category: "风控管理", Description: "配置风控规则、处理预警"},
+		{Key: "complaint:view", Name: "投诉查看", Category: "投诉管理", Description: "查看投诉工单列表与统计"},
+		{Key: "complaint:manage", Name: "投诉管理", Category: "投诉管理", Description: "分配、处理投诉工单"},
 	}
 }
 
