@@ -23,6 +23,8 @@ interface DashboardData {
 const data = ref<DashboardData | null>(null)
 const loading = ref(true)
 const error = ref('')
+const shopLogo = ref('')
+const shopNotice = ref('')
 
 if (!auth.user) {
   router.replace('/merchant/login')
@@ -32,7 +34,15 @@ async function loadDashboard() {
   loading.value = true
   error.value = ''
   try {
-    data.value = await api.getMerchantDashboard()
+    const [d, s] = await Promise.all([
+      api.getMerchantDashboard(),
+      api.getShopSettings().catch(() => null),
+    ])
+    data.value = d
+    if (s) {
+      shopLogo.value = s.logo_url || ''
+      shopNotice.value = s.notice || ''
+    }
   } catch (e: any) {
     error.value = e.message || '加载失败'
   } finally {
@@ -104,11 +114,20 @@ onMounted(loadDashboard)
     <!-- Header -->
     <header class="bg-white shadow-sm border-b">
       <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
-        <h1 class="text-lg font-semibold text-gray-800">商户经营后台</h1>
+        <div class="flex items-center gap-3">
+          <img v-if="shopLogo" :src="shopLogo" alt="Logo" class="h-8 w-8 rounded object-contain" />
+          <h1 class="text-lg font-semibold text-gray-800">商户经营后台</h1>
+        </div>
         <div class="flex items-center gap-4">
           <span class="text-sm text-gray-600">
             {{ auth.user?.merchant_name || '我的店铺' }}
           </span>
+          <button
+            @click="router.push('/merchant/settings')"
+            class="text-sm text-blue-600 hover:text-blue-800 cursor-pointer"
+          >
+            店铺设置
+          </button>
           <span class="text-sm text-gray-500">
             {{ auth.user?.display_name || auth.user?.username }}
           </span>
@@ -140,6 +159,11 @@ onMounted(loadDashboard)
 
       <!-- Dashboard -->
       <template v-else-if="data">
+        <!-- Shop Notice -->
+        <div v-if="shopNotice" class="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-4">
+          <p class="text-sm text-blue-700">{{ shopNotice }}</p>
+        </div>
+
         <!-- Metric Cards -->
         <div class="grid grid-cols-5 gap-4 mb-6">
           <div class="bg-white rounded-lg shadow-sm p-5 border-l-4 border-blue-500">

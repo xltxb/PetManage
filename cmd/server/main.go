@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -125,6 +127,11 @@ func main() {
 	// Merchant dashboard routes (auth-protected).
 	mux.Handle("GET /api/v1/merchant/dashboard", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantDashboardHandler(merchantService))))
 
+	// Merchant shop settings (auth-protected, merchant-only).
+	mux.Handle("GET /api/v1/merchant/shop-settings", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantShopSettingsGetHandler(merchantService))))
+	mux.Handle("PUT /api/v1/merchant/shop-settings", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantShopSettingsUpdateHandler(merchantService))))
+	mux.Handle("POST /api/v1/merchant/shop-settings/logo", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantShopSettingsLogoHandler(merchantService))))
+
 	// Contract management (auth-protected).
 	mux.Handle("POST /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractUploadHandler(contractService))))
 	mux.Handle("GET /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractListHandler(contractService))))
@@ -230,9 +237,20 @@ func main() {
 	protected.HandleFunc("/api/v1/demo/panic", demoPanicHandler)
 	mux.Handle("/api/v1/demo/", middleware.Auth(jwtManager)(protected))
 
-	var h http.Handler = mux
-	h = notFoundWrapper(h)
-	h = loggingMiddleware(lgr)(h)
+	inner := http.Handler(mux)
+	inner = notFoundWrapper(inner)
+
+	// Serve uploaded files.
+	uploadsFS := http.FileServer(http.Dir("uploads"))
+	chain := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/uploads/") {
+			http.StripPrefix("/uploads/", uploadsFS).ServeHTTP(w, r)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+
+	h := loggingMiddleware(lgr)(chain)
 	h = middleware.RequestID(h)
 	h = middleware.WithClientIP(h)
 	h = middleware.Recovery(lgr)(h)
@@ -1883,6 +1901,132 @@ func makeMerchantDashboardHandler(svc *merchant.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// --- Merchant shop settings handlers ---
+
+func makeMerchantShopSettingsGetHandler(svc *merchant.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		settings, err := svc.GetShopSettings(r.Context(), *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get shop settings", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(settings)
+	}
+}
+
+func makeMerchantShopSettingsUpdateHandler(svc *merchant.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		var req merchant.UpdateShopSettingsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		settings, err := svc.UpdateShopSettings(r.Context(), *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update shop settings", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(settings)
+	}
+}
+
+func makeMerchantShopSettingsLogoHandler(svc *merchant.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("failed to parse multipart form: "+err.Error()))
+			return
+		}
+
+		file, header, err := r.FormFile("logo")
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("logo file is required"))
+			return
+		}
+		defer file.Close()
+
+		// Generate unique filename: {merchantID}_{timestamp}_{originalName}
+		ext := ""
+		if idx := strings.LastIndex(header.Filename, "."); idx >= 0 {
+			ext = header.Filename[idx:]
+		}
+		savedName := fmt.Sprintf("%d_%d%s", *claims.MerchantID, time.Now().UnixMilli(), ext)
+		saveDir := "uploads/logos"
+		if err := os.MkdirAll(saveDir, 0755); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create upload directory", err))
+			return
+		}
+
+		dst, err := os.Create(filepath.Join(saveDir, savedName))
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to save logo file", err))
+			return
+		}
+		defer dst.Close()
+
+		if _, err := io.Copy(dst, file); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to write logo file", err))
+			return
+		}
+
+		logoURL := "/uploads/logos/" + savedName
+		settings, err := svc.UpdateShopLogo(r.Context(), *claims.MerchantID, logoURL)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update logo", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(settings)
 	}
 }
 

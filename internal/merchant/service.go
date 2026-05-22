@@ -912,6 +912,141 @@ func (s *Service) GetOperationLogs(ctx context.Context, merchantID int64) ([]Ope
 	return logs, nil
 }
 
+// ShopSettings represents the editable merchant profile.
+type ShopSettings struct {
+	Name          string `json:"name"`
+	LogoURL       string `json:"logo_url"`
+	Address       string `json:"address"`
+	ContactPhone  string `json:"contact_phone"`
+	ContactEmail  string `json:"contact_email"`
+	BusinessHours string `json:"business_hours"`
+	Notice        string `json:"notice"`
+}
+
+// UpdateShopSettingsRequest is the request body for updating shop settings.
+type UpdateShopSettingsRequest struct {
+	Name          string `json:"name"`
+	Address       string `json:"address"`
+	ContactPhone  string `json:"contact_phone"`
+	ContactEmail  string `json:"contact_email"`
+	BusinessHours string `json:"business_hours"`
+	Notice        string `json:"notice"`
+}
+
+// GetShopSettings returns the current shop settings for a merchant.
+func (s *Service) GetShopSettings(ctx context.Context, merchantID int64) (*ShopSettings, error) {
+	var settings ShopSettings
+	var logoURL, address, contactPhone, contactEmail, businessHours, description sql.NullString
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT name, logo_url, address, contact_phone, contact_email, business_hours, description
+		 FROM merchants WHERE id = $1 AND deleted_at IS NULL`,
+		merchantID,
+	).Scan(&settings.Name, &logoURL, &address, &contactPhone, &contactEmail, &businessHours, &description)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeNotFound,
+			Message: "merchant not found",
+		}
+	}
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to get shop settings",
+			Err:     err,
+		}
+	}
+
+	settings.LogoURL = logoURL.String
+	settings.Address = address.String
+	settings.ContactPhone = contactPhone.String
+	settings.ContactEmail = contactEmail.String
+	settings.BusinessHours = businessHours.String
+	settings.Notice = description.String
+
+	return &settings, nil
+}
+
+// UpdateShopSettings updates the merchant shop settings.
+func (s *Service) UpdateShopSettings(ctx context.Context, merchantID int64, req UpdateShopSettingsRequest) (*ShopSettings, error) {
+	if strings.TrimSpace(req.Name) == "" {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInvalidParams,
+			Message: "store name is required",
+		}
+	}
+
+	var settings ShopSettings
+	var logoURL, contactEmail sql.NullString
+
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE merchants SET
+		 name = $1, address = $2, contact_phone = $3, contact_email = $4,
+		 business_hours = $5, description = $6, updated_at = NOW()
+		 WHERE id = $7 AND deleted_at IS NULL
+		 RETURNING name, logo_url, address, contact_phone, contact_email, business_hours, description`,
+		req.Name, req.Address, req.ContactPhone, req.ContactEmail,
+		req.BusinessHours, req.Notice, merchantID,
+	).Scan(&settings.Name, &logoURL, &settings.Address, &settings.ContactPhone,
+		&contactEmail, &settings.BusinessHours, &settings.Notice)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeNotFound,
+			Message: "merchant not found",
+		}
+	}
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to update shop settings",
+			Err:     err,
+		}
+	}
+
+	settings.LogoURL = logoURL.String
+	settings.ContactEmail = contactEmail.String
+
+	return &settings, nil
+}
+
+// UpdateShopLogo updates the merchant logo_url in the database.
+func (s *Service) UpdateShopLogo(ctx context.Context, merchantID int64, logoURL string) (*ShopSettings, error) {
+	var settings ShopSettings
+	var address, contactPhone, contactEmail, businessHours, description sql.NullString
+
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE merchants SET logo_url = $1, updated_at = NOW()
+		 WHERE id = $2 AND deleted_at IS NULL
+		 RETURNING name, logo_url, address, contact_phone, contact_email, business_hours, description`,
+		logoURL, merchantID,
+	).Scan(&settings.Name, &settings.LogoURL, &address, &contactPhone,
+		&contactEmail, &businessHours, &description)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeNotFound,
+			Message: "merchant not found",
+		}
+	}
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to update logo",
+			Err:     err,
+		}
+	}
+
+	settings.Address = address.String
+	settings.ContactPhone = contactPhone.String
+	settings.ContactEmail = contactEmail.String
+	settings.BusinessHours = businessHours.String
+	settings.Notice = description.String
+
+	return &settings, nil
+}
+
 func validateRequired(req ApplyRequest) []string {
 	var missing []string
 	if strings.TrimSpace(req.Name) == "" {

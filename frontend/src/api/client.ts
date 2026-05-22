@@ -135,6 +135,71 @@ class ApiClient {
       metrics: Array<{ value: number; label: string }>
     }>(`/api/v1/dashboard/overview?period=${period}`)
   }
+
+  getShopSettings() {
+    return this.request<{
+      name: string
+      logo_url: string
+      address: string
+      contact_phone: string
+      contact_email: string
+      business_hours: string
+      notice: string
+    }>('/api/v1/merchant/shop-settings')
+  }
+
+  updateShopSettings(data: {
+    name: string
+    address?: string
+    contact_phone?: string
+    contact_email?: string
+    business_hours?: string
+    notice?: string
+  }) {
+    return this.request<{
+      name: string
+      logo_url: string
+      address: string
+      contact_phone: string
+      contact_email: string
+      business_hours: string
+      notice: string
+    }>('/api/v1/merchant/shop-settings', {
+      method: 'PUT',
+      body: data,
+    })
+  }
+
+  async uploadShopLogo(file: File) {
+    const formData = new FormData()
+    formData.append('logo', file)
+
+    const headers: Record<string, string> = {}
+    const token = this.getToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    const res = await fetch(`${API_BASE}/api/v1/merchant/shop-settings/logo`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.message || `HTTP ${res.status}`)
+    }
+    return data as {
+      name: string
+      logo_url: string
+      address: string
+      contact_phone: string
+      contact_email: string
+      business_hours: string
+      notice: string
+    }
+  }
 }
 
 export const api = new ApiClient()
