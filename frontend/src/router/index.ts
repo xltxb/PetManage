@@ -26,7 +26,7 @@ const router = createRouter({
     {
       path: '/merchant/products',
       name: 'merchant-products',
-      component: () => import('@/views/Placeholder.vue'),
+      component: () => import('@/views/MerchantProducts.vue'),
     },
     {
       path: '/merchant/orders',

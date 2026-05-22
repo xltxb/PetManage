@@ -163,6 +163,9 @@ func main() {
 	mux.Handle("POST /api/v1/merchant/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductCreateHandler(productService))))
 	mux.Handle("GET /api/v1/merchant/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductListHandler(productService))))
 	mux.Handle("POST /api/v1/merchant/products/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductToggleStatusHandler(productService))))
+		mux.Handle("GET /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductGetHandler(productService))))
+		mux.Handle("PUT /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductUpdateHandler(productService))))
+		mux.Handle("DELETE /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductDeleteHandler(productService))))
 
 
 		// Category management (auth-protected, merchant-only).
@@ -2259,7 +2262,16 @@ func makeProductListHandler(svc *product.Service) http.HandlerFunc {
 		}
 
 		status := r.URL.Query().Get("status")
-		products, err := svc.List(r.Context(), *claims.MerchantID, status)
+		keyword := r.URL.Query().Get("keyword")
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+
+		result, err := svc.List(r.Context(), *claims.MerchantID, product.ListParams{
+			Status:   status,
+			Keyword:  keyword,
+			Page:     page,
+			PageSize: pageSize,
+		})
 		if err != nil {
 			if appErr, ok := err.(*apperrors.AppError); ok {
 				apperrors.WriteError(w, r, appErr)
@@ -2270,10 +2282,114 @@ func makeProductListHandler(svc *product.Service) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"products": products,
-			"total":    len(products),
-		})
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeProductGetHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid product id"))
+			return
+		}
+
+		p, err := svc.GetByID(r.Context(), id, *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get product", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(p)
+	}
+}
+
+func makeProductUpdateHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid product id"))
+			return
+		}
+
+		var req product.UpdateProductRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		p, err := svc.Update(r.Context(), id, *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update product", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(p)
+	}
+}
+
+func makeProductDeleteHandler(svc *product.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid product id"))
+			return
+		}
+
+		if err := svc.Delete(r.Context(), id, *claims.MerchantID); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to delete product", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "product deleted"})
 	}
 }
 

@@ -237,6 +237,38 @@ class ApiClient {
     return { blob: await res.blob(), filename }
   }
 
+  // --- Product APIs ---
+
+  getProducts(params?: { keyword?: string; status?: string; page?: number; page_size?: number }) {
+    const search = new URLSearchParams()
+    if (params?.keyword) search.set('keyword', params.keyword)
+    if (params?.status) search.set('status', params.status)
+    if (params?.page) search.set('page', String(params.page))
+    if (params?.page_size) search.set('page_size', String(params.page_size))
+    const qs = search.toString()
+    return this.request<any>(`/api/v1/merchant/products${qs ? '?' + qs : ''}`)
+  }
+
+  getProduct(id: number) {
+    return this.request<any>(`/api/v1/merchant/products/${id}`)
+  }
+
+  createProduct(data: any) {
+    return this.request<any>('/api/v1/merchant/products', { method: 'POST', body: data })
+  }
+
+  updateProduct(id: number, data: any) {
+    return this.request<any>(`/api/v1/merchant/products/${id}`, { method: 'PUT', body: data })
+  }
+
+  deleteProduct(id: number) {
+    return this.request<{ message: string }>(`/api/v1/merchant/products/${id}`, { method: 'DELETE' })
+  }
+
+  toggleProductStatus(id: number) {
+    return this.request<any>(`/api/v1/merchant/products/${id}/toggle-status`, { method: 'POST' })
+  }
+
   // --- Category APIs ---
 
   getCategories() {
