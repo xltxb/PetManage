@@ -464,3 +464,58 @@ SESSION 15 — F015 平台经营大盘 [2026-05-23 02:44 CST]
   ✓ 数据与数据库实际记录一致（total_merchants>=active_merchants，new_members 来自 platform_users 表）
   ✓ 页面加载时间 0.003s（远低于 2 秒要求）
 - 提交: 61ffebb feat(F015): platform dashboard overview — metric cards with time dimension filtering, frontend API client, auth integration
+
+================================================================================
+SESSION 16 — F020 商户管理员登录 [2026-05-23 02:52 CST]
+================================================================================
+
+- 数据库迁移 016: platform_users 新增 login_fail_count、locked_until 列用于账号锁定
+- 后端新增 POST /api/v1/merchant/auth/login 独立商户登录接口:
+  - 仅允许 merchant_id IS NOT NULL 的用户登录（平台管理员无法使用此接口）
+  - 密码错误 3 次后锁定 15 分钟，返回 ACCOUNT_LOCKED (429)
+  - 登录成功后返回 merchant_name（店铺名称）和 display_name（用户姓名）
+  - 冻结/关闭的商户账号登录被拒绝（MERCHANT_FROZEN / MERCHANT_CLOSED）
+  - 新增错误码 CodeAccountLocked
+- 前端:
+  - 创建 MerchantLogin.vue (/merchant/login): 商户端独立登录页，标题"商户经营后台"
+  - 创建 MerchantDashboard.vue (/merchant): 商户经营后台首页，顶部显示店铺名称和当前用户
+  - 更新路由: 新增 /merchant/login 和 /merchant 路由
+  - 更新 auth store: 支持 merchantLogin() 方法，存储 merchant_name、display_name
+  - 更新 API client: 新增 merchantLogin() 方法
+- 端到端验证全部 5 个步骤通过:
+  ✓ 商户入驻审核通过后，店长账号自动生成 (F006/F007 已实现)
+  ✓ 使用店长账号登录，返回 JWT (含 merchant_id) + merchant_name + display_name
+  ✓ 输入错误密码 3 次后账号锁定 15 分钟，返回 ACCOUNT_LOCKED
+  ✓ 登录后页面右上角显示店铺名称（月亮宠物医院）和当前用户（李四）
+  ✓ 平台冻结的商户账号登录被拒绝 (MERCHANT_FROZEN)，关闭的商户被拒绝 (MERCHANT_CLOSED)
+- 提交: 162d9e4 feat(F020): merchant admin login — dedicated login endpoint with account lockout, JWT with merchant info, merchant dashboard header
+================================================================================
+SESSION 17 — F021 商户经营看板 [2026-05-23 03:09 CST]
+================================================================================
+
+- 创建 internal/merchant/dashboard.go: 商户经营看板数据服务
+  - GetDashboard: 按 merchant_id 查询今日核心指标
+  - 今日新增会员数: 查询 platform_users WHERE merchant_id = ? AND created_at >= today
+  - 营收/订单/预约/服务完成/库存预警/生日提醒: 返回 0（待后续功能补充数据表）
+  - 7 日营收趋势: 查询 orders 表按日汇总 total_cents，无商户关联时返回零数组
+- 更新 cmd/server/main.go:
+  - 注册 GET /api/v1/merchant/dashboard (auth-protected, merchant-only)
+  - 非商户账号访问返回 403 FORBIDDEN
+- 前端:
+  - 重写 MerchantDashboard.vue: 完整经营看板
+    - 5 个核心指标卡片（带彩色边框）：今日营收、订单数、新增会员、预约数、服务完成量
+    - 3 个预警卡片：库存预警(红色)、待确认预约(黄色)、会员生日提醒(粉色)
+    - 近 7 日营收趋势 SVG 折线图（含数据点、网格线、零状态占位文字）
+    - 6 个快捷入口按钮：商品/订单/预约/会员/库存/服务管理
+    - 加载状态（旋转动画）和错误重试
+  - frontend/src/api/client.ts: 新增 getMerchantDashboard() 方法
+  - frontend/src/router/index.ts: 新增 6 个快捷入口占位路由
+  - 创建 Placeholder.vue: 功能建设中占位页面，含返回首页链接
+- 端到端验证全部 5 个步骤通过:
+  ✓ 首页顶部展示5个核心指标卡片：今日营收(¥0.00)、订单数(0)、新增会员(1)、预约数(0)、服务完成量(0)
+  ✓ 核心预警区域显示：库存预警(0项)、待确认预约(0条)、会员生日提醒(0人)，零值时灰显
+  ✓ 近7日营收趋势折线图正确展示：SVG 图表含坐标轴和数据点，零数据时显示「暂无营收数据」
+  ✓ 快捷入口按钮可跳转至对应功能页面：6 个按钮均链接到占位页面，含「返回首页」导航
+  ✓ 不同商户登录只看到自己店铺数据：商户18(星星宠物店)←→商户20(阳光宠物中心)各自 merchant_id 和数据隔离
+- 提交: 6bccac2 feat(F021): merchant business dashboard
+
