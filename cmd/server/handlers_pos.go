@@ -7,6 +7,7 @@ import (
 	"github.com/xltxb/PetManage/internal/checkout"
 	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/pkg/apperrors"
+	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
 )
 
 // makePosCartCalculateHandler handles cart calculation with member discount preview.
@@ -72,6 +73,7 @@ func makePosMemberLookupHandler(checkoutSvc *checkout.Service) http.HandlerFunc 
 			return
 		}
 
+		member.Phone = cryptopkg.MaskPhone(member.Phone)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(member)
 	}

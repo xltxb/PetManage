@@ -2,12 +2,16 @@ package checkout
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/xltxb/PetManage/pkg/apperrors"
+	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
 )
 
 // CheckoutItem represents a single item in the checkout (product or service).
@@ -158,14 +162,19 @@ func (s *Service) LookupMember(ctx context.Context, merchantID int64, phone, qrT
 		return nil, apperrors.NewValidationError("qr_token lookup not implemented directly; use /merchant/members/qrcode/scan endpoint")
 	}
 
+	// Compute phone hash for deterministic lookup.
+	phoneTrimmed := strings.TrimSpace(phone)
+	hash := sha256.Sum256([]byte(phoneTrimmed))
+	phash := hex.EncodeToString(hash[:])
+
 	var m MemberInfo
 	var phoneStr sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, card_no, name, phone, status, COALESCE(balance_cents, 0), COALESCE(points, 0)
 		 FROM members
-		 WHERE merchant_id = $1 AND phone = $2 AND status = 'active' AND deleted_at IS NULL
+		 WHERE merchant_id = $1 AND phone_hash = $2 AND status = 'active' AND deleted_at IS NULL
 		 LIMIT 1`,
-		merchantID, phone,
+		merchantID, phash,
 	).Scan(&m.MemberID, &m.CardNo, &m.Name, &phoneStr, &m.Status, &m.BalanceCents, &m.Points)
 	if err == sql.ErrNoRows {
 		return nil, apperrors.NewNotFoundError("member not found with phone: " + phone)
@@ -174,7 +183,7 @@ func (s *Service) LookupMember(ctx context.Context, merchantID int64, phone, qrT
 		return nil, apperrors.NewInternalError("failed to lookup member", err)
 	}
 	if phoneStr.Valid {
-		m.Phone = phoneStr.String
+		m.Phone = cryptopkg.TryDecrypt(phoneStr.String)
 	}
 	return &m, nil
 }

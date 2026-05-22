@@ -1037,3 +1037,42 @@ SESSION 34 — F053 员工档案管理 [2026-05-23 06:15 CST]
   ✓ 员工离职: status→inactive，关联 platform_users 账号自动禁用
 - 提交: a7fd58a feat(F053): employee archive management
 
+
+================================================================================
+SESSION 35 — F054 商户端角色与权限管理 [2026-05-23 06:31 CST]
+================================================================================
+
+- 创建迁移 025: merchant_roles 表 + employees.merchant_role_id + platform_users.employee_id
+  - merchant_roles: id, merchant_id (FK), name, code, description, permissions JSONB, 软删除
+  - 唯一索引: (merchant_id, code) WHERE deleted_at IS NULL
+- 创建 internal/merchantrole/service.go: 商户角色CRUD + 权限管理 + 员工账号管理
+  - CreateRole/ListRoles/GetRole/UpdateRole/DeleteRole: 完整CRUD
+  - GetAvailablePermissions: 20项商户权限 (pos, order, member, pet, product, inventory, service, appointment, employee, role, report, settings)
+  - AssignRole: 分配角色给员工并关联 platform_users
+  - CreateEmployeeAccount: 为员工创建 platform_users 登录账号 (随机密码)
+  - GetEmployeePermissions: 查询员工角色的权限列表
+  - DisableEmployeeAccount: 一键禁用员工登录账号
+- 创建 cmd/server/handlers_merchantrole.go: 9个API处理器
+  - role CRUD + permissions list + employee assign-role + create-account + disable-account
+- 更新 internal/middleware/permission.go:
+  - 新增 RequireMerchantPermission: 商户员工权限检查中间件
+    - 无 employee_id → 商户老板/管理员，授予全部权限
+    - 有 employee_id → 从 merchant_roles 查询权限并缓存(60s TTL)
+    - 无 merchant_id → 回退到 platform_roles 检查
+  - 新增 InvalidateAll: 角色更新后清空权限缓存，实现权限同步
+- 路由注册: 14个新端点 (auth-protected, merchant-only)
+  - /api/v1/merchant/roles — ROLE CRUD + permissions
+  - /api/v1/merchant/employees/{id}/assign-role — 角色分配
+  - /api/v1/merchant/employees/{id}/create-account — 创建登录账号
+  - /api/v1/merchant/employees/{id}/disable-account — 禁用账号
+- member管理路由添加 RequireMerchantPermission 权限控制 (member:view/member:manage)
+- 前端: MerchantRoles.vue 角色管理页面 + 路由 /merchant/roles
+  - 角色列表展示 + 新建/编辑弹窗 (含权限多选checkbox)
+  - 权限按分类分组展示, 删除确认对话框
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建角色「收银员」: 配置 pos:*, order:view 菜单权限
+  ✓ 为员工分配角色后, 该员工登录仅获得角色权限
+  ✓ 收银员访问会员管理 GET /members → 403 insufficient permissions
+  ✓ 修改角色权限(新增 member:view), 缓存失效后员工立即获得新权限 → 200
+  ✓ 离职员工账号一键禁用, 无法登录 → INVALID_CREDENTIALS
+- 提交: 3a6346a feat(F054): merchant role & permission management

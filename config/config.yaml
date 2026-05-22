@@ -33,3 +33,9 @@ log:
   level: debug  # debug, info, warn, error
   output: stdout  # stdout, file
   file_path: logs/app.log
+
+encryption:
+  current_key_version: "v1"
+  keys:
+    v1: ${ENCRYPTION_KEY_V1:-32lv7TPsDWcj+yupHIYQzHunVG7TY3sfnpOFMFrO/No=}
+    v2: ${ENCRYPTION_KEY_V2:-zxrBzMjIOaUoqvtHtH8KAKTNo6Ko63uwEatAAWy5aqs=}

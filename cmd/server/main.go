@@ -23,21 +23,22 @@ import (
 	"github.com/xltxb/PetManage/internal/contract"
 	"github.com/xltxb/PetManage/internal/dashboard"
 	"github.com/xltxb/PetManage/internal/database"
-	"github.com/xltxb/PetManage/internal/employee"
 	"github.com/xltxb/PetManage/internal/dictionary"
+	"github.com/xltxb/PetManage/internal/employee"
 	"github.com/xltxb/PetManage/internal/merchant"
+	"github.com/xltxb/PetManage/internal/merchantrole"
+	"github.com/xltxb/PetManage/internal/member"
 	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/internal/operationlog"
+	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/report"
-	"github.com/xltxb/PetManage/internal/member"
-	"github.com/xltxb/PetManage/internal/merchantrole"
-	"github.com/xltxb/PetManage/internal/pet"
-	"github.com/xltxb/PetManage/internal/servicemgmt"
-	"github.com/xltxb/PetManage/internal/supplier"
 	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
+	"github.com/xltxb/PetManage/internal/servicemgmt"
+	"github.com/xltxb/PetManage/internal/supplier"
 	"github.com/xltxb/PetManage/pkg/apperrors"
+	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
 	"github.com/xltxb/PetManage/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -68,6 +69,11 @@ func main() {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
 	defer lgr.Sync()
+
+	// Initialize encryption for sensitive data.
+	if err := cryptopkg.Init(cfg.Encryption.Keys, cfg.Encryption.CurrentKeyVersion); err != nil {
+		lgr.Fatal("Failed to initialize encryption", zap.Error(err))
+	}
 
 	// Connect to database.
 	dsn := cfg.DSN()
@@ -3928,6 +3934,7 @@ func makeMemberCreateHandler(svc *member.Service) http.HandlerFunc {
 			return
 		}
 
+		maskMember(m)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(m)
@@ -3964,6 +3971,7 @@ func makeMemberListHandler(svc *member.Service) http.HandlerFunc {
 			return
 		}
 
+		maskMemberList(result)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
 	}
@@ -3992,6 +4000,7 @@ func makeMemberSearchHandler(svc *member.Service) http.HandlerFunc {
 			return
 		}
 
+		maskMemberSlice(members)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"members": members,
@@ -4029,6 +4038,7 @@ func makeMemberGetHandler(svc *member.Service) http.HandlerFunc {
 			return
 		}
 
+		maskMember(&detail.Member)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(detail)
 	}
@@ -4069,6 +4079,7 @@ func makeMemberUpdateHandler(svc *member.Service) http.HandlerFunc {
 			return
 		}
 
+		maskMember(m)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(m)
 	}
@@ -4103,6 +4114,7 @@ func makeMemberToggleStatusHandler(svc *member.Service) http.HandlerFunc {
 			return
 		}
 
+		maskMember(m)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(m)
 	}
@@ -4495,6 +4507,7 @@ func makeEmployeeCreateHandler(svc *employee.Service) http.HandlerFunc {
 			return
 		}
 
+		maskEmployee(e)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(e)
@@ -4534,6 +4547,7 @@ func makeEmployeeListHandler(svc *employee.Service) http.HandlerFunc {
 			return
 		}
 
+		maskEmployeeList(resp)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}
@@ -4568,6 +4582,7 @@ func makeEmployeeGetHandler(svc *employee.Service) http.HandlerFunc {
 			return
 		}
 
+		maskEmployee(e)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(e)
 	}
@@ -4608,6 +4623,7 @@ func makeEmployeeUpdateHandler(svc *employee.Service) http.HandlerFunc {
 			return
 		}
 
+		maskEmployee(e)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(e)
 	}
@@ -4642,6 +4658,7 @@ func makeEmployeeResignHandler(svc *employee.Service) http.HandlerFunc {
 			return
 		}
 
+		maskEmployee(e)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(e)
 	}
@@ -4676,7 +4693,36 @@ func makeEmployeeToggleStatusHandler(svc *employee.Service) http.HandlerFunc {
 			return
 		}
 
+		maskEmployee(e)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(e)
+	}
+}
+
+// --- Phone masking helpers ---
+
+func maskMember(m *member.Member) {
+	m.Phone = cryptopkg.MaskPhone(m.Phone)
+}
+
+func maskMemberList(result *member.ListResult) {
+	for i := range result.Members {
+		result.Members[i].Phone = cryptopkg.MaskPhone(result.Members[i].Phone)
+	}
+}
+
+func maskMemberSlice(members []member.Member) {
+	for i := range members {
+		members[i].Phone = cryptopkg.MaskPhone(members[i].Phone)
+	}
+}
+
+func maskEmployee(e *employee.Employee) {
+	e.Phone = cryptopkg.MaskPhone(e.Phone)
+}
+
+func maskEmployeeList(result *employee.ListResult) {
+	for i := range result.Employees {
+		result.Employees[i].Phone = cryptopkg.MaskPhone(result.Employees[i].Phone)
 	}
 }

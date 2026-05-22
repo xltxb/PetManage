@@ -2,7 +2,9 @@ package member
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +15,7 @@ import (
 	"github.com/xuri/excelize/v2"
 	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/pkg/apperrors"
+	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
 )
 
 // Member represents a member record.
@@ -116,6 +119,27 @@ func NewService(db *sql.DB) *Service {
 
 const memberColumns = `id, merchant_id, card_no, name, phone, wechat, gender, birthday, address, remark, balance_cents, points, status, created_at, updated_at`
 
+// phoneHash returns a SHA-256 hex hash for deterministic phone lookup.
+func phoneHash(phone string) string {
+	h := sha256.Sum256([]byte(strings.TrimSpace(phone)))
+	return hex.EncodeToString(h[:])
+}
+
+// encryptPhone encrypts a phone number and returns its hash.
+func encryptPhone(phone string) (encrypted string, phash string, err error) {
+	phone = strings.TrimSpace(phone)
+	encrypted, err = cryptopkg.Encrypt(phone)
+	if err != nil {
+		return "", "", err
+	}
+	return encrypted, phoneHash(phone), nil
+}
+
+// decryptPhone attempts to decrypt a phone value. Falls back to plaintext.
+func decryptPhone(raw string) string {
+	return cryptopkg.TryDecrypt(raw)
+}
+
 func scanMemberRow(row *sql.Row) (*Member, error) {
 	m := &Member{}
 	err := row.Scan(
@@ -123,6 +147,9 @@ func scanMemberRow(row *sql.Row) (*Member, error) {
 		&m.Gender, &m.Birthday, &m.Address, &m.Remark, &m.BalanceCents,
 		&m.Points, &m.Status, &m.CreatedAt, &m.UpdatedAt,
 	)
+	if err == nil {
+		m.Phone = decryptPhone(m.Phone)
+	}
 	return m, err
 }
 
@@ -133,6 +160,9 @@ func scanMemberRows(rows *sql.Rows) (*Member, error) {
 		&m.Gender, &m.Birthday, &m.Address, &m.Remark, &m.BalanceCents,
 		&m.Points, &m.Status, &m.CreatedAt, &m.UpdatedAt,
 	)
+	if err == nil {
+		m.Phone = decryptPhone(m.Phone)
+	}
 	return m, err
 }
 
@@ -181,11 +211,17 @@ func (s *Service) Create(ctx context.Context, merchantID int64, req CreateMember
 		return nil, apperrors.NewInternalError("failed to generate card number", err)
 	}
 
+	phone := strings.TrimSpace(req.Phone)
+	encPhone, phash, err := encryptPhone(phone)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to encrypt phone", err)
+	}
+
 	m, err := scanMemberRow(s.db.QueryRowContext(ctx,
-		`INSERT INTO members (merchant_id, card_no, name, phone, wechat, gender, birthday, address, remark)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`INSERT INTO members (merchant_id, card_no, name, phone, phone_hash, wechat, gender, birthday, address, remark)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING `+memberColumns,
-		merchantID, cardNo, strings.TrimSpace(req.Name), strings.TrimSpace(req.Phone),
+		merchantID, cardNo, strings.TrimSpace(req.Name), encPhone, phash,
 		req.Wechat, req.Gender, req.Birthday, req.Address, req.Remark,
 	))
 	if err != nil {
@@ -283,9 +319,10 @@ func (s *Service) List(ctx context.Context, merchantID int64, params ListParams)
 		argIdx++
 	}
 	if params.Keyword != "" {
-		where += " AND (name ILIKE $" + strconv.Itoa(argIdx) + " OR phone ILIKE $" + strconv.Itoa(argIdx) + ")"
-		args = append(args, "%"+params.Keyword+"%")
-		argIdx++
+		phash := phoneHash(params.Keyword)
+		where += " AND (name ILIKE $" + strconv.Itoa(argIdx) + " OR phone_hash = $" + strconv.Itoa(argIdx+1) + ")"
+		args = append(args, "%"+params.Keyword+"%", phash)
+		argIdx += 2
 	}
 
 	var total int
@@ -331,17 +368,18 @@ func (s *Service) List(ctx context.Context, merchantID int64, params ListParams)
 	}, nil
 }
 
-// SearchByPhone searches members by phone number (fuzzy match).
+// SearchByPhone searches members by phone number using hash-based exact match.
 func (s *Service) SearchByPhone(ctx context.Context, merchantID int64, phone string) ([]Member, error) {
 	if strings.TrimSpace(phone) == "" {
 		return make([]Member, 0), nil
 	}
 
+	phash := phoneHash(strings.TrimSpace(phone))
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+memberColumns+` FROM members
-		 WHERE merchant_id = $1 AND phone ILIKE $2 AND deleted_at IS NULL
+		 WHERE merchant_id = $1 AND phone_hash = $2 AND deleted_at IS NULL
 		 ORDER BY created_at DESC LIMIT 20`,
-		merchantID, "%"+phone+"%",
+		merchantID, phash,
 	)
 	if err != nil {
 		return nil, apperrors.NewInternalError("failed to search members", err)
@@ -377,11 +415,22 @@ func (s *Service) Update(ctx context.Context, memberID, merchantID int64, req Up
 		}
 		existing.Name = strings.TrimSpace(*req.Name)
 	}
+	encPhone := existing.Phone // already decrypted raw phone
+	var phash *string
 	if req.Phone != nil {
 		if strings.TrimSpace(*req.Phone) == "" {
 			return nil, apperrors.NewValidationError("member phone is required")
 		}
-		existing.Phone = strings.TrimSpace(*req.Phone)
+		phone := strings.TrimSpace(*req.Phone)
+		var enc string
+		var h string
+		enc, h, err := encryptPhone(phone)
+		if err != nil {
+			return nil, apperrors.NewInternalError("failed to encrypt phone", err)
+		}
+		encPhone = enc
+		phash = &h
+		existing.Phone = phone
 	}
 	if req.Wechat != nil {
 		existing.Wechat = *req.Wechat
@@ -402,11 +451,26 @@ func (s *Service) Update(ctx context.Context, memberID, merchantID int64, req Up
 		existing.Remark = *req.Remark
 	}
 
+	if phash != nil {
+		m, err := scanMemberRow(s.db.QueryRowContext(ctx,
+			`UPDATE members SET name=$1, phone=$2, phone_hash=$3, wechat=$4, gender=$5, birthday=$6, address=$7, remark=$8, updated_at=NOW()
+			 WHERE id=$9 AND merchant_id=$10 AND deleted_at IS NULL
+			 RETURNING `+memberColumns,
+			existing.Name, encPhone, *phash, existing.Wechat, existing.Gender,
+			existing.Birthday, existing.Address, existing.Remark,
+			memberID, merchantID,
+		))
+		if err != nil {
+			return nil, apperrors.NewInternalError("failed to update member", err)
+		}
+		return m, nil
+	}
+
 	m, err := scanMemberRow(s.db.QueryRowContext(ctx,
-		`UPDATE members SET name=$1, phone=$2, wechat=$3, gender=$4, birthday=$5, address=$6, remark=$7, updated_at=NOW()
-		 WHERE id=$8 AND merchant_id=$9 AND deleted_at IS NULL
+		`UPDATE members SET name=$1, wechat=$2, gender=$3, birthday=$4, address=$5, remark=$6, updated_at=NOW()
+		 WHERE id=$7 AND merchant_id=$8 AND deleted_at IS NULL
 		 RETURNING `+memberColumns,
-		existing.Name, existing.Phone, existing.Wechat, existing.Gender,
+		existing.Name, existing.Wechat, existing.Gender,
 		existing.Birthday, existing.Address, existing.Remark,
 		memberID, merchantID,
 	))

@@ -2,12 +2,15 @@ package employee
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/xltxb/PetManage/pkg/apperrors"
+	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
 )
 
 // Employee represents an employee record.
@@ -75,6 +78,24 @@ func NewService(db *sql.DB) *Service {
 
 const employeeColumns = `id, merchant_id, name, employee_no, position, phone, email, hire_date, status, created_at, updated_at`
 
+func phoneHash(phone string) string {
+	h := sha256.Sum256([]byte(strings.TrimSpace(phone)))
+	return hex.EncodeToString(h[:])
+}
+
+func decryptPhone(raw string) string {
+	return cryptopkg.TryDecrypt(raw)
+}
+
+func encryptPhoneVal(phone string) (encrypted string, phash string, err error) {
+	phone = strings.TrimSpace(phone)
+	encrypted, err = cryptopkg.Encrypt(phone)
+	if err != nil {
+		return "", "", err
+	}
+	return encrypted, phoneHash(phone), nil
+}
+
 func scanEmployeeRow(row *sql.Row) (*Employee, error) {
 	e := &Employee{}
 	var hireDate sql.NullString
@@ -83,6 +104,9 @@ func scanEmployeeRow(row *sql.Row) (*Employee, error) {
 		&e.Phone, &e.Email, &hireDate, &e.Status,
 		&e.CreatedAt, &e.UpdatedAt,
 	)
+	if err == nil {
+		e.Phone = decryptPhone(e.Phone)
+	}
 	if hireDate.Valid {
 		e.HireDate = &hireDate.String
 	}
@@ -97,6 +121,9 @@ func scanEmployeeRows(rows *sql.Rows) (*Employee, error) {
 		&e.Phone, &e.Email, &hireDate, &e.Status,
 		&e.CreatedAt, &e.UpdatedAt,
 	)
+	if err == nil {
+		e.Phone = decryptPhone(e.Phone)
+	}
 	if hireDate.Valid {
 		e.HireDate = &hireDate.String
 	}
@@ -136,6 +163,11 @@ func (s *Service) Create(ctx context.Context, merchantID int64, req CreateEmploy
 		return nil, apperrors.NewInternalError("failed to check employee_no uniqueness", err)
 	}
 
+	encPhone, phash, err := encryptPhoneVal(req.Phone)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to encrypt phone", err)
+	}
+
 	var hireDate interface{}
 	if strings.TrimSpace(req.HireDate) != "" {
 		hireDate = req.HireDate
@@ -144,10 +176,10 @@ func (s *Service) Create(ctx context.Context, merchantID int64, req CreateEmploy
 	e := &Employee{}
 	var hd sql.NullString
 	err = s.db.QueryRowContext(ctx,
-		`INSERT INTO employees (merchant_id, name, employee_no, position, phone, email, hire_date)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO employees (merchant_id, name, employee_no, position, phone, phone_hash, email, hire_date)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING `+employeeColumns,
-		merchantID, name, employeeNo, position, req.Phone, req.Email, hireDate,
+		merchantID, name, employeeNo, position, encPhone, phash, req.Email, hireDate,
 	).Scan(
 		&e.ID, &e.MerchantID, &e.Name, &e.EmployeeNo, &e.Position,
 		&e.Phone, &e.Email, &hd, &e.Status,
@@ -191,11 +223,13 @@ func (s *Service) List(ctx context.Context, merchantID int64, params ListParams)
 		argIdx++
 	}
 	if params.Keyword != "" {
-		where += " AND (name ILIKE $" + itoa(argIdx) + " OR employee_no ILIKE $" + itoa(argIdx) +
-			" OR phone ILIKE $" + itoa(argIdx) + ")"
+		phash := phoneHash(params.Keyword)
+		where += " AND (name ILIKE $" + itoa(argIdx) +
+			" OR employee_no ILIKE $" + itoa(argIdx) +
+			" OR phone_hash = $" + itoa(argIdx+1) + ")"
 		kw := "%" + params.Keyword + "%"
-		args = append(args, kw)
-		argIdx++
+		args = append(args, kw, phash)
+		argIdx += 2
 	}
 
 	// Count total.
@@ -300,8 +334,15 @@ func (s *Service) Update(ctx context.Context, merchantID, employeeID int64, req 
 		argIdx++
 	}
 	if req.Phone != nil {
+		encPhone, phash, err := encryptPhoneVal(*req.Phone)
+		if err != nil {
+			return nil, apperrors.NewInternalError("failed to encrypt phone", err)
+		}
 		sets = append(sets, "phone = $"+itoa(argIdx))
-		args = append(args, *req.Phone)
+		args = append(args, encPhone)
+		argIdx++
+		sets = append(sets, "phone_hash = $"+itoa(argIdx))
+		args = append(args, phash)
 		argIdx++
 	}
 	if req.Email != nil {
