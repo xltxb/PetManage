@@ -1076,3 +1076,35 @@ SESSION 35 — F054 商户端角色与权限管理 [2026-05-23 06:31 CST]
   ✓ 修改角色权限(新增 member:view), 缓存失效后员工立即获得新权限 → 200
   ✓ 离职员工账号一键禁用, 无法登录 → INVALID_CREDENTIALS
 - 提交: 3a6346a feat(F054): merchant role & permission management
+
+================================================================================
+SESSION 36 — F078 敏感数据加密 [2026-05-23 07:10 CST]
+================================================================================
+
+- 创建 pkg/crypto/aes.go: AES-256-GCM 加密/解密模块
+  - 版本化密文格式: v{version}:{base64(nonce+ciphertext)}
+  - Encrypt/Decrypt/TryDecrypt/MaskPhone/IsEncrypted
+  - 线程安全的 Init 函数，支持多版本密钥管理
+- 更新 internal/config/config.go: 新增 EncryptionConfig 结构体
+- 更新 config/config.yaml: 加密密钥配置（支持 ${ENCRYPTION_KEY_V1:-default} 环境变量引用）
+- 数据库迁移:
+  - 026: members + employees 表添加 phone_hash VARCHAR(64) 列（SHA-256 哈希，用于确定性查询）
+  - 027: phone 列扩容 VARCHAR(20) → VARCHAR(255)（AES-GCM 密文长度 > 20）
+- 更新 internal/member/service.go:
+  - Create/Update 时加密 phone，同步写入 phone_hash
+  - 所有查询解密 phone（scanMemberRow/scanMemberRows 自动调用 decryptPhone）
+  - SearchByPhone 改用 phone_hash 精确查找
+  - List 关键词搜索同时支持 name ILIKE + phone_hash 精确匹配
+- 更新 internal/employee/service.go: 同理加密/解密/查询改造
+- 更新 internal/checkout/service.go: LookupMember 改用 phone_hash 查询
+- 更新 cmd/server/main.go:
+  - 启动时从 config 加载加密密钥并初始化 crypto.Init
+  - 所有 member/employee API 响应添加 phone 脱敏（maskMember/maskEmployee helpers）
+- 更新 cmd/server/handlers_pos.go: POS 会员查询响应脱敏
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建会员时手机号加密存储（DB 中 phone 列为 v1:base64 格式密文）
+  ✓ API 返回脱敏手机号（138****2222），详情/列表均正确脱敏
+  ✓ 报表导出正常生成（当前报表不含直接 PII 字段）
+  ✓ 加密密钥使用环境变量引用（${ENCRYPTION_KEY_V1:-...}），非硬编码
+  ✓ 两个会员均使用 v1 密钥加密，解密正确返回脱敏值（密钥版本管理）
+- 提交: 6356d1a feat(F078): sensitive data encryption
