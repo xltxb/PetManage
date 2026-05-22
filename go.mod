@@ -3,12 +3,13 @@ module github.com/xltxb/PetManage
 go 1.21
 
 require (
-	github.com/gin-gonic/gin v1.9.1
-	github.com/golang-jwt/jwt/v5 v5.2.0
-	github.com/jackc/pgx/v5 v5.5.1
-	github.com/redis/go-redis/v9 v9.3.0
 	go.uber.org/zap v1.26.0
 	gopkg.in/yaml.v3 v3.0.1
-	gorm.io/driver/postgres v1.5.4
-	gorm.io/gorm v1.25.5
+)
+
+require (
+	github.com/kr/pretty v0.3.0 // indirect
+	github.com/stretchr/testify v1.8.3 // indirect
+	go.uber.org/multierr v1.10.0 // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 )
