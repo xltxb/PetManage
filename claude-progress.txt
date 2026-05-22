@@ -798,4 +798,35 @@ SESSION 26 — F025 商品多规格管理 [2026-05-23 04:37 CST]
   ✓ 库存按SKU维度扣减（SKU1:100→98, SKU2:50 不变）
   ✓ 编辑SKU价格（5000→6000）后新订单使用新价格，历史订单不受影响
   ✓ 额外验证: 规格启用/禁用切换, 有库存规格无法删除
-- 提交: (待提交)
+- 提交: fafef4e
+
+================================================================================
+SESSION 27 — F026 供应商管理 [2026-05-23 04:50 CST]
+================================================================================
+
+- 创建迁移 017: suppliers 表（name, contact_person, contact_phone, contact_email, address, settlement_cycle, status, notes）
+  + supplier_products 关联表（supplier_id, product_id, UNIQUE 约束）
+- 创建 internal/supplier/service.go: 供应商管理服务
+  - Create: 新建供应商，验证 name/contact_person/contact_phone 必填
+  - List: 支持 keyword (name ILIKE)、status 筛选、分页，按 created_at DESC 排序
+  - GetDetail: 供应商详情含关联商品列表（JOIN products）
+  - Update: 部分更新联系方式和合作信息
+  - ToggleStatus: active ↔ inactive 切换（标记停止合作）
+  - LinkProduct: 关联商品到供应商，验证商品属于同一商户
+  - UnlinkProduct: 移除商品关联
+  - GetLinkedProducts: 查询关联商品含条码、名称、价格、库存
+- 注册 7 个 API 端点:
+  - POST   /api/v1/merchant/suppliers — 创建供应商
+  - GET    /api/v1/merchant/suppliers — 列表（支持 keyword/status/page/page_size）
+  - GET    /api/v1/merchant/suppliers/{id} — 详情含关联商品
+  - PUT    /api/v1/merchant/suppliers/{id} — 编辑供应商
+  - POST   /api/v1/merchant/suppliers/{id}/toggle-status — 切换合作状态
+  - POST   /api/v1/merchant/suppliers/{id}/products — 关联商品
+  - DELETE /api/v1/merchant/suppliers/{id}/products/{productId} — 移除关联
+- 端到端验证全部 5 个步骤通过:
+  ✓ 新建供应商：填写名称、联系人、电话等必填信息保存成功，必填字段缺失返回 INVALID_PARAMS
+  ✓ 供应商列表按创建时间倒序，支持名称搜索（keyword=伟嘉）和合作状态筛选（active/inactive）
+  ✓ 关联商品到供应商（product_id=16,17），供应商详情页显示关联商品列表（条码、名称、价格、库存）
+  ✓ 标记供应商为停止合作（status:inactive），筛选列表正确；可恢复合作（toggle back to active）
+  ✓ 编辑供应商联系方式（contact_person/phone/email/address/settlement_cycle）全部持久化，解除商品关联
+- 提交: e5d3ba1
