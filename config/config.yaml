@@ -1,0 +1,29 @@
+server:
+  port: 8080
+  mode: debug  # debug, release, test
+
+database:
+  driver: mysql
+  host: localhost
+  port: 3306
+  user: root
+  password: ""
+  dbname: petstore
+  max_open_conns: 100
+  max_idle_conns: 10
+
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+
+jwt:
+  secret: change-me-in-production
+  access_token_ttl: 7200   # 2 hours
+  refresh_token_ttl: 604800 # 7 days
+
+log:
+  level: debug  # debug, info, warn, error
+  output: stdout  # stdout, file
+  file_path: logs/app.log
