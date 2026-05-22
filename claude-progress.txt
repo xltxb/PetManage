@@ -923,3 +923,21 @@ SESSION 30 — F037 宠物档案管理 [2026-05-23 05:22 CST]
   ✓ 删除宠物(咪咪)→ 返回404 NOT_FOUND，会员数据完整保留，旺财不受影响
   ✓ 额外验证：缺名→INVALID_PARAMS "pet name is required"；性别X→"gender must be M or F"；无auth→401
 - 提交: 60e629d
+
+================================================================================
+SESSION 31 — F040 服务项目管理 [2026-05-23 13:39 CST]
+================================================================================
+
+- 创建迁移 020_create_service_management: service_categories 表 (多级树形结构)
+  和 service_items 表 (名称、时长、价格、会员价、适用宠物类型、体重范围、耗材)
+- 补充迁移 021: 添加 service_categories.parent_id 列
+- 创建 internal/servicemgmt/service.go: 服务分类 CRUD + 服务项目 CRUD + 状态切换
+- 添加 10 个 API 路由 (POST/GET/PUT/DELETE service-categories, POST/GET/PUT/DELETE service-items, toggle-status)
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建服务分类「美容」，分类下创建项目「标准洗澡-小型犬」
+  ✓ 服务时长30分钟、价格80元(8000分)、会员价68元(6800分)
+  ✓ 适用宠物类型「狗」、体重范围0-10kg
+  ✓ 上架/下架状态切换正常 (active ↔ inactive)
+  ✓ 下架项目不会出现在 active 列表中
+- 提交: 989c9d5 feat(F040): service item management
+
