@@ -863,3 +863,33 @@ SESSION 28 — F032 会员开卡与档案管理 [2026-05-23 05:00 CST]
   ✓ 批量导入：4 行 JSON 数组, 2 成功（王五/赵六）, 2 失败（行3缺姓名, 行4缺手机号）, 返回行级错误详情
   ✓ 额外验证：编辑会员（地址、备注更新成功），状态切换（active↔inactive），状态筛选列表
 - 提交: 395b897
+
+================================================================================
+SESSION 29 — F033 会员二维码 [2026-05-23 05:20 CST]
+================================================================================
+
+- 创建 internal/member/qrcode.go: 会员二维码服务
+  - GenerateQRCodeToken: 使用 HMAC-SHA256 签名生成加密令牌
+    格式: base64(memberID.merchantID.timestamp.HMAC_SHA256)
+  - VerifyQRCodeToken: 解码并验证签名，拒绝篡改和伪造
+  - RenderQRCodePNG: 使用 go-qrcode 库生成 256x256 PNG 图片
+  - 签名密钥复用 JWT secret，通过 SetQRCodeSecret 配置
+- 注册 2 个 API 端点:
+  - GET /api/v1/merchant/members/{id}/qrcode — 生成会员二维码PNG (auth, merchant-only)
+    支持 ?download=1 参数触发浏览器下载（Content-Disposition: attachment）
+  - GET /api/v1/merchant/members/qrcode/scan?token= — 扫码识别会员 (auth, merchant-only)
+    验证 HMAC 签名 → 防伪造
+    校验 merchant_id 一致性 → 防止跨商户越权
+    返回 member_id, name, phone, card_no, status
+- 前端:
+  - api/client.ts: 新增 getMembers, getMember, createMember, updateMember, getMemberQRCodeBlob 等 7 个方法
+  - MemberList.vue: 会员列表页（搜索/筛选/分页/新建对话框）
+  - MemberDetail.vue: 会员详情页含二维码展示、下载按钮、消费记录表
+  - router: 注册 /merchant/members 和 /merchant/members/:id 路由
+- 端到端验证全部 4 个步骤通过:
+  ✓ 会员详情页展示会员二维码图片（HTTP 200, 256x256 PNG, 569 bytes）
+  ✓ 扫码后返回会员ID和基础信息（member_id:1, name:张三, card_no:M202605230001, phone:13800001111）
+  ✓ 二维码包含加密的会员标识，不能被伪造（篡改 token 返回 INVALID_PARAMS "invalid or forged QR code token"）
+  ✓ 支持下载二维码图片用于打印会员卡（Content-Disposition: attachment; filename=member_M202605230001_qrcode.png）
+- 额外验证: 跨商户越权扫码被拒绝 (FORBIDDEN "QR code does not belong to your merchant")
+- 提交: 00bb16b
