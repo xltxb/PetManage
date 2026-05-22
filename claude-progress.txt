@@ -229,3 +229,29 @@ SESSION 8 — F008 商户列表与管理 [2026-05-23 01:43 CST]
   ✓ 分页查询 (page_size=2, page=2 → 返回第 2 页 2 条, total=6)
   ✓ 点击商户查看详情 (基础信息、经营状态、入驻时间齐全)
 - 提交: 26e7e96 feat(F008): merchant list and management — search, filter by status, pagination
+
+================================================================================
+SESSION 9 — F009 商户状态管控 [2026-05-23 01:53 CST]
+================================================================================
+
+- 新增 MERCHANT_FROZEN / MERCHANT_CLOSED 错误码 (403 Forbidden)
+- 更新 internal/auth/service.go:
+  - Login: LEFT JOIN merchants 检查商户状态，frozen/closed 拒绝登录
+  - RefreshToken: 同样检查商户状态，frozen/closed 拒绝刷新
+- 更新 internal/merchant/service.go 新增 4 个方法:
+  - Freeze: approved → frozen (事务+行锁)，记录 freeze_merchant 日志
+  - Unfreeze: frozen → approved，记录 unfreeze_merchant 日志
+  - Close: approved/frozen → closed (终态，不可恢复)，记录 close_merchant 日志
+  - GetOperationLogs: 查询商户的所有操作日志，按时间倒序
+- 更新 cmd/server/main.go 注册 4 个新路由:
+  - POST /api/v1/merchants/{id}/freeze
+  - POST /api/v1/merchants/{id}/unfreeze
+  - POST /api/v1/merchants/{id}/close
+  - GET /api/v1/operation-logs/merchant/{id}
+- 端到端验证全部 5 个步骤通过:
+  ✓ 冻结商户后 → 商户管理员登录返回 403 MERCHANT_FROZEN
+  ✓ 解冻商户后 → 商户管理员可正常登录
+  ✓ 关停商户后 → status:"closed" 不可恢复，登录返回 403 MERCHANT_CLOSED，无法 unfreeze
+  ✓ 每次状态变更记录操作日志: freeze_merchant/unfreeze_merchant/close_merchant，detail JSONB 含 reason
+  ✓ 商户违规历史可查询: /api/v1/operation-logs/merchant/9 返回 4 条日志
+- 提交: 62a02ba feat(F009): merchant status control — freeze, unfreeze, close with audit logging
