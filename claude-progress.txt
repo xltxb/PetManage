@@ -184,3 +184,28 @@ SESSION 6 — F006 商户入驻申请 [2026-05-23 01:30 CST]
   ✓ 查询申请状态 → status:"pending" 显示当前审核进度
   ✓ 查询申请详情 → 完整信息含 name, license_number, legal_person, contact_phone, address, created_at
 - 提交: 5372823 feat(F006): merchant onboarding application — submit, validate, deduplicate, query
+
+================================================================================
+SESSION 7 — F007 商户入驻审核 [2026-05-23 01:39 CST]
+================================================================================
+
+- 创建迁移 006: 添加 review_remark, reviewed_by, reviewed_at 到 merchants; 创建 operation_logs 审计表; 种子 merchant_admin 角色
+- 更新 internal/merchant/service.go:
+  - ListPending: 列出待审核申请，按 created_at 排序
+  - Approve: 通过审核(事务内行锁) → 状态变为 'approved' → 自动创建商户管理员账号(username: m_{license_number}, 随机密码, must_change_password)
+  - Reject: 驳回审核(事务内行锁) → 状态变为 'rejected' + review_remark
+  - Resubmit: 仅 rejected 状态可重新提交 → 更新信息, reset 状态为 'pending', 清除 review 字段
+  - recordOperation/recordOperationTx: 审计日志记录, 包含 user_id, action, target, detail, created_at
+  - GetByID 新增 review_remark 字段
+- 更新 cmd/server/main.go:
+  - GET /api/v1/merchants/pending — 管理员查看待审核列表(需认证)
+  - POST /api/v1/merchants/{id}/approve — 通过审核(需认证)
+  - POST /api/v1/merchants/{id}/reject — 驳回并填写原因(需认证)
+  - PUT /api/v1/merchants/{id}/apply — 重新提交被驳回的申请(需认证)
+- 端到端验证全部 5 个步骤通过:
+  ✓ 待审核列表显示 id, name, created_at，含 2 条 pending 申请
+  ✓ 通过审核 → status:"approved" + 自动创建 merchant_admin 账号(username + password) → 可用该账号登录(含 must_change_password)
+  ✓ 驳回审核 → status:"rejected" + review_remark 显示驳回原因
+  ✓ 重新提交 → status 变回 "pending"，更新信息生效，old review_remark 清除
+  ✓ 操作日志记录: operation_logs 含 4 条记录(approve/reject/approve/resubmit)，包含 user_id, action, detail, created_at
+- 提交: 22856de feat(F007): merchant application review — approve, reject with reason, resubmit, audit log
