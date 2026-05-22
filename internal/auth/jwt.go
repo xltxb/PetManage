@@ -16,10 +16,11 @@ type Claims struct {
 
 // TokenPair holds an access token and refresh token.
 type TokenPair struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int64  `json:"expires_in"`
-	TokenType    string `json:"token_type"`
+	AccessToken        string `json:"access_token"`
+	RefreshToken       string `json:"refresh_token"`
+	ExpiresIn          int64  `json:"expires_in"`
+	TokenType          string `json:"token_type"`
+	MustChangePassword bool   `json:"must_change_password"`
 }
 
 // JWTManager handles token generation and validation.

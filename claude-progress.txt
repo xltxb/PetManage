@@ -103,3 +103,42 @@ SESSION 3 — F003 统一错误处理中间件 [2026-05-23 01:10 CST]
   ✓ 内部错误返回 500，不暴露内部细节
   ✓ 所有错误响应包含 request_id (UUIDv4)
 - 提交: dedad11 feat(F003): unified error handling middleware — error codes, request ID, recovery
+
+================================================================================
+SESSION 4 — F004 JWT认证框架 [2026-05-23 01:20 CST]
+================================================================================
+
+- 创建 internal/auth/jwt.go: JWT Token 生成与验证
+  - Claims 结构体包含 user_id, username, role_id + 标准 JWT 注册声明
+  - GenerateTokenPair 同时生成 access_token (HS256) 和 refresh_token
+  - ValidateToken 解析并验证 Token 签名和有效期
+  - 支持 token_type: "Bearer", expires_in 字段
+- 创建 internal/auth/service.go: 认证服务
+  - Login: 查询 platform_users 表验证凭据 (bcrypt 密码比对)
+  - 用户不存在或密码错误 → INVALID_CREDENTIALS (401)
+  - RefreshToken: 验证 refresh_token 后签发新 Token 对
+  - refresh_token 过期 → TOKEN_EXPIRED
+  - 刷新前验证用户状态仍为 active
+- 创建 internal/middleware/auth.go: JWT 认证中间件
+  - 从 Authorization: Bearer <token> 提取 Token
+  - 无 Authorization 头 → 401 UNAUTHORIZED
+  - Token 过期 → 401 TOKEN_EXPIRED
+  - Token 无效/格式错误 → 401 UNAUTHORIZED
+  - 验证通过后将 Claims 注入 context
+- 更新 pkg/apperrors/errors.go: 新增 INVALID_CREDENTIALS, TOKEN_EXPIRED 错误码
+- 更新 internal/config/config.go: 支持 ${VAR:-default} 环境变量展开
+- 更新 cmd/server/main.go:
+  - 服务器启动时连接数据库 (非仅迁移模式)
+  - POST /api/v1/auth/login — 管理员登录
+  - POST /api/v1/auth/refresh — Token 刷新
+  - /api/v1/demo/* 路由组挂载 Auth 中间件
+  - demoProtectedHandler 返回当前用户信息
+- 创建迁移 004_seed_admin: 种子数据 admin/admin123 + super_admin 角色
+- 端到端验证全部 6 个步骤通过:
+  ✓ admin/admin123 登录 → access_token + refresh_token + expires_in
+  ✓ 错误密码 → 401 INVALID_CREDENTIALS
+  ✓ 有效 Token 访问 /api/v1/demo/protected → 返回 user_id, username
+  ✓ 无 Token → 401 UNAUTHORIZED
+  ✓ 过期 Token → 401 TOKEN_EXPIRED
+  ✓ refresh_token → 新 access_token + refresh_token
+- 提交: 91be5ed feat(F004): JWT authentication framework — login, auth middleware, token refresh
