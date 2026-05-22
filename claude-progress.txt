@@ -941,3 +941,34 @@ SESSION 31 — F040 服务项目管理 [2026-05-23 13:39 CST]
   ✓ 下架项目不会出现在 active 列表中
 - 提交: 989c9d5 feat(F040): service item management
 
+================================================================================
+SESSION 32 — F048 POS收银开单 [2026-05-23 13:51 CST]
+================================================================================
+
+- 增强 internal/checkout/service.go:
+  - CheckoutItem 支持 product_id/sku_id/service_item_id 三种类型
+  - CheckoutRequest 新增 order_notes 字段
+  - 新增 CartCalculateRequest/Response 类型和 CartCalculate 方法
+  - CartCalculate 自动计算会员折扣：服务项目有 member_price_cents 时自动应用差额
+  - Checkout 支持服务项目（无库存扣减）和整单备注
+  - 新增 LookupMember 方法按手机号查找会员
+- 新增 cmd/server/handlers_pos.go:
+  - POST /api/v1/merchant/pos/cart/calculate — 购物车价格计算（含会员折扣预览）
+  - GET /api/v1/merchant/pos/members/lookup — 手机号查会员
+- 数据库迁移 022: orders 添加 notes 列, order_items 添加 service_item_id 列, product_id 改为可空
+- 前端:
+  - 创建 MerchantPos.vue: 完整 POS 收银台页面
+    - 左侧: 条码扫描输入、商品搜索（带结果下拉）、服务项目选择（按分类过滤）、会员识别（手机号查找）
+    - 右侧: 购物车（数量增减、删除、行总额）、价格汇总（原价/优惠/应收）、整单备注、快捷支付按钮
+  - api/client.ts: 新增 posCartCalculate, posMemberLookup, posCheckout, getServiceCategories, getServiceItems 方法
+  - router: 注册 /merchant/pos 路由
+  - MerchantDashboard: 快捷入口添加「POS收银」按钮
+- 端到端验证全部 6 个步骤通过:
+  ✓ 条码扫描: 6901234567890 搜索返回 皇家狗粮2kg ¥158.00
+  ✓ 商品搜索: "皇家" 关键字返回 1 条匹配商品
+  ✓ 服务项目: 1 个 active 服务项目可选
+  ✓ 会员识别: 手机号 13811119999 找到会员张三 (M202605230100)
+  ✓ 购物车计算: 原价 ¥396.00, 会员优惠 ¥12.00 (服务项目 8000→6800), 应收 ¥384.00
+  ✓ 订单备注: order_notes="POS test note" 成功保存
+- 提交: 25e67ea feat(F048): POS cash register billing
+
