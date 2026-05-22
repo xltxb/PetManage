@@ -519,3 +519,35 @@ SESSION 17 — F021 商户经营看板 [2026-05-23 03:09 CST]
   ✓ 不同商户登录只看到自己店铺数据：商户18(星星宠物店)←→商户20(阳光宠物中心)各自 merchant_id 和数据隔离
 - 提交: 6bccac2 feat(F021): merchant business dashboard
 
+================================================================================
+SESSION 18 — F022 店铺基础信息设置 [2026-05-23 03:09 CST]
+================================================================================
+
+- 后端: 在 internal/merchant/service.go 新增 ShopSettings、UpdateShopSettingsRequest 类型
+  - GetShopSettings: 查询商户的 name、logo_url、address、contact_phone、contact_email、business_hours、notice(description)
+  - UpdateShopSettings: 更新商户基础信息，name 为必填字段，空名称返回 INVALID_PARAMS "store name is required"
+  - UpdateShopLogo: 更新 logo_url 字段
+- 后端: 在 cmd/server/main.go 注册 3 个新路由 (auth-protected, merchant-only)
+  - GET /api/v1/merchant/shop-settings — 获取店铺设置
+  - PUT /api/v1/merchant/shop-settings — 更新店铺设置
+  - POST /api/v1/merchant/shop-settings/logo — 上传 Logo (multipart/form-data)
+- 后端: 添加 /uploads/ 静态文件服务，支持 Logo 图片访问
+- 前端: 创建 MerchantSettings.vue 店铺设置页面
+  - Logo 上传预览: 文件选择 + 预览 + 上传按钮
+  - 表单字段: 店铺名称(必填)、联系电话、联系邮箱、店铺地址、营业时间、门店公告
+  - 保存后自动更新 auth store 中的 merchant_name
+  - 加载/保存状态动画，成功/错误提示
+- 前端: 更新 MerchantDashboard.vue
+  - 页面左上角显示店铺 Logo
+  - 页面顶部显示门店公告（蓝色提示条）
+  - 新增「店铺设置」链接跳转到设置页
+- 前端: 更新 frontend/src/api/client.ts 新增 getShopSettings、updateShopSettings、uploadShopLogo 方法
+- 前端: 更新 frontend/src/router/index.ts 新增 /merchant/settings 路由
+- 端到端验证全部 5 个步骤通过:
+  ✓ 编辑店铺名称保存后，页面标题同步更新（name 更新到 "月亮宠物医院（五星旗舰店）"）
+  ✓ 上传店铺 Logo 图片（SVG），保存后 Logo 可在 /uploads/logos/ 访问（HTTP 200）
+  ✓ 设置营业时间（09:00-21:00），保存成功并持久化
+  ✓ 修改门店公告内容，保存后在首页展示（blue notice banner）
+  ✓ 未填写必填字段（空名称）时提示 "store name is required" (INVALID_PARAMS)
+- 提交: eeefc31 feat(F022): merchant shop settings
+
