@@ -31,6 +31,7 @@ import (
 	"github.com/xltxb/PetManage/internal/report"
 	"github.com/xltxb/PetManage/internal/member"
 	"github.com/xltxb/PetManage/internal/pet"
+	"github.com/xltxb/PetManage/internal/servicemgmt"
 	"github.com/xltxb/PetManage/internal/supplier"
 	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
@@ -132,6 +133,9 @@ func main() {
 	// Initialize supplier service.
 	supplierService := supplier.NewService(db)
 
+	// Initialize service management service.
+	serviceMgmtService := servicemgmt.NewService(db)
+
 	// Initialize pet service.
 	petService := pet.NewService(db)
 
@@ -201,6 +205,17 @@ func main() {
 	mux.Handle("POST /api/v1/merchant/suppliers/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierToggleStatusHandler(supplierService))))
 	mux.Handle("POST /api/v1/merchant/suppliers/{id}/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierLinkProductHandler(supplierService))))
 	mux.Handle("DELETE /api/v1/merchant/suppliers/{id}/products/{productId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierUnlinkProductHandler(supplierService))))
+	// Service management (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryCreateHandler(serviceMgmtService))))
+	mux.Handle("GET /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryListHandler(serviceMgmtService))))
+	mux.Handle("PUT /api/v1/merchant/service-categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryUpdateHandler(serviceMgmtService))))
+	mux.Handle("DELETE /api/v1/merchant/service-categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryDeleteHandler(serviceMgmtService))))
+	mux.Handle("POST /api/v1/merchant/service-items", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemCreateHandler(serviceMgmtService))))
+	mux.Handle("GET /api/v1/merchant/service-items", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemListHandler(serviceMgmtService))))
+	mux.Handle("GET /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemGetHandler(serviceMgmtService))))
+	mux.Handle("PUT /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemUpdateHandler(serviceMgmtService))))
+	mux.Handle("DELETE /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemDeleteHandler(serviceMgmtService))))
+	mux.Handle("POST /api/v1/merchant/service-items/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemToggleStatusHandler(serviceMgmtService))))
 	// Member management (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/members", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberCreateHandler(memberService))))
 	mux.Handle("GET /api/v1/merchant/members", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberListHandler(memberService))))
