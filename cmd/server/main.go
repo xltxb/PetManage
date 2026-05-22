@@ -126,6 +126,7 @@ func main() {
 
 	// Initialize member service.
 	memberService := member.NewService(db)
+	member.SetQRCodeSecret(cfg.JWT.Secret)
 
 	// Initialize supplier service.
 	supplierService := supplier.NewService(db)
@@ -204,6 +205,10 @@ func main() {
 	mux.Handle("PUT /api/v1/merchant/members/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberUpdateHandler(memberService))))
 	mux.Handle("POST /api/v1/merchant/members/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberToggleStatusHandler(memberService))))
 	mux.Handle("POST /api/v1/merchant/members/batch-import", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberBatchImportHandler(memberService))))
+
+	// Member QR code (auth-protected, merchant-only).
+	mux.Handle("GET /api/v1/merchant/members/{id}/qrcode", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberQRCodeHandler(memberService))))
+	mux.Handle("GET /api/v1/merchant/members/qrcode/scan", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberQRCodeScanHandler(memberService))))
 
 	// Checkout (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService))))
@@ -4049,5 +4054,105 @@ func makeMemberBatchImportHandler(svc *member.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
+	}
+}
+
+// --- Member QR code handlers ---
+
+func makeMemberQRCodeHandler(svc *member.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		// Verify member belongs to this merchant.
+		m, err := svc.GetByID(r.Context(), id, *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get member", err))
+			return
+		}
+
+		token := member.GenerateQRCodeToken(m.ID, m.MerchantID)
+		png, err := member.RenderQRCodePNG(token)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to generate QR code", err))
+			return
+		}
+
+		// Support download via ?download=1 query parameter.
+		if r.URL.Query().Get("download") == "1" {
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=member_%s_qrcode.png", m.CardNo))
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(png)
+	}
+}
+
+func makeMemberQRCodeScanHandler(svc *member.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("token parameter is required"))
+			return
+		}
+
+		memberID, merchantID, ok := member.VerifyQRCodeToken(token)
+		if !ok {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid or forged QR code token"))
+			return
+		}
+
+		// Only allow scanning QR codes from the same merchant.
+		if merchantID != *claims.MerchantID {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("QR code does not belong to your merchant"))
+			return
+		}
+
+		m, err := svc.GetByID(r.Context(), memberID, merchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get member", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"member_id":   m.ID,
+			"name":        m.Name,
+			"phone":       m.Phone,
+			"card_no":     m.CardNo,
+			"merchant_id": m.MerchantID,
+			"status":      m.Status,
+		})
 	}
 }

@@ -830,3 +830,36 @@ SESSION 27 — F026 供应商管理 [2026-05-23 04:50 CST]
   ✓ 标记供应商为停止合作（status:inactive），筛选列表正确；可恢复合作（toggle back to active）
   ✓ 编辑供应商联系方式（contact_person/phone/email/address/settlement_cycle）全部持久化，解除商品关联
 - 提交: e5d3ba1
+
+================================================================================
+SESSION 28 — F032 会员开卡与档案管理 [2026-05-23 05:00 CST]
+================================================================================
+
+- 创建迁移 018: members 表（card_no, name, phone, wechat, gender, birthday, address, remark, balance_cents, points, status）
+  + 索引: idx_members_merchant_id, idx_members_card_no (UNIQUE), idx_members_phone, idx_members_name
+- 创建 internal/member/service.go: 会员管理服务
+  - Create: 校验 name/phone 必填, gender 可选 M/F/O, 自动生成卡号 (M+YYYYMMDD+4位流水号)
+  - generateCardNo: 查询当天最大流水号 + 1, 超出 9999 自动归 1
+  - GetDetail: 会员信息 + 宠物列表(预留) + 储值余额 + 积分 + 消费记录(从 orders 表)
+  - List: 支持 keyword (name/phone ILIKE), status 筛选, 分页
+  - SearchByPhone: 手机号模糊匹配 (phone ILIKE)
+  - Update: 部分更新 (pointer fields)
+  - ToggleStatus: active ↔ inactive 切换
+  - BatchImport: Excel (.xlsx) 文件解析导入, 逐行校验
+  - BulkCreateJSON: JSON 数组批量创建
+- 注册 7 个 API 端点:
+  - POST   /api/v1/merchant/members — 创建会员
+  - GET    /api/v1/merchant/members — 列表（支持 keyword/status/page/page_size）
+  - GET    /api/v1/merchant/members/search — 手机号搜索（?phone=xxx）
+  - GET    /api/v1/merchant/members/{id} — 详情（会员信息+宠物+储值+积分+消费记录）
+  - PUT    /api/v1/merchant/members/{id} — 编辑会员
+  - POST   /api/v1/merchant/members/{id}/toggle-status — 启用/禁用
+  - POST   /api/v1/merchant/members/batch-import — 批量导入（JSON数组/Excel文件）
+- 端到端验证全部 5 个步骤通过:
+  ✓ 新建会员：填写姓名、手机号、生日 → 自动生成卡号 M202605230001，必填字段缺失返回 INVALID_PARAMS
+  ✓ 卡号生成规则：M+20260523+0001，第二个会员得到 M202605230002，批量导入得到 0003/0004
+  ✓ 会员详情：基础信息、pets:[], balance_cents:0, points:0, consumption_records:[], total_orders:0
+  ✓ 手机号搜索：全号匹配找到会员，部分号 "1380" 模糊匹配，关键词 "张" 按姓名搜索
+  ✓ 批量导入：4 行 JSON 数组, 2 成功（王五/赵六）, 2 失败（行3缺姓名, 行4缺手机号）, 返回行级错误详情
+  ✓ 额外验证：编辑会员（地址、备注更新成功），状态切换（active↔inactive），状态筛选列表
+- 提交: 395b897

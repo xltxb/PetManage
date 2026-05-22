@@ -41,7 +41,12 @@ const router = createRouter({
     {
       path: '/merchant/members',
       name: 'merchant-members',
-      component: () => import('@/views/Placeholder.vue'),
+      component: () => import('@/views/MemberList.vue'),
+    },
+    {
+      path: '/merchant/members/:id',
+      name: 'merchant-member-detail',
+      component: () => import('@/views/MemberDetail.vue'),
     },
     {
       path: '/merchant/inventory',

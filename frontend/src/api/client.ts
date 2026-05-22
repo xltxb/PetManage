@@ -295,6 +295,65 @@ class ApiClient {
     })
   }
 
+  // --- Member APIs ---
+
+  getMembers(params?: { keyword?: string; status?: string; page?: number; page_size?: number }) {
+    const search = new URLSearchParams()
+    if (params?.keyword) search.set('keyword', params.keyword)
+    if (params?.status) search.set('status', params.status)
+    if (params?.page) search.set('page', String(params.page))
+    if (params?.page_size) search.set('page_size', String(params.page_size))
+    const qs = search.toString()
+    return this.request<any>(`/api/v1/merchant/members${qs ? '?' + qs : ''}`)
+  }
+
+  getMember(id: number) {
+    return this.request<any>(`/api/v1/merchant/members/${id}`)
+  }
+
+  searchMembers(phone: string) {
+    return this.request<any>(`/api/v1/merchant/members/search?phone=${encodeURIComponent(phone)}`)
+  }
+
+  getMemberQRCodeUrl(id: number, download = false): string {
+    const token = this.getToken()
+    const params = download ? '?download=1' : ''
+    // Return the URL directly for use in <img> tags, since we need auth header
+    return `${API_BASE}/api/v1/merchant/members/${id}/qrcode${params}`
+  }
+
+  async getMemberQRCodeBlob(id: number): Promise<{ blob: Blob; cardNo: string }> {
+    const headers: Record<string, string> = {}
+    const token = this.getToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    const res = await fetch(`${API_BASE}/api/v1/merchant/members/${id}/qrcode?download=1`, { headers })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw new Error(data.message || `HTTP ${res.status}`)
+    }
+
+    const disposition = res.headers.get('Content-Disposition') || ''
+    const match = disposition.match(/filename="?([^"]+)"?/)
+    const cardNo = match ? match[1].replace('member_', '').replace('_qrcode.png', '') : 'unknown'
+
+    return { blob: await res.blob(), cardNo }
+  }
+
+  createMember(data: { name: string; phone: string; wechat?: string; gender?: string; birthday?: string; address?: string; remark?: string }) {
+    return this.request<any>('/api/v1/merchant/members', { method: 'POST', body: data })
+  }
+
+  updateMember(id: number, data: Record<string, any>) {
+    return this.request<any>(`/api/v1/merchant/members/${id}`, { method: 'PUT', body: data })
+  }
+
+  toggleMemberStatus(id: number) {
+    return this.request<any>(`/api/v1/merchant/members/${id}/toggle-status`, { method: 'POST' })
+  }
+
   async uploadShopLogo(file: File) {
     const formData = new FormData()
     formData.append('logo', file)
