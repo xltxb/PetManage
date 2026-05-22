@@ -1137,3 +1137,36 @@ SESSION 37 — F079 数据权限隔离 [2026-05-23 07:11 CST]
   ✓ 商户用户的Token不能访问平台端点 (14个端点全部 403 FORBIDDEN)
   ✓ 数据库查询统一加入商户ID过滤条件 (商品/员工/供应商交叉访问全部 404)
 - 提交: cc30bfb feat(F079): data permission isolation
+
+================================================================================
+SESSION 38 — F027 采购管理 [2026-05-23 07:23 CST]
+================================================================================
+
+- 创建迁移 028: purchase_orders + purchase_order_items 表
+- 创建 internal/purchase/service.go: 采购单完整生命周期管理
+  - Create: 创建采购单草稿，选择供应商、商品、数量、单价
+  - Submit: 草稿→已提交（待供应商确认）
+  - Confirm: 已提交→已确认（供应商确认）
+  - Receive: 已确认→已入库，事务内自动增加商品库存 + 生成 stock_flows 入库记录
+  - Void: 作废采购单（已入库/已作废状态不可作废）
+  - List: 支持 status/keyword 筛选和分页
+  - GetByID: 详情含供应商名称和采购明细
+  - Update: 仅草稿状态可编辑（含采购项替换）
+  - 采购单号: PO+YYYYMMDD+4位流水号
+- 注册 8 个 API 端点 (auth-protected, merchant-only):
+  - POST /api/v1/merchant/purchases — 创建采购单
+  - GET /api/v1/merchant/purchases — 列表（支持 status/keyword/page/page_size）
+  - GET /api/v1/merchant/purchases/{id} — 详情
+  - PUT /api/v1/merchant/purchases/{id} — 编辑（仅草稿）
+  - POST /api/v1/merchant/purchases/{id}/submit — 提交
+  - POST /api/v1/merchant/purchases/{id}/confirm — 确认
+  - POST /api/v1/merchant/purchases/{id}/receive — 确认入库
+  - POST /api/v1/merchant/purchases/{id}/void — 作废
+- 端到端验证全部 6 个步骤通过:
+  ✓ 创建采购单：选择供应商(5)、商品(25)、数量(30)、单价(10000分)，保存为草稿
+  ✓ 提交采购单，状态变为 submitted（待确认）
+  ✓ 供应商确认后状态变为 confirmed（已确认）
+  ✓ 确认入库：状态→received，库存自动增加（50→80），received_quantity=30
+  ✓ 入库生成 stock_flows 记录：type=inbound, quantity_change=30
+  ✓ 采购单支持作废操作（已入库的采购单不可作废，返回 400）
+- 提交: cb9d8d1 feat(F027): purchase order management
