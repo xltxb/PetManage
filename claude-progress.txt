@@ -706,3 +706,28 @@ SESSION 23 — F019 投诉工单管理 [2026-05-23 04:13 CST]
   ✓ 工单状态流转：pending→processing→resolved→revisited，非法转换被拒绝
   ✓ 统计商户投诉率（total=3, resolved=1, revisited=1, pending=1），merchant 16投诉率66.7%
 - 提交: 73b86e3 feat(F019): complaint ticket management
+
+================================================================================
+SESSION 24 — F023 商品分类管理 [2026-05-23 04:14 CST]
+================================================================================
+
+- 创建迁移 014_product_categories: product_categories 表（支持 merchant_id, parent_id 多级分类）+ products 表新增 category_id
+- 实现 internal/category/service.go: 分类 CRUD + 树形结构构建 + 删除保护
+  - Create: 支持创建一级/二级分类，验证父分类存在性
+  - List: 返回树形结构（buildTree 构建嵌套 children）
+  - Update: 更新名称/父级/排序，不允许自引用
+  - Delete: 软删除，删除前检查关联商品（有则拒删）和子分类（有则拒删）
+- 注册 4 个 API 端点:
+  - POST /api/v1/merchant/categories — 创建分类 (auth + merchant)
+  - GET /api/v1/merchant/categories — 树形列表 (auth + merchant)
+  - PUT /api/v1/merchant/categories/{id} — 编辑分类 (auth + merchant)
+  - DELETE /api/v1/merchant/categories/{id} — 删除分类 (auth + merchant)
+- 前端 MerchantCategories.vue: 树形展示、新建/编辑对话框、删除确认（含关联商品提示）
+- 前端路由 /merchant/categories 注册
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建一级分类「主粮」成功
+  ✓ 在一级分类下创建二级分类「狗粮」成功
+  ✓ 分类列表以树形结构展示（children 嵌套）
+  ✓ 编辑分类名称，子分类不受影响（子分类仍在 children 中）
+  ✓ 删除前检查：有关联商品→拒删提示；有子分类→拒删提示；无关联→删除成功
+- 提交: 522f908 feat(F023): merchant product category management
