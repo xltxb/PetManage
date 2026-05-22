@@ -7,11 +7,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/xltxb/PetManage/internal/auth"
 	"github.com/xltxb/PetManage/internal/config"
 	"github.com/xltxb/PetManage/internal/database"
+	"github.com/xltxb/PetManage/internal/merchant"
 	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	"github.com/xltxb/PetManage/pkg/logger"
@@ -64,11 +66,18 @@ func main() {
 	// Initialize auth service.
 	authService := auth.NewService(db, jwtManager)
 
+	// Initialize merchant service.
+	merchantService := merchant.NewService(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
 	mux.HandleFunc("/api/v1/auth/refresh", makeRefreshHandler(authService))
 	mux.Handle("/api/v1/auth/change-password", middleware.Auth(jwtManager)(http.HandlerFunc(makeChangePasswordHandler(authService))))
+
+	// Merchant routes.
+	mux.HandleFunc("POST /api/v1/merchants/apply", makeMerchantApplyHandler(merchantService))
+	mux.HandleFunc("GET /api/v1/merchants/apply/{id}", makeMerchantGetHandler(merchantService))
 
 	// Protected routes.
 	protected := http.NewServeMux()
@@ -300,4 +309,54 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// --- Merchant handlers ---
+
+func makeMerchantApplyHandler(svc *merchant.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req merchant.ApplyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		resp, err := svc.Apply(r.Context(), req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("application failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeMerchantGetHandler(svc *merchant.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid application id"))
+			return
+		}
+
+		detail, err := svc.GetByID(r.Context(), id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to retrieve application", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(detail)
+	}
 }

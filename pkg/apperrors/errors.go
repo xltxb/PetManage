@@ -16,6 +16,7 @@ const (
 	CodeInternalError     = "INTERNAL_ERROR"
 	CodeInvalidCredentials = "INVALID_CREDENTIALS"
 	CodeTokenExpired      = "TOKEN_EXPIRED"
+	CodeDuplicateLicense  = "DUPLICATE_LICENSE"
 )
 
 var codeToStatus = map[string]int{
@@ -27,6 +28,7 @@ var codeToStatus = map[string]int{
 	CodeInternalError:     http.StatusInternalServerError,
 	CodeInvalidCredentials: http.StatusUnauthorized,
 	CodeTokenExpired:      http.StatusUnauthorized,
+	CodeDuplicateLicense:  http.StatusConflict,
 }
 
 // AppError is a structured application error.
@@ -98,6 +100,10 @@ func NewNotFoundError(msg string) *AppError {
 
 func NewConflictError(msg string) *AppError {
 	return &AppError{Code: CodeConflict, Message: msg}
+}
+
+func NewDuplicateLicenseError(msg string) *AppError {
+	return &AppError{Code: CodeDuplicateLicense, Message: msg}
 }
 
 func NewInternalError(msg string, err error) *AppError {
