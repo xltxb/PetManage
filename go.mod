@@ -1,3 +1,3 @@
-module github.com/petstore/pet
+module github.com/xltxb/PetManage
 
 go 1.21
