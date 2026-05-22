@@ -670,4 +670,39 @@ SESSION 22 — F018 交易风控预警 [2026-05-23 04:02 CST]
   ✓ 配置规则：同一用户1小时内>10笔交易触发预警（默认10笔/60分钟）
   ✓ 模拟11笔高频交易后系统自动生成 high_frequency 预警
   ✓ 预警单支持「已处理/已忽略」状态变更，状态持久化
-- 提交: [next] feat(F018): transaction risk control — configurable rules, large refund and high-frequency alerts, refund endpoint
+- 提交: 6716543 feat(F018): transaction risk control — configurable rules, large refund and high-frequency alerts, refund endpoint
+
+================================================================================
+SESSION 23 — F019 投诉工单管理 [2026-05-23 04:13 CST]
+================================================================================
+
+- 创建迁移 013: complaint_tickets 表
+  - 字段: merchant_id (FK), complaint_type (service/product/staff/pricing/other), description,
+    status (pending/processing/resolved/revisited), assigned_to (FK platform_users),
+    resolution, revisit_notes, created_at, updated_at, deleted_at
+  - 索引: merchant_id, status, assigned_to, created_at
+- 创建 internal/complaint/service.go: 投诉工单管理服务
+  - CreateTicket: 创建投诉工单，验证必填字段、投诉类型、商户存在性
+  - AssignTicket: 分配工单给处理人，自动将 pending 转为 processing
+  - UpdateProgress: 更新处理进度和解决方案
+  - UpdateStatus: 状态流转（pending→processing→resolved→revisited），校验合法转换路径
+  - ListTickets: 支持按商户、状态、类型、处理人筛选和分页
+  - GetTicket: 查询工单详情，含商户名称和处理人名称
+  - GetComplaintStats: 投诉统计（总数、各状态计数、商户投诉率排行）
+  - 操作日志记录: create_complaint, assign_complaint, update_complaint_progress, update_complaint_status
+- 新增权限点: complaint:view（投诉查看）, complaint:manage（投诉管理）
+- 注册 7 个 API 端点:
+  - POST /api/v1/complaints — 创建投诉工单 (auth)
+  - GET /api/v1/complaints — 工单列表 (auth + complaint:view)
+  - GET /api/v1/complaints/{id} — 工单详情 (auth + complaint:view)
+  - PUT /api/v1/complaints/{id}/assign — 分配处理人 (auth + complaint:manage)
+  - PUT /api/v1/complaints/{id}/progress — 更新进度 (auth + complaint:manage)
+  - PUT /api/v1/complaints/{id}/status — 状态流转 (auth + complaint:manage)
+  - GET /api/v1/complaints/stats — 投诉统计 (auth + complaint:view)
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建投诉工单（3张工单关联不同商户），必填字段校验（complaint_type等），无效类型拒绝
+  ✓ 分配工单给处理人（admin），状态自动从 pending 转为 processing
+  ✓ 处理人更新处理进度和结果（resolution 记录解决方案）
+  ✓ 工单状态流转：pending→processing→resolved→revisited，非法转换被拒绝
+  ✓ 统计商户投诉率（total=3, resolved=1, revisited=1, pending=1），merchant 16投诉率66.7%
+- 提交: 73b86e3 feat(F019): complaint ticket management
