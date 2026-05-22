@@ -1,7 +1,7 @@
 {
   "project": "宠物店管理系统 (Pet Store Management SaaS)",
   "created_at": "2026-05-23T00:19:00+08:00",
-  "tech_stack": "Go backend, React frontend, MySQL, Redis",
+  "tech_stack": "Go backend, Vue 3 frontend (TypeScript + Vite + TailwindCSS + Pinia), Supabase (PostgreSQL), Redis",
   "features": [
     {
       "id": "F001",
