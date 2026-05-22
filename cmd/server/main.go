@@ -31,6 +31,7 @@ import (
 	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/report"
 	"github.com/xltxb/PetManage/internal/member"
+	"github.com/xltxb/PetManage/internal/merchantrole"
 	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/internal/servicemgmt"
 	"github.com/xltxb/PetManage/internal/supplier"
@@ -143,6 +144,9 @@ func main() {
 	// Initialize employee service.
 	employeeService := employee.NewService(db)
 
+	// Initialize merchant role service.
+	merchantRoleService := merchantrole.NewService(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -220,14 +224,56 @@ func main() {
 	mux.Handle("PUT /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemUpdateHandler(serviceMgmtService))))
 	mux.Handle("DELETE /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemDeleteHandler(serviceMgmtService))))
 	mux.Handle("POST /api/v1/merchant/service-items/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemToggleStatusHandler(serviceMgmtService))))
-	// Member management (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/members", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberCreateHandler(memberService))))
-	mux.Handle("GET /api/v1/merchant/members", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberListHandler(memberService))))
-	mux.Handle("GET /api/v1/merchant/members/search", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberSearchHandler(memberService))))
-	mux.Handle("GET /api/v1/merchant/members/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberGetHandler(memberService))))
-	mux.Handle("PUT /api/v1/merchant/members/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberUpdateHandler(memberService))))
-	mux.Handle("POST /api/v1/merchant/members/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberToggleStatusHandler(memberService))))
-	mux.Handle("POST /api/v1/merchant/members/batch-import", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberBatchImportHandler(memberService))))
+		// Member management (auth + merchant permission).
+		mux.Handle("POST /api/v1/merchant/members",
+			middleware.Auth(jwtManager)(
+				permChecker.RequireMerchantPermission("member:manage")(
+					http.HandlerFunc(makeMemberCreateHandler(memberService)),
+				),
+			),
+		)
+		mux.Handle("GET /api/v1/merchant/members",
+			middleware.Auth(jwtManager)(
+				permChecker.RequireMerchantPermission("member:view")(
+					http.HandlerFunc(makeMemberListHandler(memberService)),
+				),
+			),
+		)
+		mux.Handle("GET /api/v1/merchant/members/search",
+			middleware.Auth(jwtManager)(
+				permChecker.RequireMerchantPermission("member:view")(
+					http.HandlerFunc(makeMemberSearchHandler(memberService)),
+				),
+			),
+		)
+		mux.Handle("GET /api/v1/merchant/members/{id}",
+			middleware.Auth(jwtManager)(
+				permChecker.RequireMerchantPermission("member:view")(
+					http.HandlerFunc(makeMemberGetHandler(memberService)),
+				),
+			),
+		)
+		mux.Handle("PUT /api/v1/merchant/members/{id}",
+			middleware.Auth(jwtManager)(
+				permChecker.RequireMerchantPermission("member:manage")(
+					http.HandlerFunc(makeMemberUpdateHandler(memberService)),
+				),
+			),
+		)
+		mux.Handle("POST /api/v1/merchant/members/{id}/toggle-status",
+			middleware.Auth(jwtManager)(
+				permChecker.RequireMerchantPermission("member:manage")(
+					http.HandlerFunc(makeMemberToggleStatusHandler(memberService)),
+				),
+			),
+		)
+		mux.Handle("POST /api/v1/merchant/members/batch-import",
+			middleware.Auth(jwtManager)(
+				permChecker.RequireMerchantPermission("member:manage")(
+					http.HandlerFunc(makeMemberBatchImportHandler(memberService)),
+				),
+			),
+		)
 
 	// Member QR code (auth-protected, merchant-only).
 	mux.Handle("GET /api/v1/merchant/members/{id}/qrcode", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberQRCodeHandler(memberService))))
@@ -247,6 +293,17 @@ func main() {
 	mux.Handle("PUT /api/v1/merchant/employees/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeUpdateHandler(employeeService))))
 	mux.Handle("POST /api/v1/merchant/employees/{id}/resign", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeResignHandler(employeeService))))
 	mux.Handle("POST /api/v1/merchant/employees/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeToggleStatusHandler(employeeService))))
+		mux.Handle("POST /api/v1/merchant/employees/{id}/create-account", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeCreateAccountHandler(merchantRoleService))))
+		mux.Handle("POST /api/v1/merchant/employees/{id}/assign-role", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeAssignRoleHandler(merchantRoleService))))
+		mux.Handle("POST /api/v1/merchant/employees/{id}/disable-account", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeDisableAccountHandler(merchantRoleService))))
+
+		// Merchant role management (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/roles", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleCreateHandler(merchantRoleService))))
+		mux.Handle("GET /api/v1/merchant/roles", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleListHandler(merchantRoleService))))
+		mux.Handle("GET /api/v1/merchant/roles/permissions", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRolePermissionsHandler(merchantRoleService))))
+		mux.Handle("GET /api/v1/merchant/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleGetHandler(merchantRoleService))))
+		mux.Handle("PUT /api/v1/merchant/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleUpdateHandler(merchantRoleService, permChecker))))
+		mux.Handle("DELETE /api/v1/merchant/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleDeleteHandler(merchantRoleService))))
 
 	// Checkout (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService))))

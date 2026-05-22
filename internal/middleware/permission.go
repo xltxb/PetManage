@@ -104,6 +104,130 @@ func (pc *PermissionChecker) RequirePermission(permission string) func(http.Hand
 	}
 }
 
+// RequireMerchantPermission returns middleware that checks merchant role permissions.
+// For users with merchant_id: looks up the employee's merchant role for permissions.
+// Merchant owners (no employee record) are granted full access.
+// Platform users without merchant_id fall back to platform role permissions.
+func (pc *PermissionChecker) RequireMerchantPermission(permission string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims := UserClaimsFromContext(r.Context())
+			if claims == nil {
+				apperrors.WriteError(w, r, &apperrors.AppError{
+					Code:    apperrors.CodeUnauthorized,
+					Message: "authentication required",
+				})
+				return
+			}
+
+			// Platform users (no merchant_id) — check platform roles.
+			if claims.MerchantID == nil {
+				if claims.RoleID == 0 {
+					apperrors.WriteError(w, r, &apperrors.AppError{
+						Code:    apperrors.CodeForbidden,
+						Message: "no role assigned, access denied",
+					})
+					return
+				}
+				perms, err := pc.getPermissions(claims.RoleID)
+				if err != nil {
+					apperrors.WriteError(w, r, &apperrors.AppError{
+						Code:    apperrors.CodeInternalError,
+						Message: "failed to check permissions", Err: err,
+					})
+					return
+				}
+				if !hasPermission(perms, permission) {
+					apperrors.WriteError(w, r, &apperrors.AppError{
+						Code:    apperrors.CodeForbidden,
+						Message: "insufficient permissions: " + permission + " required",
+					})
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Merchant users — check if they are an employee with a merchant role.
+			var employeeID sql.NullInt64
+			err := pc.db.QueryRow(
+				`SELECT employee_id FROM platform_users WHERE id = $1 AND deleted_at IS NULL`,
+				claims.UserID,
+			).Scan(&employeeID)
+
+			// No employee record — merchant owner/admin, grant full access.
+			if err == sql.ErrNoRows || !employeeID.Valid || employeeID.Int64 == 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if err != nil {
+				apperrors.WriteError(w, r, &apperrors.AppError{
+					Code:    apperrors.CodeInternalError,
+					Message: "failed to check permissions", Err: err,
+				})
+				return
+			}
+
+			// Employee found — check merchant role permissions.
+			perms, err := pc.getMerchantPermissions(employeeID.Int64)
+			if err != nil {
+				apperrors.WriteError(w, r, &apperrors.AppError{
+					Code:    apperrors.CodeInternalError,
+					Message: "failed to check permissions", Err: err,
+				})
+				return
+			}
+			if !hasPermission(perms, permission) {
+				apperrors.WriteError(w, r, &apperrors.AppError{
+					Code:    apperrors.CodeForbidden,
+					Message: "insufficient permissions: " + permission + " required",
+				})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func (pc *PermissionChecker) getMerchantPermissions(employeeID int64) ([]string, error) {
+	pc.mu.RLock()
+	entry, ok := pc.cache[-employeeID]
+	pc.mu.RUnlock()
+	if ok && time.Now().Before(entry.expires) {
+		return entry.permissions, nil
+	}
+
+	var permsStr sql.NullString
+	err := pc.db.QueryRow(
+		`SELECT mr.permissions::text
+		 FROM employees e
+		 JOIN merchant_roles mr ON e.merchant_role_id = mr.id AND mr.deleted_at IS NULL
+		 WHERE e.id = $1 AND e.deleted_at IS NULL`, employeeID,
+	).Scan(&permsStr)
+	if err == sql.ErrNoRows || !permsStr.Valid {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var perms []string
+	json.Unmarshal([]byte(permsStr.String), &perms)
+
+	pc.mu.Lock()
+	pc.cache[-employeeID] = permissionCacheEntry{permissions: perms, expires: time.Now().Add(60 * time.Second)}
+	pc.mu.Unlock()
+
+	return perms, nil
+}
+
+// InvalidateAll clears all cached permissions. Call after role permissions change.
+func (pc *PermissionChecker) InvalidateAll() {
+	pc.mu.Lock()
+	pc.cache = make(map[int64]permissionCacheEntry)
+	pc.mu.Unlock()
+}
+
 func hasPermission(perms []string, required string) bool {
 	for _, p := range perms {
 		if p == "*" {

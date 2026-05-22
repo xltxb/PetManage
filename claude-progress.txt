@@ -1006,4 +1006,34 @@ SESSION 33 — F049 多支付方式组合收款 [2026-05-23 13:51 CST]
   ✓ 打印小票: 前端 printReceipt() 生成含商品明细/支付方式/找零的小票打印窗口
 - 提交: ad88f28 feat(F049): multi-payment combined checkout
 
+================================================================================
+SESSION 34 — F053 员工档案管理 [2026-05-23 06:15 CST]
+================================================================================
+
+- 创建迁移 024: employees 表
+  - 字段: id, merchant_id (FK), name, employee_no, position, phone, email, hire_date, status CHECK (active|inactive)
+  - 唯一索引: (merchant_id, employee_no) WHERE deleted_at IS NULL
+  - 索引: merchant_id, status, position
+- 创建 internal/employee/service.go: 员工CRUD + 离职 + 状态切换
+  - Create: 校验必填字段 (name, employee_no, position)，检查工号唯一性
+  - List: 支持 position 筛选, status 筛选, keyword 搜索 (name/employee_no/phone), 分页
+  - GetByID: 单员工查询含商户权限校验
+  - Update: 部分更新（pointer fields），employee_no 变更时检查唯一性
+  - Resign: 状态→inactive，同时禁用关联的 platform_users 账号 (username: e_{merchantID}_{employeeNo})
+  - ToggleStatus: active ↔ inactive 切换
+- 注册 6 个 API 端点 (auth-protected, merchant-only):
+  - POST   /api/v1/merchant/employees — 创建员工
+  - GET    /api/v1/merchant/employees — 列表 (支持 position/status/keyword/page/page_size)
+  - GET    /api/v1/merchant/employees/{id} — 详情
+  - PUT    /api/v1/merchant/employees/{id} — 编辑
+  - POST   /api/v1/merchant/employees/{id}/resign — 离职 (状态→inactive + 禁用账号)
+  - POST   /api/v1/merchant/employees/{id}/toggle-status — 状态切换
+- 端到端验证全部 5 个步骤通过:
+  ✓ 新建员工: 填写姓名(李四)、工号(E001)、岗位(美容师)、手机号等信息保存成功
+  ✓ 重复工号(E001) → CONFLICT "employee number already exists: E001"
+  ✓ 必填字段缺失(缺employee_no, position) → INVALID_PARAMS "missing required fields: employee_no, position"
+  ✓ 员工列表: 按岗位筛选(position=美容师 → 1条)，按状态筛选(active→2条, inactive→1条)
+  ✓ 编辑员工信息: position(美容师→高级美容师), phone(13811110001→13811118888) 保存后详情页更新
+  ✓ 员工离职: status→inactive，关联 platform_users 账号自动禁用
+- 提交: a7fd58a feat(F053): employee archive management
 
