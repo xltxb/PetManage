@@ -516,6 +516,112 @@ func generatePassword(length int) string {
 	return hex.EncodeToString(b)[:length]
 }
 
+// MerchantSummary is a compact row for the merchant list.
+type MerchantSummary struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	LicenseNumber string `json:"license_number"`
+	LegalPerson  string `json:"legal_person"`
+	ContactPhone string `json:"contact_phone"`
+	Status       string `json:"status"`
+	CreatedAt    string `json:"created_at"`
+}
+
+// ListResponse is the paginated merchant list response.
+type ListResponse struct {
+	Merchants []MerchantSummary `json:"merchants"`
+	Total     int               `json:"total"`
+	Page      int               `json:"page"`
+	PageSize  int               `json:"page_size"`
+}
+
+// ListParams holds the query parameters for listing merchants.
+type ListParams struct {
+	Keyword  string
+	Status   string
+	Page     int
+	PageSize int
+}
+
+// List returns a paginated list of merchants with optional keyword search and status filter.
+func (s *Service) List(ctx context.Context, params ListParams) (*ListResponse, error) {
+	if params.Page <= 0 {
+		params.Page = 1
+	}
+	if params.PageSize <= 0 || params.PageSize > 100 {
+		params.PageSize = 20
+	}
+
+	keyword := "%" + params.Keyword + "%"
+	args := []interface{}{keyword, params.Status}
+
+	// Count total matching rows.
+	var total int
+	countQuery := `SELECT COUNT(*) FROM merchants WHERE deleted_at IS NULL`
+	countQuery += ` AND ($1 = '%%' OR name ILIKE $1)`
+	if params.Status != "" {
+		countQuery += ` AND status = $2`
+	} else {
+		countQuery += ` AND ($2 = '' OR status = $2)`
+	}
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to count merchants",
+			Err:     err,
+		}
+	}
+
+	// Fetch paginated results.
+	offset := (params.Page - 1) * params.PageSize
+	dataQuery := `SELECT id, name, license_number, legal_person, contact_phone, status, created_at
+		FROM merchants WHERE deleted_at IS NULL`
+	dataQuery += ` AND ($1 = '%%' OR name ILIKE $1)`
+	if params.Status != "" {
+		dataQuery += ` AND status = $2`
+	} else {
+		dataQuery += ` AND ($2 = '' OR status = $2)`
+	}
+	dataQuery += ` ORDER BY created_at DESC LIMIT $3 OFFSET $4`
+
+	rows, err := s.db.QueryContext(ctx, dataQuery, keyword, params.Status, params.PageSize, offset)
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to list merchants",
+			Err:     err,
+		}
+	}
+	defer rows.Close()
+
+	var merchants []MerchantSummary
+	for rows.Next() {
+		var m MerchantSummary
+		var createdAt time.Time
+		if err := rows.Scan(&m.ID, &m.Name, &m.LicenseNumber, &m.LegalPerson,
+			&m.ContactPhone, &m.Status, &createdAt); err != nil {
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeInternalError,
+				Message: "failed to scan merchant row",
+				Err:     err,
+			}
+		}
+		m.CreatedAt = createdAt.Format(time.RFC3339)
+		merchants = append(merchants, m)
+	}
+
+	if merchants == nil {
+		merchants = []MerchantSummary{}
+	}
+
+	return &ListResponse{
+		Merchants: merchants,
+		Total:     total,
+		Page:      params.Page,
+		PageSize:  params.PageSize,
+	}, nil
+}
+
 func validateRequired(req ApplyRequest) []string {
 	var missing []string
 	if strings.TrimSpace(req.Name) == "" {

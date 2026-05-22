@@ -80,7 +80,8 @@ func main() {
 	mux.HandleFunc("POST /api/v1/merchants/apply", makeMerchantApplyHandler(merchantService))
 	mux.HandleFunc("GET /api/v1/merchants/apply/{id}", makeMerchantGetHandler(merchantService))
 
-	// Merchant routes (auth-protected review operations).
+	// Merchant routes (auth-protected).
+	mux.Handle("GET /api/v1/merchants", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantListHandler(merchantService))))
 	mux.Handle("GET /api/v1/merchants/pending", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantPendingHandler(merchantService))))
 	mux.Handle("POST /api/v1/merchants/{id}/approve", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantApproveHandler(merchantService))))
 	mux.Handle("POST /api/v1/merchants/{id}/reject", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRejectHandler(merchantService))))
@@ -365,6 +366,33 @@ func makeMerchantGetHandler(svc *merchant.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(detail)
+	}
+}
+
+func makeMerchantListHandler(svc *merchant.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+
+		params := merchant.ListParams{
+			Keyword:  r.URL.Query().Get("keyword"),
+			Status:   r.URL.Query().Get("status"),
+			Page:     page,
+			PageSize: pageSize,
+		}
+
+		resp, err := svc.List(r.Context(), params)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list merchants", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 

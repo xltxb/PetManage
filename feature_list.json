@@ -114,7 +114,7 @@
         "分页查询：每页20条，返回 total、page、page_size",
         "点击商户查看详情，包含基础信息、经营状态、入驻时间"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F009",
