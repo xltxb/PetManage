@@ -404,3 +404,33 @@ SESSION 13 — F013 系统公告管理 [2026-05-23 02:30 CST]
   ✓ 已读/未读列表: 公告 ID=1 read_merchants=[17], unread_merchants=[8个]; 公告 ID=3 read=[], unread=[16,17]
   ✓ 置顶与定时: pin 切换 false→true→false 成功，置顶公告优先排序，定时公告仅平台端可见
 
+================================================================================
+SESSION 14 — F014 系统操作日志 [2026-05-23 02:42 CST]
+================================================================================
+
+- 创建迁移 010: operation_logs 表添加 ip_address VARCHAR(45) 列, action 索引,
+  BEFORE UPDATE/DELETE 触发器防止日志篡改
+- 创建 internal/middleware/ip.go: GetClientIP (X-Forwarded-For → X-Real-IP → RemoteAddr),
+  WithClientIP 中间件将 IP 注入 context
+- 创建 internal/operationlog/service.go: 统一操作日志查询服务
+  - QueryParams: user_id, action, target_type, start_time, end_time, page, page_size
+  - LogEntry: 包含 username (LEFT JOIN platform_users), ip_address, detail 等字段
+  - 支持分页、过滤、排序，默认 page_size=20 最大 100
+- 更新所有日志写入点以捕获 IP 地址:
+  - merchant/service.go: recordOperation/recordOperationTx → ip_address 参数
+  - role/service.go: recordLog → ip_address 参数
+  - contract/service.go: 2 处直接 INSERT (upload_contract, renew_contract)
+  - announcement/service.go: 1 处直接 INSERT (create_announcement)
+  - OperationLogEntry 结构体新增 IPAddress 字段，GetOperationLogs 扫描包含 ip_address
+- 更新 cmd/server/main.go:
+  - 中间件链添加 WithClientIP
+  - 注册 GET /api/v1/operation-logs (auth-protected)
+  - makeOperationLogsHandler 解析所有查询参数并调用 Query 服务
+- 端到端验证全部 5 个步骤通过:
+  ✓ 执行业务操作(freeze_merchant)后 operation_logs 生成记录
+  ✓ 日志记录包含: 操作人(username=admin), 操作时间, IP地址(::1), 操作类型(freeze_merchant), 操作内容(detail JSON)
+  ✓ 按 user_id 筛选: user_id=1 返回 23 条记录全部为该用户; user_id=999 返回 0 条
+  ✓ 按时间范围筛选: 2026-05-22~2026-05-24 返回 25 条; 2020年范围返回 0 条
+  ✓ 日志不可删除/修改: DELETE/PUT /api/v1/operation-logs → 404; DB 触发器阻止直接 SQL 变更
+- 提交: 21aecd6 feat(F014): system operation log query with IP tracking, filters, and immutability
+
