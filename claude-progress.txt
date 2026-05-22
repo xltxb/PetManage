@@ -972,3 +972,38 @@ SESSION 32 — F048 POS收银开单 [2026-05-23 13:51 CST]
   ✓ 订单备注: order_notes="POS test note" 成功保存
 - 提交: 25e67ea feat(F048): POS cash register billing
 
+================================================================================
+SESSION 33 — F049 多支付方式组合收款 [2026-05-23 13:51 CST]
+================================================================================
+
+- 创建迁移 023: coupons 表（优惠券码、类型fixed/percent、面值、最低消费、状态active/used/expired/disabled）
+- 重写 internal/checkout/service.go:
+  - 新增支付方式: balance（储值余额扣减）、points（积分抵扣）、coupon（优惠券核销）
+  - Cash 支付支持 received_cents 参数自动计算找零
+  - Coupon 支付自动验证券码有效性、最低消费门槛，标记已使用
+  - Points 积分按 1:1 比例兑换（100分=100分钱=¥1），单笔最高可抵扣50%订单金额
+  - Balance 支付验证会员余额并扣减
+  - CartCalculate 返回会员余额、积分、最大积分抵扣金额
+  - VerifyCoupon 优惠券验证服务
+- 新增 API 端点: GET /api/v1/merchant/pos/coupons/verify?code= — 优惠券验证
+- 更新 LookupMember: 返回会员 balance_cents 和 points
+- 修复 payments 表方法约束: 添加 points、coupon 到 CHECK 约束
+- 修复 generateCardNo 全局唯一性: 改为跨商户查询最大流水号
+- 前端重写 MerchantPos.vue:
+  - 组合支付面板: 支持现金/微信/支付宝/储值/积分/优惠券多方式组合
+  - 现金实收输入自动算找零
+  - 储值/积分显示可用额度和最高抵扣额
+  - 优惠券输入券码→点击验证→自动计算抵扣
+  - 待付金额实时追踪，付清后启用确认按钮
+  - 支付完成展示明细 + 找零金额 + 打印小票按钮
+  - 小票打印功能: 新窗口生成含明细/支付方式的收据并通过浏览器打印
+- 端到端验证全部 6 个步骤通过:
+  ✓ 现金支付: 1商品¥200, 收到¥300现金, 找零¥100 (change_cents=10000)
+  ✓ 微信支付: 1商品¥100, 微信支付¥100, 订单完成
+  ✓ 组合支付: 储值余额¥50 + 微信¥50 = ¥100, 余额从¥500→¥450
+  ✓ 优惠券核销: 券F049TEST30抵扣¥30 + 支付宝¥70 = ¥100, 券标记已使用
+  ✓ 积分抵扣: 积分5000→0 (抵扣¥50) + 微信¥50 = ¥100
+  ✓ 打印小票: 前端 printReceipt() 生成含商品明细/支付方式/找零的小票打印窗口
+- 提交: ad88f28 feat(F049): multi-payment combined checkout
+
+
