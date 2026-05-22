@@ -28,6 +28,11 @@ const period = ref('all')
 const lastUpdated = ref('')
 const merchants = ref<MerchantItem[]>([])
 const merchantsLoading = ref(false)
+const exportStartDate = ref('')
+const exportEndDate = ref('')
+const exporting = ref<{ operating: boolean; transactions: boolean }>({ operating: false, transactions: false })
+const exportError = ref('')
+const exportSuccess = ref('')
 
 const statusLabels: Record<string, string> = {
   pending: '待审核',
@@ -90,6 +95,67 @@ async function fetchMerchants() {
     merchants.value = []
   } finally {
     merchantsLoading.value = false
+  }
+}
+
+function triggerDownload(blob: Blob, filename: string) {
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  window.URL.revokeObjectURL(url)
+}
+
+async function exportOperating() {
+  if (!exportStartDate.value || !exportEndDate.value) {
+    exportError.value = '请选择起止时间'
+    return
+  }
+  if (exportStartDate.value > exportEndDate.value) {
+    exportError.value = '开始时间不能晚于结束时间'
+    return
+  }
+  exportError.value = ''
+  exportSuccess.value = ''
+  exporting.value.operating = true
+  try {
+    const { blob, filename } = await api.downloadFile(
+      `/api/v1/reports/operating?start_time=${exportStartDate.value}&end_time=${exportEndDate.value}`
+    )
+    triggerDownload(blob, filename)
+    exportSuccess.value = '经营报表已下载'
+  } catch (e: any) {
+    exportError.value = e.message || '导出失败'
+  } finally {
+    exporting.value.operating = false
+  }
+}
+
+async function exportTransactions() {
+  if (!exportStartDate.value || !exportEndDate.value) {
+    exportError.value = '请选择起止时间'
+    return
+  }
+  if (exportStartDate.value > exportEndDate.value) {
+    exportError.value = '开始时间不能晚于结束时间'
+    return
+  }
+  exportError.value = ''
+  exportSuccess.value = ''
+  exporting.value.transactions = true
+  try {
+    const { blob, filename } = await api.downloadFile(
+      `/api/v1/reports/transactions?start_time=${exportStartDate.value}&end_time=${exportEndDate.value}`
+    )
+    triggerDownload(blob, filename)
+    exportSuccess.value = '交易报表已下载'
+  } catch (e: any) {
+    exportError.value = e.message || '导出失败'
+  } finally {
+    exporting.value.transactions = false
   }
 }
 
@@ -188,6 +254,47 @@ onMounted(() => {
             {{ periodLabels[period] }}统计
           </p>
         </div>
+      </div>
+
+      <!-- Report export -->
+      <div class="mt-8 bg-white rounded-lg shadow-sm p-6">
+        <h2 class="text-lg font-semibold text-gray-900 mb-4">数据报表导出</h2>
+        <div class="flex flex-wrap items-end gap-4">
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">开始时间</label>
+            <input
+              v-model="exportStartDate"
+              type="date"
+              class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">结束时间</label>
+            <input
+              v-model="exportEndDate"
+              type="date"
+              class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <button
+            @click="exportOperating"
+            :disabled="exporting.operating"
+            class="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <span v-if="exporting.operating" class="inline-block animate-spin mr-1">&#9696;</span>
+            {{ exporting.operating ? '导出中...' : '导出经营报表' }}
+          </button>
+          <button
+            @click="exportTransactions"
+            :disabled="exporting.transactions"
+            class="px-4 py-2 bg-green-500 text-white rounded-lg text-sm hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <span v-if="exporting.transactions" class="inline-block animate-spin mr-1">&#9696;</span>
+            {{ exporting.transactions ? '导出中...' : '导出交易报表' }}
+          </button>
+        </div>
+        <p v-if="exportError" class="mt-3 text-sm text-red-500">{{ exportError }}</p>
+        <p v-if="exportSuccess" class="mt-3 text-sm text-green-500">{{ exportSuccess }}</p>
       </div>
 
       <!-- Merchant list -->

@@ -25,6 +25,7 @@ import (
 	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/product"
+	"github.com/xltxb/PetManage/internal/report"
 	"github.com/xltxb/PetManage/internal/role"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	"github.com/xltxb/PetManage/pkg/logger"
@@ -105,6 +106,9 @@ func main() {
 	// Initialize checkout service.
 	checkoutService := checkout.NewService(db)
 
+	// Initialize report service.
+	reportService := report.NewService(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -149,6 +153,10 @@ func main() {
 
 	// Checkout (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, productService))))
+
+	// Report export (auth-protected).
+	mux.Handle("GET /api/v1/reports/operating", middleware.Auth(jwtManager)(http.HandlerFunc(makeReportOperatingHandler(reportService))))
+	mux.Handle("GET /api/v1/reports/transactions", middleware.Auth(jwtManager)(http.HandlerFunc(makeReportTransactionHandler(reportService))))
 
 	// Contract management (auth-protected).
 	mux.Handle("POST /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractUploadHandler(contractService))))
@@ -2255,5 +2263,51 @@ func makeMerchantsRankingHandler(dashSvc *dashboard.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// --- Report handlers ---
+
+func makeReportOperatingHandler(svc *report.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		startTime := r.URL.Query().Get("start_time")
+		endTime := r.URL.Query().Get("end_time")
+
+		data, filename, err := svc.ExportOperatingReport(r.Context(), startTime, endTime)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to export operating report", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.Write(data)
+	}
+}
+
+func makeReportTransactionHandler(svc *report.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		startTime := r.URL.Query().Get("start_time")
+		endTime := r.URL.Query().Get("end_time")
+
+		data, filename, err := svc.ExportTransactionReport(r.Context(), startTime, endTime)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to export transaction report", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.Write(data)
 	}
 }

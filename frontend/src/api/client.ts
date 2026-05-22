@@ -205,6 +205,27 @@ class ApiClient {
     return this.request<Array<{ merchant_id: number; merchant_name: string; total_revenue: number; rank: number }>>(`/api/v1/dashboard/merchants/ranking?period=${period}`)
   }
 
+  async downloadFile(url: string): Promise<{ blob: Blob; filename: string }> {
+    const headers: Record<string, string> = {}
+    const token = this.getToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+
+    const res = await fetch(`${API_BASE}${url}`, { headers })
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw new Error(data.message || data.code || `HTTP ${res.status}`)
+    }
+
+    const disposition = res.headers.get('Content-Disposition') || ''
+    const match = disposition.match(/filename="?([^"]+)"?/)
+    const filename = match ? match[1] : 'download.xlsx'
+
+    return { blob: await res.blob(), filename }
+  }
+
   async uploadShopLogo(file: File) {
     const formData = new FormData()
     formData.append('logo', file)
