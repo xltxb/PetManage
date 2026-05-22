@@ -1170,3 +1170,29 @@ SESSION 38 — F027 采购管理 [2026-05-23 07:23 CST]
   ✓ 入库生成 stock_flows 记录：type=inbound, quantity_change=30
   ✓ 采购单支持作废操作（已入库的采购单不可作废，返回 400）
 - 提交: cb9d8d1 feat(F027): purchase order management
+
+================================================================================
+SESSION 39 — F028 智能补货建议 [2026-05-23 07:38 CST]
+================================================================================
+
+- 创建 internal/replenishment/service.go: 补货建议核心服务
+  - GetSuggestions: 查询库存<预警值的商品，计算建议补货量
+    - 有近30天销售记录: 日均销量×7 - 当前库存（下限为0）
+    - 无销售记录: 预警值 - 当前库存
+    - 通过 supplier_products 关联获取供应商信息
+    - 支持 group_by_supplier 按供应商分组
+  - GeneratePO: 一键生成采购单
+    - 接受 [{product_id, quantity, supplier_id}] 列表
+    - 按供应商分组合并为一个采购单草稿（不同供应商创建不同采购单）
+    - 自动使用 product.cost_cents 作为采购单价
+    - 验证供应商状态、商品归属
+- 注册 2 个 API 端点 (auth-protected, merchant-only):
+  - GET /api/v1/merchant/replenishment/suggestions — 补货建议列表（支持 ?group_by_supplier=true）
+  - POST /api/v1/merchant/replenishment/generate-po — 一键生成采购单草稿
+- 端到端验证全部 5 个步骤通过:
+  ✓ 库存低于预警值的商品出现在补货建议列表（P26 stock=1<20, P27 stock=3<30）
+  ✓ 补货建议显示正确数量（P26: 0.13平均日销×7-1=0）
+  ✓ 一键生成采购单创建草稿（PO202605230003, status=draft, 2 items）
+  ✓ 无销售的商品建议数量=预警值-库存（P27: 30-3=27）
+  ✓ 按供应商分组（by_supplier 关联 "宠物食品批发公司"）
+- 提交: 9a1ca6b feat(F028): intelligent replenishment suggestions
