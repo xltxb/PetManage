@@ -43,7 +43,7 @@
         "服务端内部错误返回 500，不暴露内部细节",
         "错误响应中包含 request_id 便于追踪"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F004",

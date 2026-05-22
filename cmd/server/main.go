@@ -11,6 +11,8 @@ import (
 
 	"github.com/xltxb/PetManage/internal/config"
 	"github.com/xltxb/PetManage/internal/database"
+	"github.com/xltxb/PetManage/internal/middleware"
+	"github.com/xltxb/PetManage/pkg/apperrors"
 	"github.com/xltxb/PetManage/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -31,7 +33,6 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Handle migration commands (these exit after completion)
 	if *migrateFlag || *rollbackFlag || *statusFlag {
 		handleMigration(cfg, *migrateFlag, *rollbackFlag, *statusFlag)
 		return
@@ -45,15 +46,22 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/api/v1/demo/validation", demoValidationHandler)
+	mux.HandleFunc("/api/v1/demo/protected", demoProtectedHandler)
+	mux.HandleFunc("/api/v1/demo/panic", demoPanicHandler)
 
-	wrapped := loggingMiddleware(lgr)(notFoundWrapper(mux))
+	var h http.Handler = mux
+	h = notFoundWrapper(h)
+	h = loggingMiddleware(lgr)(h)
+	h = middleware.RequestID(h)
+	h = middleware.Recovery(lgr)(h)
 
 	addr := ":" + cfg.Server.Port
 	lgr.Info("Pet Store Management System starting",
 		zap.String("addr", addr),
 		zap.String("mode", cfg.Server.Mode),
 	)
-	if err := http.ListenAndServe(addr, wrapped); err != nil {
+	if err := http.ListenAndServe(addr, h); err != nil {
 		lgr.Fatal("Server failed to start", zap.Error(err))
 	}
 }
@@ -96,24 +104,47 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
-// notFoundWrapper returns 404 JSON for unmatched routes instead of default HTML.
+// notFoundWrapper returns a standardized JSON 404 for unmatched routes.
 func notFoundWrapper(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, pattern := next.(*http.ServeMux).Handler(r)
 		if pattern == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error": "not found",
-				"path":  r.URL.Path,
-			})
+			appErr := apperrors.NewNotFoundError("route not found: " + r.URL.Path)
+			apperrors.WriteError(w, r, appErr)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// loggingMiddleware logs each request: method, path, status, and duration.
+// --- Demo handlers for error handling verification ---
+
+func demoValidationHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		apperrors.WriteError(w, r, apperrors.NewValidationError("field 'name' is required"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"name": name})
+}
+
+func demoProtectedHandler(w http.ResponseWriter, r *http.Request) {
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("missing authorization token"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"msg": "authorized"})
+}
+
+func demoPanicHandler(w http.ResponseWriter, r *http.Request) {
+	panic("simulated internal error")
+}
+
+// --- Logging middleware ---
+
 func loggingMiddleware(lgr *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
