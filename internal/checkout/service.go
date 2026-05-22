@@ -12,16 +12,18 @@ import (
 
 // CheckoutItem represents a single item in the checkout (product or service).
 type CheckoutItem struct {
-	ProductID    *int64 `json:"product_id,omitempty"`
-	SkuID        *int64 `json:"sku_id,omitempty"`
+	ProductID     *int64 `json:"product_id,omitempty"`
+	SkuID         *int64 `json:"sku_id,omitempty"`
 	ServiceItemID *int64 `json:"service_item_id,omitempty"`
-	Quantity     int    `json:"quantity"`
+	Quantity      int    `json:"quantity"`
 }
 
 // CheckoutPayment represents a payment in the checkout.
 type CheckoutPayment struct {
-	Method      string `json:"method"`
-	AmountCents int    `json:"amount_cents"`
+	Method        string `json:"method"`
+	AmountCents   int    `json:"amount_cents"`
+	ReceivedCents int    `json:"received_cents,omitempty"` // for cash: actual amount received
+	CouponCode    string `json:"coupon_code,omitempty"`    // for coupon: code to redeem
 }
 
 // CheckoutRequest is the request body for creating an order.
@@ -41,6 +43,7 @@ type CheckoutResponse struct {
 	Status      string            `json:"status"`
 	Items       []OrderItemDetail `json:"items"`
 	Payments    []PaymentDetail   `json:"payments"`
+	ChangeCents int               `json:"change_cents"`
 	CreatedAt   time.Time         `json:"created_at"`
 	OrderNotes  string            `json:"order_notes,omitempty"`
 }
@@ -59,8 +62,11 @@ type OrderItemDetail struct {
 
 // PaymentDetail is a payment in the order response.
 type PaymentDetail struct {
-	Method      string `json:"method"`
-	AmountCents int    `json:"amount_cents"`
+	Method        string `json:"method"`
+	AmountCents   int    `json:"amount_cents"`
+	ReceivedCents int    `json:"received_cents,omitempty"`
+	CouponCode    string `json:"coupon_code,omitempty"`
+	CouponLabel   string `json:"coupon_label,omitempty"`
 }
 
 // --- Cart calculation types ---
@@ -95,19 +101,41 @@ type CartCalculateRequest struct {
 
 // CartCalculateResponse is the response for cart calculation.
 type CartCalculateResponse struct {
-	Items           []CartItemResult `json:"items"`
-	OriginalCents   int              `json:"original_cents"`
-	DiscountCents   int              `json:"discount_cents"`
-	PayableCents    int              `json:"payable_cents"`
+	Items               []CartItemResult `json:"items"`
+	OriginalCents       int              `json:"original_cents"`
+	DiscountCents       int              `json:"discount_cents"`
+	PayableCents        int              `json:"payable_cents"`
+	MemberBalanceCents  int              `json:"member_balance_cents"`
+	MemberPoints        int              `json:"member_points"`
+	MaxPointsDeductCents int             `json:"max_points_deduct_cents"`
 }
+
+// PointsToCentsRate defines how many points equal 1 cent (100 points = 100 cents = ¥1).
+// PointsToCentsRate: 100 points = 100 cents (¥1), meaning 1 point = 1 cent.
+const PointsToCentsRate = 1
+
+// MaxPointsRatio is the maximum percentage of the order that can be paid with points (50%).
+const MaxPointsRatio = 0.5
 
 // MemberInfo holds basic member identification info.
 type MemberInfo struct {
-	MemberID int64  `json:"member_id"`
-	CardNo   string `json:"card_no"`
-	Name     string `json:"name"`
-	Phone    string `json:"phone"`
-	Status   string `json:"status"`
+	MemberID     int64  `json:"member_id"`
+	CardNo       string `json:"card_no"`
+	Name         string `json:"name"`
+	Phone        string `json:"phone"`
+	Status       string `json:"status"`
+	BalanceCents int    `json:"balance_cents"`
+	Points       int    `json:"points"`
+}
+
+// CouponInfo holds validated coupon information.
+type CouponInfo struct {
+	ID             int64  `json:"id"`
+	Code           string `json:"code"`
+	DiscountType   string `json:"discount_type"`
+	ValueCents     int    `json:"value_cents"`
+	MinOrderCents  int    `json:"min_order_cents"`
+	Status         string `json:"status"`
 }
 
 // Service provides checkout operations.
@@ -127,20 +155,18 @@ func (s *Service) LookupMember(ctx context.Context, merchantID int64, phone, qrT
 	}
 
 	if qrToken != "" {
-		// QR token lookup is handled by the member service.
-		// Here we return a placeholder — actual QR verification happens in the scan endpoint.
 		return nil, apperrors.NewValidationError("qr_token lookup not implemented directly; use /merchant/members/qrcode/scan endpoint")
 	}
 
 	var m MemberInfo
 	var phoneStr sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, card_no, name, phone, status
+		`SELECT id, card_no, name, phone, status, COALESCE(balance_cents, 0), COALESCE(points, 0)
 		 FROM members
 		 WHERE merchant_id = $1 AND phone = $2 AND status = 'active' AND deleted_at IS NULL
 		 LIMIT 1`,
 		merchantID, phone,
-	).Scan(&m.MemberID, &m.CardNo, &m.Name, &phoneStr, &m.Status)
+	).Scan(&m.MemberID, &m.CardNo, &m.Name, &phoneStr, &m.Status, &m.BalanceCents, &m.Points)
 	if err == sql.ErrNoRows {
 		return nil, apperrors.NewNotFoundError("member not found with phone: " + phone)
 	}
@@ -171,7 +197,6 @@ func (s *Service) CartCalculate(ctx context.Context, merchantID int64, req CartC
 		var result CartItemResult
 
 		if item.ServiceItemID != nil && *item.ServiceItemID > 0 {
-			// Service item.
 			var name string
 			var priceCents, memberPriceCents int
 			err := s.db.QueryRowContext(ctx,
@@ -202,7 +227,6 @@ func (s *Service) CartCalculate(ctx context.Context, merchantID int64, req CartC
 				LineTotalCents: effectivePrice * item.Quantity,
 			}
 		} else if item.SkuID != nil && *item.SkuID > 0 {
-			// SKU-based product.
 			var name string
 			var priceCents int
 			var specJSON []byte
@@ -235,7 +259,6 @@ func (s *Service) CartCalculate(ctx context.Context, merchantID int64, req CartC
 				LineTotalCents: priceCents * item.Quantity,
 			}
 		} else if item.ProductID != nil && *item.ProductID > 0 {
-			// Product without SKU.
 			var name, barcode string
 			var priceCents int
 			err := s.db.QueryRowContext(ctx,
@@ -268,15 +291,63 @@ func (s *Service) CartCalculate(ctx context.Context, merchantID int64, req CartC
 		discountCents += result.DiscountCents
 	}
 
-	return &CartCalculateResponse{
+	resp := &CartCalculateResponse{
 		Items:         results,
 		OriginalCents: originalCents,
 		DiscountCents: discountCents,
 		PayableCents:  originalCents - discountCents,
-	}, nil
+	}
+
+	// If member is identified, load balance and points.
+	if req.MemberID != nil && *req.MemberID > 0 {
+		var balance, points int
+		err := s.db.QueryRowContext(ctx,
+			`SELECT COALESCE(balance_cents, 0), COALESCE(points, 0) FROM members WHERE id = $1 AND deleted_at IS NULL`,
+			*req.MemberID,
+		).Scan(&balance, &points)
+		if err == nil {
+			resp.MemberBalanceCents = balance
+			resp.MemberPoints = points
+			// Max points deduction: minimum of (total points / rate) and (50% of payable amount)
+			maxFromPoints := points / PointsToCentsRate
+			maxFromRatio := int(float64(resp.PayableCents) * MaxPointsRatio)
+			if maxFromPoints > maxFromRatio {
+				resp.MaxPointsDeductCents = maxFromRatio
+			} else {
+				resp.MaxPointsDeductCents = maxFromPoints
+			}
+		}
+	}
+
+	return resp, nil
+}
+
+// VerifyCoupon validates a coupon code and returns its details.
+func (s *Service) VerifyCoupon(ctx context.Context, merchantID int64, code string) (*CouponInfo, error) {
+	if code == "" {
+		return nil, apperrors.NewValidationError("coupon code is required")
+	}
+
+	var c CouponInfo
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, code, type, value_cents, min_order_cents, status
+		 FROM coupons
+		 WHERE code = $1 AND merchant_id = $2 AND deleted_at IS NULL
+		   AND status = 'active'
+		 LIMIT 1`,
+		code, merchantID,
+	).Scan(&c.ID, &c.Code, &c.DiscountType, &c.ValueCents, &c.MinOrderCents, &c.Status)
+	if err == sql.ErrNoRows {
+		return nil, apperrors.NewNotFoundError("coupon not found or invalid: " + code)
+	}
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to verify coupon", err)
+	}
+	return &c, nil
 }
 
 // Checkout creates an order, deducts inventory, records payments and stock flows.
+// Supports combined payments: cash (with change), wechat, alipay, balance, points, coupon.
 func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRequest) (*CheckoutResponse, error) {
 	if len(req.Items) == 0 {
 		return nil, apperrors.NewValidationError("at least one item is required")
@@ -303,7 +374,6 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 		var detail OrderItemDetail
 
 		if item.ServiceItemID != nil && *item.ServiceItemID > 0 {
-			// Service item — no inventory to deduct, just pricing.
 			var name string
 			var regPrice, memberPrice int
 			err := tx.QueryRowContext(ctx,
@@ -332,7 +402,6 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 				Quantity:      item.Quantity,
 			}
 		} else if item.SkuID != nil && *item.SkuID > 0 {
-			// SKU-based product.
 			var name string
 			var stock int
 			var specJSON []byte
@@ -368,7 +437,6 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 				Quantity:    item.Quantity,
 			}
 		} else if item.ProductID != nil && *item.ProductID > 0 {
-			// Product without SKU.
 			var name string
 			var stock int
 			err := tx.QueryRowContext(ctx,
@@ -400,26 +468,209 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 		itemDetails = append(itemDetails, detail)
 	}
 
-	// Validate payments total.
+	// Validate payments total and handle special payment methods.
 	var paidCents int
+	var changeCents int
 	var paymentDetails []PaymentDetail
-	for _, p := range req.Payments {
-		if p.AmountCents <= 0 {
-			return nil, apperrors.NewValidationError("payment amount must be positive")
+	couponDeducted := 0
+
+	for i, p := range req.Payments {
+		if p.AmountCents < 0 {
+			return nil, apperrors.NewValidationError("payment amount must not be negative")
 		}
+
+		var detail PaymentDetail
+
 		switch p.Method {
-		case "cash", "wechat", "alipay", "balance":
+		case "cash":
+			if p.AmountCents <= 0 && p.ReceivedCents <= 0 {
+				return nil, apperrors.NewValidationError("cash payment amount must be positive")
+			}
+			// If received_cents is provided and > amount_cents, calculate change.
+			if p.ReceivedCents > 0 && p.ReceivedCents > p.AmountCents {
+				changeCents += p.ReceivedCents - p.AmountCents
+				detail = PaymentDetail{
+					Method:        "cash",
+					AmountCents:   p.AmountCents,
+					ReceivedCents: p.ReceivedCents,
+				}
+			} else if p.ReceivedCents > 0 {
+				detail = PaymentDetail{
+					Method:        "cash",
+					AmountCents:   p.AmountCents,
+					ReceivedCents: p.ReceivedCents,
+				}
+			} else {
+				detail = PaymentDetail{
+					Method:      "cash",
+					AmountCents: p.AmountCents,
+				}
+			}
+			paidCents += p.AmountCents
+
+		case "wechat", "alipay":
+			if p.AmountCents <= 0 {
+				return nil, apperrors.NewValidationError(p.Method + " payment amount must be positive")
+			}
+			detail = PaymentDetail{
+				Method:      p.Method,
+				AmountCents: p.AmountCents,
+			}
+			paidCents += p.AmountCents
+
+		case "balance":
+			if p.AmountCents <= 0 {
+				return nil, apperrors.NewValidationError("balance payment amount must be positive")
+			}
+			if req.MemberID == nil || *req.MemberID <= 0 {
+				return nil, apperrors.NewValidationError("member is required for balance payment")
+			}
+			// Check member balance.
+			var balance int
+			err := tx.QueryRowContext(ctx,
+				`SELECT COALESCE(balance_cents, 0) FROM members WHERE id = $1 FOR UPDATE`,
+				*req.MemberID,
+			).Scan(&balance)
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to check member balance", err)
+			}
+			if balance < p.AmountCents {
+				return nil, apperrors.NewValidationError("insufficient balance: have " + strconv.Itoa(balance) + ", need " + strconv.Itoa(p.AmountCents))
+			}
+			// Deduct balance.
+			_, err = tx.ExecContext(ctx,
+				`UPDATE members SET balance_cents = balance_cents - $1, updated_at = NOW() WHERE id = $2`,
+				p.AmountCents, *req.MemberID,
+			)
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to deduct balance", err)
+			}
+			detail = PaymentDetail{
+				Method:      "balance",
+				AmountCents: p.AmountCents,
+			}
+			paidCents += p.AmountCents
+
+		case "points":
+			if p.AmountCents <= 0 {
+				return nil, apperrors.NewValidationError("points payment amount must be positive")
+			}
+			if req.MemberID == nil || *req.MemberID <= 0 {
+				return nil, apperrors.NewValidationError("member is required for points payment")
+			}
+			// 100 points = 100 cents (¥1), so points needed equals amount_cents
+			pointsNeeded := p.AmountCents
+			// Check member points.
+			var points int
+			err := tx.QueryRowContext(ctx,
+				`SELECT COALESCE(points, 0) FROM members WHERE id = $1 FOR UPDATE`,
+				*req.MemberID,
+			).Scan(&points)
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to check member points", err)
+			}
+			if points < pointsNeeded {
+				return nil, apperrors.NewValidationError("insufficient points: have " + strconv.Itoa(points) + ", need " + strconv.Itoa(pointsNeeded))
+			}
+			// Deduct points.
+			_, err = tx.ExecContext(ctx,
+				`UPDATE members SET points = points - $1, updated_at = NOW() WHERE id = $2`,
+				pointsNeeded, *req.MemberID,
+			)
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to deduct points", err)
+			}
+			detail = PaymentDetail{
+				Method:      "points",
+				AmountCents: p.AmountCents,
+			}
+			paidCents += p.AmountCents
+
+		case "coupon":
+			if p.CouponCode == "" {
+				return nil, apperrors.NewValidationError("coupon code is required for coupon payment")
+			}
+			// Validate coupon.
+			var couponID int64
+			var couponValue, minOrder int
+			var cType, cStatus string
+			err := tx.QueryRowContext(ctx,
+				`SELECT id, value_cents, min_order_cents, type, status
+				 FROM coupons
+				 WHERE code = $1 AND merchant_id = $2 AND deleted_at IS NULL
+				   AND status = 'active'
+				 FOR UPDATE`,
+				p.CouponCode, merchantID,
+			).Scan(&couponID, &couponValue, &minOrder, &cType, &cStatus)
+			if err == sql.ErrNoRows {
+				return nil, apperrors.NewNotFoundError("coupon not found or invalid: " + p.CouponCode)
+			}
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to validate coupon", err)
+			}
+			if totalCents < minOrder {
+				return nil, apperrors.NewValidationError("order total " + strconv.Itoa(totalCents) + " does not meet coupon minimum " + strconv.Itoa(minOrder))
+			}
+			// Calculate actual deduction (fixed or percent).
+			deduction := couponValue
+			if cType == "percent" {
+				deduction = totalCents * couponValue / 100
+			}
+			if deduction > totalCents {
+				deduction = totalCents
+			}
+			couponDeducted += deduction
+
+			// Mark coupon as used.
+			_, err = tx.ExecContext(ctx,
+				`UPDATE coupons SET status = 'used', used_at = NOW(), used_by_member_id = $1, updated_at = NOW()
+				 WHERE id = $2`,
+				req.MemberID, couponID,
+			)
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to mark coupon as used", err)
+			}
+			detail = PaymentDetail{
+				Method:      "coupon",
+				AmountCents: deduction,
+				CouponCode:  p.CouponCode,
+				CouponLabel: p.CouponCode + " (-¥" + strconv.Itoa(deduction) + ")",
+			}
+			// Coupon reduces the total amount needed; it's not "paid" in monetary terms.
+			paidCents += 0 // Coupon doesn't add to paidCents; it reduces totalCents equivalent.
+
 		default:
-			return nil, apperrors.NewValidationError("invalid payment method: " + p.Method)
+			return nil, apperrors.NewValidationError("invalid payment method: " + p.Method + ". Valid methods: cash, wechat, alipay, balance, points, coupon")
 		}
-		paidCents += p.AmountCents
-		paymentDetails = append(paymentDetails, PaymentDetail{
-			Method:      p.Method,
-			AmountCents: p.AmountCents,
-		})
+
+		paymentDetails = append(paymentDetails, detail)
+
+		// Prevent duplicate coupon usage.
+		if p.Method == "coupon" {
+			for j := 0; j < i; j++ {
+				if req.Payments[j].Method == "coupon" {
+					return nil, apperrors.NewValidationError("only one coupon can be used per order")
+				}
+			}
+		}
 	}
-	if paidCents < totalCents {
-		return nil, apperrors.NewValidationError("payment amount insufficient")
+
+	// Apply coupon deduction: it reduces the effective total.
+	effectiveTotal := totalCents - couponDeducted
+	if effectiveTotal < 0 {
+		effectiveTotal = 0
+	}
+
+	// Verify payments cover the order total (after coupon deduction).
+	if paidCents < effectiveTotal {
+		return nil, apperrors.NewValidationError("payment amount insufficient: paid " + strconv.Itoa(paidCents) + ", needed " + strconv.Itoa(effectiveTotal))
+	}
+
+	// Check for overpayment (cash change is handled per-payment above).
+	// Non-cash overpayment is an error.
+	nonCashOverpay := paidCents - effectiveTotal
+	if nonCashOverpay > 0 {
+		return nil, apperrors.NewValidationError("overpayment detected: paid " + strconv.Itoa(paidCents) + " for " + strconv.Itoa(effectiveTotal))
 	}
 
 	// Create order.
@@ -435,12 +686,29 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 		return nil, apperrors.NewInternalError("failed to create order", err)
 	}
 
+	// Link coupon to order if used.
+	if couponDeducted > 0 {
+		_, _ = tx.ExecContext(ctx,
+			`UPDATE coupons SET used_order_id = $1 WHERE code = $2 AND merchant_id = $3`,
+			orderID, req.Payments[0].CouponCode, merchantID,
+		)
+		// Find the coupon payment and set used_order_id.
+		for _, p := range req.Payments {
+			if p.Method == "coupon" {
+				_, _ = tx.ExecContext(ctx,
+					`UPDATE coupons SET used_order_id = $1 WHERE code = $2 AND merchant_id = $3 AND used_order_id IS NULL`,
+					orderID, p.CouponCode, merchantID,
+				)
+				break
+			}
+		}
+	}
+
 	// Create order items, deduct inventory, record stock flows.
 	for i, item := range req.Items {
 		detail := itemDetails[i]
 
 		if item.ServiceItemID != nil && *item.ServiceItemID > 0 {
-			// Service item — just record the order item, no stock impact.
 			_, err := tx.ExecContext(ctx,
 				`INSERT INTO order_items (order_id, product_id, product_name, price_cents, quantity, service_item_id)
 				 VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -515,7 +783,7 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 	}
 
 	// Create payments.
-	for _, p := range req.Payments {
+	for _, p := range paymentDetails {
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO payments (order_id, method, amount_cents)
 			 VALUES ($1, $2, $3)`,
@@ -531,15 +799,16 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 	}
 
 	return &CheckoutResponse{
-		OrderID:    orderID,
-		MerchantID: merchantID,
-		TotalCents: totalCents,
-		PaidCents:  paidCents,
-		Status:     "completed",
-		Items:      itemDetails,
-		Payments:   paymentDetails,
-		CreatedAt:  orderCreatedAt,
-		OrderNotes: req.OrderNotes,
+		OrderID:     orderID,
+		MerchantID:  merchantID,
+		TotalCents:  totalCents,
+		PaidCents:   paidCents,
+		Status:      "completed",
+		Items:       itemDetails,
+		Payments:    paymentDetails,
+		ChangeCents: changeCents,
+		CreatedAt:   orderCreatedAt,
+		OrderNotes:  req.OrderNotes,
 	}, nil
 }
 

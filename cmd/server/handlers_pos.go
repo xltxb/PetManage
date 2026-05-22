@@ -76,3 +76,37 @@ func makePosMemberLookupHandler(checkoutSvc *checkout.Service) http.HandlerFunc 
 		json.NewEncoder(w).Encode(member)
 	}
 }
+
+// makePosCouponVerifyHandler handles coupon code verification.
+func makePosCouponVerifyHandler(checkoutSvc *checkout.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("coupon code is required"))
+			return
+		}
+
+		coupon, err := checkoutSvc.VerifyCoupon(r.Context(), *claims.MerchantID, code)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("coupon verification failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(coupon)
+	}
+}

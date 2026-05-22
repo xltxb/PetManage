@@ -404,6 +404,9 @@ class ApiClient {
       original_cents: number
       discount_cents: number
       payable_cents: number
+      member_balance_cents: number
+      member_points: number
+      max_points_deduct_cents: number
     }>('/api/v1/merchant/pos/cart/calculate', { method: 'POST', body: data })
   }
 
@@ -414,16 +417,29 @@ class ApiClient {
       name: string
       phone: string
       status: string
+      balance_cents: number
+      points: number
     }>(`/api/v1/merchant/pos/members/lookup?phone=${encodeURIComponent(phone)}`)
   }
 
   posCheckout(data: {
     member_id?: number | null
     items: Array<{ product_id?: number; sku_id?: number; service_item_id?: number; quantity: number }>
-    payments: Array<{ method: string; amount_cents: number }>
+    payments: Array<{ method: string; amount_cents: number; received_cents?: number; coupon_code?: string }>
     order_notes?: string
   }) {
     return this.request<any>('/api/v1/merchant/checkout', { method: 'POST', body: data })
+  }
+
+  posCouponVerify(code: string) {
+    return this.request<{
+      id: number
+      code: string
+      discount_type: string
+      value_cents: number
+      min_order_cents: number
+      status: string
+    }>(`/api/v1/merchant/pos/coupons/verify?code=${encodeURIComponent(code)}`)
   }
 
   // --- Service APIs ---

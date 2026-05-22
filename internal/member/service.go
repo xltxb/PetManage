@@ -144,8 +144,8 @@ func (s *Service) generateCardNo(ctx context.Context, merchantID int64) (string,
 	var maxNo sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT MAX(card_no) FROM members
-		 WHERE merchant_id = $1 AND card_no LIKE $2`,
-		merchantID, prefix+"%",
+		 WHERE card_no LIKE $1`,
+		prefix+"%",
 	).Scan(&maxNo)
 	if err != nil {
 		return "", err
