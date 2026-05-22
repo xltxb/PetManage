@@ -32,6 +32,7 @@ import (
 	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/internal/product"
+	"github.com/xltxb/PetManage/internal/purchase"
 	"github.com/xltxb/PetManage/internal/report"
 	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
@@ -141,6 +142,9 @@ func main() {
 	// Initialize supplier service.
 	supplierService := supplier.NewService(db)
 
+	// Initialize purchase service.
+	purchaseService := purchase.NewService(db)
+
 	// Initialize service management service.
 	serviceMgmtService := servicemgmt.NewService(db)
 
@@ -219,6 +223,15 @@ func main() {
 	mux.Handle("POST /api/v1/merchant/suppliers/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierToggleStatusHandler(supplierService))))
 	mux.Handle("POST /api/v1/merchant/suppliers/{id}/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierLinkProductHandler(supplierService))))
 	mux.Handle("DELETE /api/v1/merchant/suppliers/{id}/products/{productId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierUnlinkProductHandler(supplierService))))
+	// Purchase order management (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/purchases", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseCreateHandler(purchaseService))))
+	mux.Handle("GET /api/v1/merchant/purchases", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseListHandler(purchaseService))))
+	mux.Handle("GET /api/v1/merchant/purchases/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseGetHandler(purchaseService))))
+	mux.Handle("PUT /api/v1/merchant/purchases/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseUpdateHandler(purchaseService))))
+	mux.Handle("POST /api/v1/merchant/purchases/{id}/submit", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseSubmitHandler(purchaseService))))
+	mux.Handle("POST /api/v1/merchant/purchases/{id}/confirm", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseConfirmHandler(purchaseService))))
+	mux.Handle("POST /api/v1/merchant/purchases/{id}/receive", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseReceiveHandler(purchaseService))))
+	mux.Handle("POST /api/v1/merchant/purchases/{id}/void", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseVoidHandler(purchaseService))))
 	// Service management (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryCreateHandler(serviceMgmtService))))
 	mux.Handle("GET /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryListHandler(serviceMgmtService))))
