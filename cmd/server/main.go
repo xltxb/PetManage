@@ -99,6 +99,7 @@ func main() {
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
 	mux.HandleFunc("/api/v1/auth/refresh", makeRefreshHandler(authService))
+	mux.HandleFunc("POST /api/v1/merchant/auth/login", makeMerchantLoginHandler(authService))
 	mux.Handle("/api/v1/auth/change-password", middleware.Auth(jwtManager)(http.HandlerFunc(makeChangePasswordHandler(authService))))
 
 	// Merchant routes (public).
@@ -375,6 +376,36 @@ func makeChangePasswordHandler(svc *auth.Service) http.HandlerFunc {
 				return
 			}
 			apperrors.WriteError(w, r, apperrors.NewInternalError("password change failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// --- Merchant auth handlers ---
+
+func makeMerchantLoginHandler(svc *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req auth.LoginRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		if req.Username == "" || req.Password == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("username and password are required"))
+			return
+		}
+
+		resp, err := svc.MerchantLogin(r.Context(), req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("login failed", err))
 			return
 		}
 

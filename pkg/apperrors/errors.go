@@ -19,6 +19,7 @@ const (
 	CodeDuplicateLicense = "DUPLICATE_LICENSE"
 	CodeMerchantFrozen   = "MERCHANT_FROZEN"
 	CodeMerchantClosed   = "MERCHANT_CLOSED"
+	CodeAccountLocked    = "ACCOUNT_LOCKED"
 )
 
 var codeToStatus = map[string]int{
@@ -33,6 +34,7 @@ var codeToStatus = map[string]int{
 	CodeDuplicateLicense: http.StatusConflict,
 	CodeMerchantFrozen:   http.StatusForbidden,
 	CodeMerchantClosed:   http.StatusForbidden,
+	CodeAccountLocked:    http.StatusTooManyRequests,
 }
 
 // AppError is a structured application error.

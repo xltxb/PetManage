@@ -13,6 +13,16 @@ const router = createRouter({
       name: 'login',
       component: () => import('@/views/Login.vue'),
     },
+    {
+      path: '/merchant/login',
+      name: 'merchant-login',
+      component: () => import('@/views/MerchantLogin.vue'),
+    },
+    {
+      path: '/merchant',
+      name: 'merchant',
+      component: () => import('@/views/MerchantDashboard.vue'),
+    },
   ],
 })
 

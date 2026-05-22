@@ -60,6 +60,29 @@ class ApiClient {
     return data as T
   }
 
+  async merchantLogin(username: string, password: string) {
+    const data = await this.request<{
+      access_token: string
+      refresh_token: string
+      expires_in: number
+      must_change_password: boolean
+      merchant_name: string
+      display_name: string
+    }>('/api/v1/merchant/auth/login', {
+      method: 'POST',
+      body: { username, password },
+      headers: {},
+    })
+    this.setToken(data.access_token)
+    const claims = parseJWT(data.access_token)
+    return {
+      ...data,
+      user_id: claims.user_id as number,
+      username: claims.username as string,
+      merchant_id: claims.merchant_id as number | null,
+    }
+  }
+
   async login(username: string, password: string) {
     const data = await this.request<{
       access_token: string

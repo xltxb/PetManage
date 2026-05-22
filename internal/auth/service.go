@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/xltxb/PetManage/pkg/apperrors"
@@ -162,6 +164,146 @@ func (s *Service) RefreshToken(ctx context.Context, req RefreshRequest) (*TokenP
 	}
 
 	return s.jwt.GenerateTokenPair(claims.UserID, claims.Username, claims.RoleID, claims.MerchantID)
+}
+
+// MerchantLoginResponse extends TokenPair with merchant-specific info.
+type MerchantLoginResponse struct {
+	*TokenPair
+	MerchantName string `json:"merchant_name"`
+	DisplayName  string `json:"display_name"`
+}
+
+// MerchantLogin authenticates a merchant admin user with lockout protection.
+func (s *Service) MerchantLogin(ctx context.Context, req LoginRequest) (*MerchantLoginResponse, error) {
+	var userID int64
+	var username string
+	var passwordHash string
+	var roleID int64
+	var mustChangePassword bool
+	var merchantID sql.NullInt64
+	var merchantName sql.NullString
+	var merchantStatus sql.NullString
+	var displayName sql.NullString
+	var loginFailCount int
+	var lockedUntil sql.NullTime
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT u.id, u.username, u.password_hash, COALESCE(u.role_id, 0),
+			COALESCE(u.must_change_password, false),
+			COALESCE(u.display_name, ''),
+			u.merchant_id, m.name, m.status,
+			u.login_fail_count, u.locked_until
+		 FROM platform_users u
+		 LEFT JOIN merchants m ON u.merchant_id = m.id AND m.deleted_at IS NULL
+		 WHERE u.username = $1 AND u.merchant_id IS NOT NULL
+		 AND u.deleted_at IS NULL AND u.status = 'active'`,
+		req.Username,
+	).Scan(&userID, &username, &passwordHash, &roleID, &mustChangePassword,
+		&displayName, &merchantID, &merchantName, &merchantStatus,
+		&loginFailCount, &lockedUntil)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInvalidCredentials,
+			Message: "invalid username or password",
+		}
+	}
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "authentication failed",
+			Err:     err,
+		}
+	}
+
+	// Check if account is locked.
+	if lockedUntil.Valid && lockedUntil.Time.After(time.Now()) {
+		remaining := int(time.Until(lockedUntil.Time).Minutes())
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeAccountLocked,
+			Message: "account is locked due to too many failed attempts, try again in " + formatMinutes(remaining),
+		}
+	}
+
+	// Check merchant status.
+	if merchantStatus.Valid {
+		switch merchantStatus.String {
+		case "frozen":
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeMerchantFrozen,
+				Message: "merchant account has been frozen, please contact platform administrator",
+			}
+		case "closed":
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeMerchantClosed,
+				Message: "merchant account has been permanently closed",
+			}
+		}
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
+		// Increment failed login count.
+		newCount := loginFailCount + 1
+		if newCount >= 3 {
+			_, _ = s.db.ExecContext(ctx,
+				`UPDATE platform_users SET login_fail_count = $1, locked_until = NOW() + INTERVAL '15 minutes' WHERE id = $2`,
+				newCount, userID,
+			)
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeAccountLocked,
+				Message: "account is locked due to too many failed attempts, try again in 15 minutes",
+			}
+		}
+		_, _ = s.db.ExecContext(ctx,
+			`UPDATE platform_users SET login_fail_count = $1 WHERE id = $2`,
+			newCount, userID,
+		)
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInvalidCredentials,
+			Message: "invalid username or password",
+		}
+	}
+
+	// Successful login — reset fail count and lock.
+	_, _ = s.db.ExecContext(ctx,
+		`UPDATE platform_users SET last_login_at = NOW(), login_fail_count = 0, locked_until = NULL WHERE id = $1`,
+		userID,
+	)
+
+	tokenPair, err := s.jwt.GenerateTokenPair(userID, username, roleID, nullableToPtr(merchantID))
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "token generation failed",
+			Err:     err,
+		}
+	}
+	tokenPair.MustChangePassword = mustChangePassword
+
+	merchant := ""
+	if merchantName.Valid {
+		merchant = merchantName.String
+	}
+	display := ""
+	if displayName.Valid {
+		display = displayName.String
+	}
+
+	return &MerchantLoginResponse{
+		TokenPair:    tokenPair,
+		MerchantName: merchant,
+		DisplayName:  display,
+	}, nil
+}
+
+func formatMinutes(remaining int) string {
+	if remaining <= 0 {
+		return "less than a minute"
+	}
+	if remaining == 1 {
+		return "1 minute"
+	}
+	return fmt.Sprintf("%d minutes", remaining)
 }
 
 func nullableToPtr(n sql.NullInt64) *int64 {
