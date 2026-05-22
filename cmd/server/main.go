@@ -29,6 +29,7 @@ import (
 	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/report"
+	"github.com/xltxb/PetManage/internal/supplier"
 	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
 	"github.com/xltxb/PetManage/pkg/apperrors"
@@ -122,6 +123,9 @@ func main() {
 	// Initialize category service.
 	categoryService := category.NewService(db)
 
+	// Initialize supplier service.
+	supplierService := supplier.NewService(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -180,6 +184,14 @@ func main() {
 		mux.Handle("GET /api/v1/merchant/categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeCategoryListHandler(categoryService))))
 		mux.Handle("PUT /api/v1/merchant/categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeCategoryUpdateHandler(categoryService))))
 		mux.Handle("DELETE /api/v1/merchant/categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeCategoryDeleteHandler(categoryService))))
+	// Supplier management (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/suppliers", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierCreateHandler(supplierService))))
+	mux.Handle("GET /api/v1/merchant/suppliers", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierListHandler(supplierService))))
+	mux.Handle("GET /api/v1/merchant/suppliers/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierGetHandler(supplierService))))
+	mux.Handle("PUT /api/v1/merchant/suppliers/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierUpdateHandler(supplierService))))
+	mux.Handle("POST /api/v1/merchant/suppliers/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierToggleStatusHandler(supplierService))))
+	mux.Handle("POST /api/v1/merchant/suppliers/{id}/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierLinkProductHandler(supplierService))))
+	mux.Handle("DELETE /api/v1/merchant/suppliers/{id}/products/{productId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierUnlinkProductHandler(supplierService))))
 	// Checkout (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService))))
 
@@ -3506,5 +3518,264 @@ func makeCategoryDeleteHandler(svc *category.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"message": "category deleted"})
+	}
+}
+
+func makeSupplierCreateHandler(svc *supplier.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		var req supplier.CreateSupplierRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		s, err := svc.Create(r.Context(), *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create supplier", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(s)
+	}
+}
+
+func makeSupplierListHandler(svc *supplier.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		status := r.URL.Query().Get("status")
+		keyword := r.URL.Query().Get("keyword")
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+
+		result, err := svc.List(r.Context(), *claims.MerchantID, supplier.ListParams{
+			Status:   status,
+			Keyword:  keyword,
+			Page:     page,
+			PageSize: pageSize,
+		})
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list suppliers", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeSupplierGetHandler(svc *supplier.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid supplier id"))
+			return
+		}
+
+		detail, err := svc.GetDetail(r.Context(), id, *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get supplier", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(detail)
+	}
+}
+
+func makeSupplierUpdateHandler(svc *supplier.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid supplier id"))
+			return
+		}
+
+		var req supplier.UpdateSupplierRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		s, err := svc.Update(r.Context(), id, *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update supplier", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(s)
+	}
+}
+
+func makeSupplierToggleStatusHandler(svc *supplier.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid supplier id"))
+			return
+		}
+
+		s, err := svc.ToggleStatus(r.Context(), id, *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to toggle supplier status", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(s)
+	}
+}
+
+func makeSupplierLinkProductHandler(svc *supplier.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid supplier id"))
+			return
+		}
+
+		var req supplier.LinkProductRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		if err := svc.LinkProduct(r.Context(), id, *claims.MerchantID, req); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to link product", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"message": "product linked to supplier"})
+	}
+}
+
+func makeSupplierUnlinkProductHandler(svc *supplier.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid supplier id"))
+			return
+		}
+
+		pidStr := r.PathValue("productId")
+		pid, err := strconv.ParseInt(pidStr, 10, 64)
+		if err != nil || pid <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid product id"))
+			return
+		}
+
+		if err := svc.UnlinkProduct(r.Context(), id, pid, *claims.MerchantID); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to unlink product", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "product unlinked from supplier"})
 	}
 }
