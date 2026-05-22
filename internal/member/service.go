@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/xuri/excelize/v2"
+	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 )
 
@@ -46,7 +47,7 @@ type ConsumptionRecord struct {
 // MemberDetail includes member info, bound pets, balance, points, and consumption records.
 type MemberDetail struct {
 	Member             Member              `json:"member"`
-	Pets               []interface{}       `json:"pets"`
+	Pets               []pet.Pet           `json:"pets"`
 	ConsumptionRecords []ConsumptionRecord `json:"consumption_records"`
 	TotalOrders        int                 `json:"total_orders"`
 }
@@ -249,9 +250,13 @@ func (s *Service) GetDetail(ctx context.Context, memberID, merchantID int64) (*M
 		merchantID, memberID,
 	).Scan(&totalOrders)
 
+	// Query bound pets.
+	petSvc := pet.NewService(s.db)
+	pets, _ := petSvc.ListByMember(ctx, merchantID, memberID)
+
 	return &MemberDetail{
 		Member:             *m,
-		Pets:               make([]interface{}, 0),
+		Pets:               pets,
 		ConsumptionRecords: consumptionRecords,
 		TotalOrders:        totalOrders,
 	}, nil

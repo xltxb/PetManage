@@ -30,6 +30,7 @@ import (
 	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/report"
 	"github.com/xltxb/PetManage/internal/member"
+	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/internal/supplier"
 	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
@@ -131,6 +132,9 @@ func main() {
 	// Initialize supplier service.
 	supplierService := supplier.NewService(db)
 
+	// Initialize pet service.
+	petService := pet.NewService(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -209,6 +213,13 @@ func main() {
 	// Member QR code (auth-protected, merchant-only).
 	mux.Handle("GET /api/v1/merchant/members/{id}/qrcode", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberQRCodeHandler(memberService))))
 	mux.Handle("GET /api/v1/merchant/members/qrcode/scan", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberQRCodeScanHandler(memberService))))
+
+	// Pet management (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/members/{id}/pets", middleware.Auth(jwtManager)(http.HandlerFunc(makePetCreateHandler(petService))))
+	mux.Handle("GET /api/v1/merchant/members/{id}/pets", middleware.Auth(jwtManager)(http.HandlerFunc(makePetListHandler(petService))))
+	mux.Handle("GET /api/v1/merchant/members/{id}/pets/{petId}", middleware.Auth(jwtManager)(http.HandlerFunc(makePetGetHandler(petService))))
+	mux.Handle("PUT /api/v1/merchant/members/{id}/pets/{petId}", middleware.Auth(jwtManager)(http.HandlerFunc(makePetUpdateHandler(petService))))
+	mux.Handle("DELETE /api/v1/merchant/members/{id}/pets/{petId}", middleware.Auth(jwtManager)(http.HandlerFunc(makePetDeleteHandler(petService))))
 
 	// Checkout (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService))))
@@ -4154,5 +4165,213 @@ func makeMemberQRCodeScanHandler(svc *member.Service) http.HandlerFunc {
 			"merchant_id": m.MerchantID,
 			"status":      m.Status,
 		})
+	}
+}
+
+// --- Pet handlers ---
+
+func makePetCreateHandler(svc *pet.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		memberID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || memberID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		var req pet.CreatePetRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		p, err := svc.Create(r.Context(), *claims.MerchantID, memberID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create pet", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(p)
+	}
+}
+
+func makePetListHandler(svc *pet.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		memberID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || memberID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		pets, err := svc.ListByMember(r.Context(), *claims.MerchantID, memberID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list pets", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"pets":  pets,
+			"total": len(pets),
+		})
+	}
+}
+
+func makePetGetHandler(svc *pet.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		memberID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || memberID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		petIDStr := r.PathValue("petId")
+		petID, err := strconv.ParseInt(petIDStr, 10, 64)
+		if err != nil || petID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid pet id"))
+			return
+		}
+
+		p, err := svc.GetByID(r.Context(), petID, memberID, *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get pet", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(p)
+	}
+}
+
+func makePetUpdateHandler(svc *pet.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		memberID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || memberID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		petIDStr := r.PathValue("petId")
+		petID, err := strconv.ParseInt(petIDStr, 10, 64)
+		if err != nil || petID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid pet id"))
+			return
+		}
+
+		var req pet.UpdatePetRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		p, err := svc.Update(r.Context(), petID, memberID, *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update pet", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(p)
+	}
+}
+
+func makePetDeleteHandler(svc *pet.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		memberID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || memberID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		petIDStr := r.PathValue("petId")
+		petID, err := strconv.ParseInt(petIDStr, 10, 64)
+		if err != nil || petID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid pet id"))
+			return
+		}
+
+		if err := svc.Delete(r.Context(), petID, memberID, *claims.MerchantID); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to delete pet", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "pet deleted"})
 	}
 }
