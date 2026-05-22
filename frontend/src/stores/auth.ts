@@ -1,30 +1,35 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { supabase } from '@/api/supabase'
+import { api } from '@/api/client'
 
 export const useAuthStore = defineStore('auth', () => {
-  const user = ref<any>(null)
-  const session = ref<any>(null)
+  const user = ref<{ user_id: number; username: string } | null>(null)
+  const loading = ref(false)
 
-  async function login(email: string, password: string) {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) throw error
-    user.value = data.user
-    session.value = data.session
-    return data
+  function restoreUser() {
+    const saved = localStorage.getItem('auth_user')
+    if (saved) {
+      try { user.value = JSON.parse(saved) } catch { /* ignore */ }
+    }
   }
 
-  async function logout() {
-    await supabase.auth.signOut()
+  async function login(username: string, password: string) {
+    loading.value = true
+    try {
+      const data = await api.login(username, password)
+      user.value = { user_id: data.user_id, username: data.username }
+      localStorage.setItem('auth_user', JSON.stringify(user.value))
+      return data
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function logout() {
+    api.logout()
     user.value = null
-    session.value = null
+    localStorage.removeItem('auth_user')
   }
 
-  async function getSession() {
-    const { data } = await supabase.auth.getSession()
-    session.value = data.session
-    user.value = data.session?.user ?? null
-  }
-
-  return { user, session, login, logout, getSession }
+  return { user, loading, login, logout, restoreUser }
 })

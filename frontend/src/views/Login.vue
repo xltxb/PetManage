@@ -6,7 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 const router = useRouter()
 const auth = useAuthStore()
 
-const email = ref('')
+const username = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
@@ -15,7 +15,7 @@ async function handleLogin() {
   error.value = ''
   loading.value = true
   try {
-    await auth.login(email.value, password.value)
+    await auth.login(username.value, password.value)
     router.push('/')
   } catch (e: any) {
     error.value = e.message || '登录失败'
@@ -31,13 +31,13 @@ async function handleLogin() {
       <h1 class="text-2xl font-bold text-center mb-6">宠物店管理系统</h1>
       <form @submit.prevent="handleLogin" class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700">邮箱</label>
+          <label class="block text-sm font-medium text-gray-700">用户名</label>
           <input
-            v-model="email"
-            type="email"
+            v-model="username"
+            type="text"
             required
             class="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
-            placeholder="admin@petstore.com"
+            placeholder="请输入用户名"
           />
         </div>
         <div>

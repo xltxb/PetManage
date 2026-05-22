@@ -15,6 +15,7 @@ import (
 	"github.com/xltxb/PetManage/internal/auth"
 	"github.com/xltxb/PetManage/internal/config"
 	"github.com/xltxb/PetManage/internal/contract"
+	"github.com/xltxb/PetManage/internal/dashboard"
 	"github.com/xltxb/PetManage/internal/database"
 	"github.com/xltxb/PetManage/internal/dictionary"
 	"github.com/xltxb/PetManage/internal/merchant"
@@ -91,6 +92,9 @@ func main() {
 	// Initialize operation log service.
 	opLogService := operationlog.New(db)
 
+	// Initialize dashboard service.
+	dashboardService := dashboard.NewService(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -113,6 +117,9 @@ func main() {
 	mux.Handle("POST /api/v1/merchants/{id}/close", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantCloseHandler(merchantService))))
 	mux.Handle("GET /api/v1/operation-logs/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantLogsHandler(merchantService))))
 	mux.Handle("GET /api/v1/operation-logs", middleware.Auth(jwtManager)(http.HandlerFunc(makeOperationLogsHandler(opLogService))))
+
+	// Dashboard routes (auth-protected).
+	mux.Handle("GET /api/v1/dashboard/overview", middleware.Auth(jwtManager)(http.HandlerFunc(makeDashboardOverviewHandler(dashboardService))))
 
 	// Contract management (auth-protected).
 	mux.Handle("POST /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractUploadHandler(contractService))))
@@ -1817,5 +1824,25 @@ func makeUserAssignRoleHandler(svc *role.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"message": "role assigned successfully"})
+	}
+}
+
+// --- Dashboard handlers ---
+
+func makeDashboardOverviewHandler(svc *dashboard.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		period := r.URL.Query().Get("period")
+		if period == "" {
+			period = "all"
+		}
+
+		resp, err := svc.GetOverview(r.Context(), period)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get dashboard overview", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
