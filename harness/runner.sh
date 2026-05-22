@@ -85,14 +85,16 @@ count_features() {
 import json
 with open('$FEATURE_LIST') as f:
     data = json.load(f)
-print(len(data))
+features = data.get("features", data) if isinstance(data, dict) else data
+print(len(features))
 " 2>/dev/null || echo "0")
 
     pending=$(python3 -c "
 import json
 with open('$FEATURE_LIST') as f:
     data = json.load(f)
-print(sum(1 for f in data if not f.get('passes', False)))
+features = data.get("features", data) if isinstance(data, dict) else data
+print(sum(1 for f in features if not f.get('passes', False)))
 " 2>/dev/null || echo "0")
 
     passed=$((total - pending))
@@ -107,7 +109,8 @@ get_next_feature() {
 import json
 with open('$FEATURE_LIST') as f:
     data = json.load(f)
-pending = [f for f in data if not f.get('passes', False)]
+features = data.get("features", data) if isinstance(data, dict) else data
+pending = [f for f in features if not f.get('passes', False)]
 if pending:
     pending.sort(key=lambda f: f.get('priority', 999))
     f = pending[0]
