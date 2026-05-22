@@ -583,3 +583,30 @@ SESSION 19 — F083 核心业务流程端到端测试 [2026-05-23 03:19 CST]
   - Step 6: 验证库存扣减(P1:50→48, P2:30 不变, P3:100→95)、订单记录、支付流水数据一致性
 - 全部 24 个测试断言通过 (PASS=24, FAIL=0)
 - 提交: 546250a feat(F083): core business flow E2E test
+
+================================================================================
+SESSION 20 — F016 商户经营分析 [2026-05-23 03:28 CST]
+================================================================================
+
+- 后端: internal/dashboard/service.go 新增 GetMerchantAnalysis 和 GetMerchantsRevenueRanking 方法
+  - GetMerchantAnalysis: 单商户综合经营分析 (今日营收/订单/新增会员、总营收/总订单、营收排名)
+  - GetMerchantsRevenueRanking: 所有已通过商户按营收降序排名
+  - 商品销售排行: 从 order_items + orders 表聚合，按销量降序 TOP10
+  - 服务热度排行: 从 order_items + orders 表聚合，按订单数降序 TOP10
+  - 支持时间维度筛选 (today/week/month/year/all)
+  - computeSince 辅助函数统一时间段计算逻辑
+- API 端点:
+  - GET /api/v1/dashboard/merchant/{id}/analysis?period=  — 单商户分析 (auth-protected)
+  - GET /api/v1/dashboard/merchants/ranking?period=  — 商户营收排行 (auth-protected)
+- 前端:
+  - 创建 MerchantAnalysis.vue: 6指标卡片 + 时段切换 + 商品销售TOP10表 + 服务热度TOP10表 + 营收排行全量表
+  - 更新 Dashboard.vue: 新增商户列表区域 (名称/执照号/状态/合同/入驻时间/操作)，点击进入经营分析
+  - 新增 API 方法: getMerchantList, getMerchantAnalysis, getMerchantsRevenueRanking
+  - 新增路由: /merchants/:id/analysis
+- 端到端验证全部 5 个步骤通过:
+  ✓ 点击商户进入经营分析页，显示该商户今日营收(¥381.00)、订单数(1)、新增会员(1)
+  ✓ 商户营收排行：11家商户按营收金额降序排列，E2E商户排名#1 (¥381.00)
+  ✓ 商品销售排行：展示 Chicken Treats 100g (销量5) 和 Royal Canin Dog Food 2kg (销量2)
+  ✓ 服务热度排行：展示 Royal Canin Dog Food 2kg (订单1) 和 Chicken Treats 100g (订单1)
+  ✓ 时间段筛选：today/week/month/year/all 全部正确返回对应数据
+- 提交: 5c6dc0e feat(F016): merchant business analysis
