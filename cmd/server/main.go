@@ -18,6 +18,7 @@ import (
 	"github.com/xltxb/PetManage/internal/dictionary"
 	"github.com/xltxb/PetManage/internal/merchant"
 	"github.com/xltxb/PetManage/internal/middleware"
+	"github.com/xltxb/PetManage/internal/role"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	"github.com/xltxb/PetManage/pkg/logger"
 	"go.uber.org/zap"
@@ -78,6 +79,10 @@ func main() {
 	// Initialize dictionary service.
 	dictService := dictionary.NewService(db)
 
+	// Initialize role service and permission checker.
+	roleService := role.NewService(db)
+	permChecker := middleware.NewPermissionChecker(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -91,7 +96,6 @@ func main() {
 	// Merchant routes (auth-protected).
 	mux.Handle("GET /api/v1/merchants", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantListHandler(merchantService))))
 	mux.Handle("GET /api/v1/merchants/pending", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantPendingHandler(merchantService))))
-	mux.Handle("POST /api/v1/merchants/{id}/approve", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantApproveHandler(merchantService))))
 	mux.Handle("POST /api/v1/merchants/{id}/reject", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRejectHandler(merchantService))))
 	mux.Handle("PUT /api/v1/merchants/{id}/apply", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantResubmitHandler(merchantService))))
 
@@ -109,7 +113,6 @@ func main() {
 	mux.Handle("GET /api/v1/contracts/reminders", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractRemindersHandler(contractService))))
 
 	// Dictionary management — Categories (auth-protected).
-	mux.Handle("POST /api/v1/dict/categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictCreateCategoryHandler(dictService))))
 	mux.Handle("GET /api/v1/dict/categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictListCategoriesHandler(dictService))))
 	mux.Handle("PUT /api/v1/dict/categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictUpdateCategoryHandler(dictService))))
 	mux.Handle("DELETE /api/v1/dict/categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictDeleteCategoryHandler(dictService))))
@@ -121,6 +124,35 @@ func main() {
 	mux.Handle("PUT /api/v1/dict/breeds/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictUpdateBreedHandler(dictService))))
 	mux.Handle("DELETE /api/v1/dict/breeds/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictDeleteBreedHandler(dictService))))
 	mux.Handle("POST /api/v1/dict/breeds/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictToggleBreedHandler(dictService))))
+
+	// Platform role & permission management (auth-protected).
+	mux.Handle("GET /api/v1/platform/permissions", middleware.Auth(jwtManager)(http.HandlerFunc(makePermissionsHandler(roleService))))
+	mux.Handle("GET /api/v1/platform/roles", middleware.Auth(jwtManager)(http.HandlerFunc(makeRoleListHandler(roleService))))
+	mux.Handle("POST /api/v1/platform/roles", middleware.Auth(jwtManager)(http.HandlerFunc(makeRoleCreateHandler(roleService))))
+	mux.Handle("GET /api/v1/platform/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeRoleGetHandler(roleService))))
+	mux.Handle("PUT /api/v1/platform/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeRoleUpdateHandler(roleService))))
+	mux.Handle("DELETE /api/v1/platform/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeRoleDeleteHandler(roleService))))
+	mux.Handle("GET /api/v1/platform/users", middleware.Auth(jwtManager)(http.HandlerFunc(makeUserListHandler(roleService))))
+	mux.Handle("POST /api/v1/platform/users", middleware.Auth(jwtManager)(http.HandlerFunc(makeUserCreateHandler(roleService))))
+	mux.Handle("PUT /api/v1/platform/users/{id}/role", middleware.Auth(jwtManager)(http.HandlerFunc(makeUserAssignRoleHandler(roleService))))
+
+	// Permission-protected routes (auth + permission check).
+	// Merchant approve requires merchant:manage permission.
+	mux.Handle("POST /api/v1/merchants/{id}/approve",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("merchant:manage")(
+				http.HandlerFunc(makeMerchantApproveHandler(merchantService)),
+			),
+		),
+	)
+	// Dict create requires dict:manage permission.
+	mux.Handle("POST /api/v1/dict/categories",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("dict:manage")(
+				http.HandlerFunc(makeDictCreateCategoryHandler(dictService)),
+			),
+		),
+	)
 
 	// Protected routes.
 	protected := http.NewServeMux()
@@ -1188,5 +1220,240 @@ func makeDictToggleBreedHandler(svc *dictionary.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// --- Role handlers ---
+
+func makePermissionsHandler(svc *role.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"permissions": svc.GetAvailablePermissions(),
+		})
+	}
+}
+
+func makeRoleListHandler(svc *role.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		roles, err := svc.ListRoles(r.Context())
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list roles", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"roles": roles,
+			"total": len(roles),
+		})
+	}
+}
+
+func makeRoleCreateHandler(svc *role.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		var req role.CreateRoleRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		resp, err := svc.CreateRole(r.Context(), req, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create role", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeRoleGetHandler(svc *role.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid role id"))
+			return
+		}
+
+		rp, err := svc.GetRole(r.Context(), id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get role", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rp)
+	}
+}
+
+func makeRoleUpdateHandler(svc *role.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid role id"))
+			return
+		}
+
+		var req role.UpdateRoleRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		resp, err := svc.UpdateRole(r.Context(), id, req, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update role", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeRoleDeleteHandler(svc *role.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid role id"))
+			return
+		}
+
+		if err := svc.DeleteRole(r.Context(), id, claims.UserID); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to delete role", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "role deleted"})
+	}
+}
+
+// --- User handlers ---
+
+func makeUserListHandler(svc *role.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		users, err := svc.ListUsers(r.Context())
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list users", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"users": users,
+			"total": len(users),
+		})
+	}
+}
+
+func makeUserCreateHandler(svc *role.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		var req role.CreateUserRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		resp, err := svc.CreateUser(r.Context(), req, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create user", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeUserAssignRoleHandler(svc *role.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		userID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || userID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid user id"))
+			return
+		}
+
+		var req role.AssignRoleRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		if err := svc.AssignRole(r.Context(), userID, req.RoleID, claims.UserID); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to assign role", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "role assigned successfully"})
 	}
 }
