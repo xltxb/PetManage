@@ -73,3 +73,33 @@ SESSION 2 — F002 数据库Schema设计与迁移框架 [2026-05-23 01:04 CST]
   ✓ 重复运行迁移不报错 (IF NOT EXISTS + ON CONFLICT DO NOTHING)
   ✓ 回滚后表删除，重新迁移恢复
 - 提交: 4378374 feat(F002): database migration framework + core schema
+
+================================================================================
+SESSION 3 — F003 统一错误处理中间件 [2026-05-23 01:10 CST]
+================================================================================
+
+- 创建 pkg/apperrors/errors.go: 标准化错误码与错误响应格式
+  - 6 个标准错误码: INVALID_PARAMS(400), UNAUTHORIZED(401), FORBIDDEN(403),
+    NOT_FOUND(404), CONFLICT(409), INTERNAL_ERROR(500)
+  - 统一 JSON 格式: {"code":"...","message":"...","data":null,"request_id":"..."}
+  - AppError 类型 + WriteError 响应写入函数
+  - 请求 ID 的 context 存取辅助函数
+- 创建 internal/middleware/requestid.go: 请求 ID 中间件
+  - 使用 crypto/rand 生成 UUIDv4
+  - 支持从 X-Request-ID 请求头传递
+  - 在响应头中回传 X-Request-ID
+- 创建 internal/middleware/recovery.go: Panic 恢复中间件
+  - 捕获 panic 并返回 500 INTERNAL_ERROR
+  - 不暴露内部错误详情给客户端
+  - 将堆栈信息写入日志便于排查
+- 更新 cmd/server/main.go:
+  - 接入中间件链: Recovery → RequestID → Logging → NotFound → Mux
+  - notFoundWrapper 改用标准错误格式返回 NOT_FOUND
+  - 添加 3 个 demo 端点用于测试: /api/v1/demo/{validation,protected,panic}
+- 端到端验证全部 5 个步骤通过:
+  ✓ 参数校验错误返回 {"code":"INVALID_PARAMS","message":"...","data":null}
+  ✓ 未授权访问返回 401 + UNAUTHORIZED
+  ✓ 不存在路由返回 404 + NOT_FOUND
+  ✓ 内部错误返回 500，不暴露内部细节
+  ✓ 所有错误响应包含 request_id (UUIDv4)
+- 提交: dedad11 feat(F003): unified error handling middleware — error codes, request ID, recovery
