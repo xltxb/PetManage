@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
@@ -57,6 +58,24 @@ type LogConfig struct {
 	FilePath string `yaml:"file_path"`
 }
 
+var envVarPattern = regexp.MustCompile(`\$\{(\w+)(?::-([^}]*))?\}`)
+
+// expandEnvVars replaces ${VAR} and ${VAR:-default} with environment variable values.
+func expandEnvVars(s string) string {
+	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
+		parts := envVarPattern.FindStringSubmatch(match)
+		name := parts[1]
+		defaultVal := parts[2]
+		if val, ok := os.LookupEnv(name); ok && val != "" {
+			return val
+		}
+		if defaultVal != "" {
+			return defaultVal
+		}
+		return match
+	})
+}
+
 // DSN builds a PostgreSQL connection string from database config.
 func (c *Config) DSN() string {
 	return "host=" + c.Database.Host +
@@ -73,8 +92,11 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Expand ${VAR:-default} and ${VAR} placeholders with env var values.
+	expanded := expandEnvVars(string(data))
+
 	cfg := &Config{}
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
 		return nil, err
 	}
 

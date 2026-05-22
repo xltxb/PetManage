@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/xltxb/PetManage/internal/auth"
 	"github.com/xltxb/PetManage/internal/config"
 	"github.com/xltxb/PetManage/internal/database"
 	"github.com/xltxb/PetManage/internal/middleware"
@@ -44,11 +45,36 @@ func main() {
 	}
 	defer lgr.Sync()
 
+	// Connect to database.
+	dsn := cfg.DSN()
+	lgr.Info("Connecting to database...")
+	db, err := database.Connect(dsn)
+	if err != nil {
+		lgr.Fatal("Database connection failed", zap.Error(err))
+	}
+	defer db.Close()
+
+	// Initialize JWT manager.
+	jwtManager := auth.NewJWTManager(
+		cfg.JWT.Secret,
+		cfg.JWT.AccessTokenTTL,
+		cfg.JWT.RefreshTokenTTL,
+	)
+
+	// Initialize auth service.
+	authService := auth.NewService(db, jwtManager)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
-	mux.HandleFunc("/api/v1/demo/validation", demoValidationHandler)
-	mux.HandleFunc("/api/v1/demo/protected", demoProtectedHandler)
-	mux.HandleFunc("/api/v1/demo/panic", demoPanicHandler)
+	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
+	mux.HandleFunc("/api/v1/auth/refresh", makeRefreshHandler(authService))
+
+	// Protected routes.
+	protected := http.NewServeMux()
+	protected.HandleFunc("/api/v1/demo/protected", demoProtectedHandler)
+	protected.HandleFunc("/api/v1/demo/validation", demoValidationHandler)
+	protected.HandleFunc("/api/v1/demo/panic", demoPanicHandler)
+	mux.Handle("/api/v1/demo/", middleware.Auth(jwtManager)(protected))
 
 	var h http.Handler = mux
 	h = notFoundWrapper(h)
@@ -104,20 +130,75 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
-// notFoundWrapper returns a standardized JSON 404 for unmatched routes.
-func notFoundWrapper(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, pattern := next.(*http.ServeMux).Handler(r)
-		if pattern == "" {
-			appErr := apperrors.NewNotFoundError("route not found: " + r.URL.Path)
-			apperrors.WriteError(w, r, appErr)
+// --- Auth handlers ---
+
+func makeLoginHandler(svc *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			apperrors.WriteError(w, r, apperrors.NewNotFoundError("route not found: "+r.URL.Path))
 			return
 		}
-		next.ServeHTTP(w, r)
-	})
+
+		var req auth.LoginRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		if req.Username == "" || req.Password == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("username and password are required"))
+			return
+		}
+
+		tokens, err := svc.Login(r.Context(), req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("login failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(tokens)
+	}
 }
 
-// --- Demo handlers for error handling verification ---
+func makeRefreshHandler(svc *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			apperrors.WriteError(w, r, apperrors.NewNotFoundError("route not found: "+r.URL.Path))
+			return
+		}
+
+		var req auth.RefreshRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		if req.RefreshToken == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("refresh_token is required"))
+			return
+		}
+
+		tokens, err := svc.RefreshToken(r.Context(), req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("token refresh failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(tokens)
+	}
+}
+
+// --- Demo handlers ---
 
 func demoValidationHandler(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
@@ -130,20 +211,33 @@ func demoValidationHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func demoProtectedHandler(w http.ResponseWriter, r *http.Request) {
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("missing authorization token"))
-		return
-	}
+	claims := middleware.UserClaimsFromContext(r.Context())
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"msg": "authorized"})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"msg":      "authorized",
+		"user_id":  claims.UserID,
+		"username": claims.Username,
+	})
 }
 
 func demoPanicHandler(w http.ResponseWriter, r *http.Request) {
 	panic("simulated internal error")
 }
 
-// --- Logging middleware ---
+// --- Middleware ---
+
+// notFoundWrapper returns a standardized JSON 404 for unmatched routes.
+func notFoundWrapper(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pattern := next.(*http.ServeMux).Handler(r)
+		if pattern == "" {
+			appErr := apperrors.NewNotFoundError("route not found: " + r.URL.Path)
+			apperrors.WriteError(w, r, appErr)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func loggingMiddleware(lgr *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

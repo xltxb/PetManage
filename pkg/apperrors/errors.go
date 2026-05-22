@@ -8,21 +8,25 @@ import (
 
 // Standard error codes.
 const (
-	CodeInvalidParams = "INVALID_PARAMS"
-	CodeUnauthorized  = "UNAUTHORIZED"
-	CodeForbidden     = "FORBIDDEN"
-	CodeNotFound      = "NOT_FOUND"
-	CodeConflict      = "CONFLICT"
-	CodeInternalError = "INTERNAL_ERROR"
+	CodeInvalidParams     = "INVALID_PARAMS"
+	CodeUnauthorized      = "UNAUTHORIZED"
+	CodeForbidden         = "FORBIDDEN"
+	CodeNotFound          = "NOT_FOUND"
+	CodeConflict          = "CONFLICT"
+	CodeInternalError     = "INTERNAL_ERROR"
+	CodeInvalidCredentials = "INVALID_CREDENTIALS"
+	CodeTokenExpired      = "TOKEN_EXPIRED"
 )
 
 var codeToStatus = map[string]int{
-	CodeInvalidParams: http.StatusBadRequest,
-	CodeUnauthorized:  http.StatusUnauthorized,
-	CodeForbidden:     http.StatusForbidden,
-	CodeNotFound:      http.StatusNotFound,
-	CodeConflict:      http.StatusConflict,
-	CodeInternalError: http.StatusInternalServerError,
+	CodeInvalidParams:     http.StatusBadRequest,
+	CodeUnauthorized:      http.StatusUnauthorized,
+	CodeForbidden:         http.StatusForbidden,
+	CodeNotFound:          http.StatusNotFound,
+	CodeConflict:          http.StatusConflict,
+	CodeInternalError:     http.StatusInternalServerError,
+	CodeInvalidCredentials: http.StatusUnauthorized,
+	CodeTokenExpired:      http.StatusUnauthorized,
 }
 
 // AppError is a structured application error.

@@ -58,7 +58,7 @@
         "携带过期 Token 访问，返回 401 TOKEN_EXPIRED",
         "使用 refresh_token 换取新的 access_token"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F005",
