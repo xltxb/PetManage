@@ -228,6 +228,52 @@ func (pc *PermissionChecker) InvalidateAll() {
 	pc.mu.Unlock()
 }
 
+// RequirePlatformUser blocks merchant users from accessing platform endpoints.
+// Only users with nil merchant_id (platform admins/operators) are allowed.
+func RequirePlatformUser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims := UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, &apperrors.AppError{
+				Code:    apperrors.CodeUnauthorized,
+				Message: "authentication required",
+			})
+			return
+		}
+		if claims.MerchantID != nil {
+			apperrors.WriteError(w, r, &apperrors.AppError{
+				Code:    apperrors.CodeForbidden,
+				Message: "platform access only, merchant accounts are not permitted",
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireMerchantUser blocks platform users from accessing merchant endpoints.
+// Only users with a non-nil merchant_id (merchant admins/employees) are allowed.
+func RequireMerchantUser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims := UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, &apperrors.AppError{
+				Code:    apperrors.CodeUnauthorized,
+				Message: "authentication required",
+			})
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, &apperrors.AppError{
+				Code:    apperrors.CodeForbidden,
+				Message: "merchant account required",
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func hasPermission(perms []string, required string) bool {
 	for _, p := range perms {
 		if p == "*" {

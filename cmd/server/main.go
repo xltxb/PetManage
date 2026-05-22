@@ -164,23 +164,23 @@ func main() {
 	mux.HandleFunc("POST /api/v1/merchants/apply", makeMerchantApplyHandler(merchantService))
 	mux.HandleFunc("GET /api/v1/merchants/apply/{id}", makeMerchantGetHandler(merchantService))
 
-	// Merchant routes (auth-protected).
-	mux.Handle("GET /api/v1/merchants", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantListHandler(merchantService))))
-	mux.Handle("GET /api/v1/merchants/pending", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantPendingHandler(merchantService))))
-	mux.Handle("POST /api/v1/merchants/{id}/reject", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRejectHandler(merchantService))))
-	mux.Handle("PUT /api/v1/merchants/{id}/apply", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantResubmitHandler(merchantService))))
+	// Merchant routes (platform-only, auth-protected).
+	mux.Handle("GET /api/v1/merchants", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeMerchantListHandler(merchantService)))))
+	mux.Handle("GET /api/v1/merchants/pending", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeMerchantPendingHandler(merchantService)))))
+	mux.Handle("POST /api/v1/merchants/{id}/reject", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeMerchantRejectHandler(merchantService)))))
+	mux.Handle("PUT /api/v1/merchants/{id}/apply", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeMerchantResubmitHandler(merchantService)))))
 
-	// Merchant status control (auth-protected).
-	mux.Handle("POST /api/v1/merchants/{id}/freeze", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantFreezeHandler(merchantService))))
-	mux.Handle("POST /api/v1/merchants/{id}/unfreeze", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantUnfreezeHandler(merchantService))))
-	mux.Handle("POST /api/v1/merchants/{id}/close", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantCloseHandler(merchantService))))
-	mux.Handle("GET /api/v1/operation-logs/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantLogsHandler(merchantService))))
-	mux.Handle("GET /api/v1/operation-logs", middleware.Auth(jwtManager)(http.HandlerFunc(makeOperationLogsHandler(opLogService))))
+	// Merchant status control (platform-only, auth-protected).
+	mux.Handle("POST /api/v1/merchants/{id}/freeze", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeMerchantFreezeHandler(merchantService)))))
+	mux.Handle("POST /api/v1/merchants/{id}/unfreeze", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeMerchantUnfreezeHandler(merchantService)))))
+	mux.Handle("POST /api/v1/merchants/{id}/close", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeMerchantCloseHandler(merchantService)))))
+	mux.Handle("GET /api/v1/operation-logs/merchant/{id}", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeMerchantLogsHandler(merchantService)))))
+	mux.Handle("GET /api/v1/operation-logs", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeOperationLogsHandler(opLogService)))))
 
-	// Dashboard routes (auth-protected).
-	mux.Handle("GET /api/v1/dashboard/overview", middleware.Auth(jwtManager)(http.HandlerFunc(makeDashboardOverviewHandler(dashboardService))))
-	mux.Handle("GET /api/v1/dashboard/merchant/{id}/analysis", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantAnalysisHandler(dashboardService))))
-	mux.Handle("GET /api/v1/dashboard/merchants/ranking", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantsRankingHandler(dashboardService))))
+	// Dashboard routes (platform-only, auth-protected).
+	mux.Handle("GET /api/v1/dashboard/overview", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDashboardOverviewHandler(dashboardService)))))
+	mux.Handle("GET /api/v1/dashboard/merchant/{id}/analysis", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeMerchantAnalysisHandler(dashboardService)))))
+	mux.Handle("GET /api/v1/dashboard/merchants/ranking", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeMerchantsRankingHandler(dashboardService)))))
 
 	// Merchant dashboard routes (auth-protected).
 	mux.Handle("GET /api/v1/merchant/dashboard", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantDashboardHandler(merchantService))))
@@ -320,221 +320,267 @@ func main() {
 	mux.Handle("GET /api/v1/merchant/pos/coupons/verify", middleware.Auth(jwtManager)(http.HandlerFunc(makePosCouponVerifyHandler(checkoutService))))
 
 	// Refund (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/orders/{id}/refund", middleware.Auth(jwtManager)(http.HandlerFunc(makeRefundHandler(riskService))))
+	mux.Handle("POST /api/v1/merchant/orders/{id}/refund", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeRefundHandler(riskService)))))
 
-	// Risk control — rule management (auth + permission).
+	// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("risk:view")(
-				http.HandlerFunc(makeRiskRuleListHandler(riskService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("risk:view")(
+					http.HandlerFunc(makeRiskRuleListHandler(riskService)),
+				),
 			),
 		),
 	)
 	mux.Handle("POST /api/v1/risk/rules",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("risk:manage")(
-				http.HandlerFunc(makeRiskRuleCreateHandler(riskService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("risk:manage")(
+					http.HandlerFunc(makeRiskRuleCreateHandler(riskService)),
+				),
 			),
 		),
 	)
 	mux.Handle("GET /api/v1/risk/rules/{id}",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("risk:view")(
-				http.HandlerFunc(makeRiskRuleGetHandler(riskService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("risk:view")(
+					http.HandlerFunc(makeRiskRuleGetHandler(riskService)),
+				),
 			),
 		),
 	)
 	mux.Handle("PUT /api/v1/risk/rules/{id}",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("risk:manage")(
-				http.HandlerFunc(makeRiskRuleUpdateHandler(riskService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("risk:manage")(
+					http.HandlerFunc(makeRiskRuleUpdateHandler(riskService)),
+				),
 			),
 		),
 	)
 	mux.Handle("DELETE /api/v1/risk/rules/{id}",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("risk:manage")(
-				http.HandlerFunc(makeRiskRuleDeleteHandler(riskService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("risk:manage")(
+					http.HandlerFunc(makeRiskRuleDeleteHandler(riskService)),
+				),
 			),
 		),
 	)
 	mux.Handle("POST /api/v1/risk/rules/{id}/toggle",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("risk:manage")(
-				http.HandlerFunc(makeRiskRuleToggleHandler(riskService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("risk:manage")(
+					http.HandlerFunc(makeRiskRuleToggleHandler(riskService)),
+				),
 			),
 		),
 	)
 
-	// Risk control — alert management (auth + permission).
+	// Risk control — alert management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/alerts",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("risk:view")(
-				http.HandlerFunc(makeRiskAlertListHandler(riskService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("risk:view")(
+					http.HandlerFunc(makeRiskAlertListHandler(riskService)),
+				),
 			),
 		),
 	)
 	mux.Handle("GET /api/v1/risk/alerts/{id}",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("risk:view")(
-				http.HandlerFunc(makeRiskAlertGetHandler(riskService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("risk:view")(
+					http.HandlerFunc(makeRiskAlertGetHandler(riskService)),
+				),
 			),
 		),
 	)
 	mux.Handle("PUT /api/v1/risk/alerts/{id}/status",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("risk:manage")(
-				http.HandlerFunc(makeRiskAlertStatusHandler(riskService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("risk:manage")(
+					http.HandlerFunc(makeRiskAlertStatusHandler(riskService)),
+				),
 			),
 		),
 	)
 
-	// Complaint ticket management (auth-protected).
-	mux.Handle("POST /api/v1/complaints", middleware.Auth(jwtManager)(http.HandlerFunc(makeComplaintCreateHandler(complaintService))))
+	// Complaint ticket management (platform-only auth-protected).
+	mux.Handle("POST /api/v1/complaints", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeComplaintCreateHandler(complaintService)))))
 	mux.Handle("GET /api/v1/complaints",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("complaint:view")(
-				http.HandlerFunc(makeComplaintListHandler(complaintService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("complaint:view")(
+					http.HandlerFunc(makeComplaintListHandler(complaintService)),
+				),
 			),
 		),
 	)
 	mux.Handle("GET /api/v1/complaints/{id}",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("complaint:view")(
-				http.HandlerFunc(makeComplaintGetHandler(complaintService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("complaint:view")(
+					http.HandlerFunc(makeComplaintGetHandler(complaintService)),
+				),
 			),
 		),
 	)
 	mux.Handle("PUT /api/v1/complaints/{id}/assign",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("complaint:manage")(
-				http.HandlerFunc(makeComplaintAssignHandler(complaintService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("complaint:manage")(
+					http.HandlerFunc(makeComplaintAssignHandler(complaintService)),
+				),
 			),
 		),
 	)
 	mux.Handle("PUT /api/v1/complaints/{id}/progress",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("complaint:manage")(
-				http.HandlerFunc(makeComplaintUpdateProgressHandler(complaintService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("complaint:manage")(
+					http.HandlerFunc(makeComplaintUpdateProgressHandler(complaintService)),
+				),
 			),
 		),
 	)
 	mux.Handle("PUT /api/v1/complaints/{id}/status",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("complaint:manage")(
-				http.HandlerFunc(makeComplaintUpdateStatusHandler(complaintService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("complaint:manage")(
+					http.HandlerFunc(makeComplaintUpdateStatusHandler(complaintService)),
+				),
 			),
 		),
 	)
 	mux.Handle("GET /api/v1/complaints/stats",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("complaint:view")(
-				http.HandlerFunc(makeComplaintStatsHandler(complaintService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("complaint:view")(
+					http.HandlerFunc(makeComplaintStatsHandler(complaintService)),
+				),
 			),
 		),
 	)
 
-	// Report export (auth-protected).
-	mux.Handle("GET /api/v1/reports/operating", middleware.Auth(jwtManager)(http.HandlerFunc(makeReportOperatingHandler(reportService))))
-	mux.Handle("GET /api/v1/reports/transactions", middleware.Auth(jwtManager)(http.HandlerFunc(makeReportTransactionHandler(reportService))))
+	// Report export (platform-only, auth-protected).
+	mux.Handle("GET /api/v1/reports/operating", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeReportOperatingHandler(reportService)))))
+	mux.Handle("GET /api/v1/reports/transactions", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeReportTransactionHandler(reportService)))))
 
-	// Contract management (auth-protected).
-	mux.Handle("POST /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractUploadHandler(contractService))))
-	mux.Handle("GET /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractListHandler(contractService))))
-	mux.Handle("GET /api/v1/contracts/merchant/{id}/current", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractCurrentHandler(contractService))))
-	mux.Handle("POST /api/v1/contracts/merchant/{id}/renew", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractRenewHandler(contractService))))
-	mux.Handle("GET /api/v1/contracts/reminders", middleware.Auth(jwtManager)(http.HandlerFunc(makeContractRemindersHandler(contractService))))
+	// Contract management (platform-only, auth-protected).
+	mux.Handle("POST /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractUploadHandler(contractService)))))
+	mux.Handle("GET /api/v1/contracts/merchant/{id}", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractListHandler(contractService)))))
+	mux.Handle("GET /api/v1/contracts/merchant/{id}/current", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractCurrentHandler(contractService)))))
+	mux.Handle("POST /api/v1/contracts/merchant/{id}/renew", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractRenewHandler(contractService)))))
+	mux.Handle("GET /api/v1/contracts/reminders", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractRemindersHandler(contractService)))))
 
-	// Dictionary management — Categories (auth-protected).
-	mux.Handle("GET /api/v1/dict/categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictListCategoriesHandler(dictService))))
-	mux.Handle("PUT /api/v1/dict/categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictUpdateCategoryHandler(dictService))))
-	mux.Handle("DELETE /api/v1/dict/categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictDeleteCategoryHandler(dictService))))
-	mux.Handle("POST /api/v1/dict/categories/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictToggleCategoryHandler(dictService))))
+	// Dictionary management — Categories (platform-only, auth-protected).
+	mux.Handle("GET /api/v1/dict/categories", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDictListCategoriesHandler(dictService)))))
+	mux.Handle("PUT /api/v1/dict/categories/{id}", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDictUpdateCategoryHandler(dictService)))))
+	mux.Handle("DELETE /api/v1/dict/categories/{id}", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDictDeleteCategoryHandler(dictService)))))
+	mux.Handle("POST /api/v1/dict/categories/{id}/toggle", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDictToggleCategoryHandler(dictService)))))
 
-	// Dictionary management — Breeds (auth-protected).
-	mux.Handle("POST /api/v1/dict/breeds", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictCreateBreedHandler(dictService))))
-	mux.Handle("GET /api/v1/dict/breeds", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictListBreedsHandler(dictService))))
-	mux.Handle("PUT /api/v1/dict/breeds/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictUpdateBreedHandler(dictService))))
-	mux.Handle("DELETE /api/v1/dict/breeds/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictDeleteBreedHandler(dictService))))
-	mux.Handle("POST /api/v1/dict/breeds/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makeDictToggleBreedHandler(dictService))))
+	// Dictionary management — Breeds (platform-only, auth-protected).
+	mux.Handle("POST /api/v1/dict/breeds", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDictCreateBreedHandler(dictService)))))
+	mux.Handle("GET /api/v1/dict/breeds", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDictListBreedsHandler(dictService)))))
+	mux.Handle("PUT /api/v1/dict/breeds/{id}", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDictUpdateBreedHandler(dictService)))))
+	mux.Handle("DELETE /api/v1/dict/breeds/{id}", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDictDeleteBreedHandler(dictService)))))
+	mux.Handle("POST /api/v1/dict/breeds/{id}/toggle", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDictToggleBreedHandler(dictService)))))
 
-	// Platform role & permission management (auth-protected).
-	mux.Handle("GET /api/v1/platform/permissions", middleware.Auth(jwtManager)(http.HandlerFunc(makePermissionsHandler(roleService))))
-	mux.Handle("GET /api/v1/platform/roles", middleware.Auth(jwtManager)(http.HandlerFunc(makeRoleListHandler(roleService))))
-	mux.Handle("POST /api/v1/platform/roles", middleware.Auth(jwtManager)(http.HandlerFunc(makeRoleCreateHandler(roleService))))
-	mux.Handle("GET /api/v1/platform/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeRoleGetHandler(roleService))))
-	mux.Handle("PUT /api/v1/platform/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeRoleUpdateHandler(roleService))))
-	mux.Handle("DELETE /api/v1/platform/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeRoleDeleteHandler(roleService))))
-	mux.Handle("GET /api/v1/platform/users", middleware.Auth(jwtManager)(http.HandlerFunc(makeUserListHandler(roleService))))
-	mux.Handle("POST /api/v1/platform/users", middleware.Auth(jwtManager)(http.HandlerFunc(makeUserCreateHandler(roleService))))
-	mux.Handle("PUT /api/v1/platform/users/{id}/role", middleware.Auth(jwtManager)(http.HandlerFunc(makeUserAssignRoleHandler(roleService))))
+	// Platform role & permission management (platform-only, auth-protected).
+	mux.Handle("GET /api/v1/platform/permissions", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makePermissionsHandler(roleService)))))
+	mux.Handle("GET /api/v1/platform/roles", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeRoleListHandler(roleService)))))
+	mux.Handle("POST /api/v1/platform/roles", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeRoleCreateHandler(roleService)))))
+	mux.Handle("GET /api/v1/platform/roles/{id}", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeRoleGetHandler(roleService)))))
+	mux.Handle("PUT /api/v1/platform/roles/{id}", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeRoleUpdateHandler(roleService)))))
+	mux.Handle("DELETE /api/v1/platform/roles/{id}", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeRoleDeleteHandler(roleService)))))
+	mux.Handle("GET /api/v1/platform/users", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeUserListHandler(roleService)))))
+	mux.Handle("POST /api/v1/platform/users", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeUserCreateHandler(roleService)))))
+	mux.Handle("PUT /api/v1/platform/users/{id}/role", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeUserAssignRoleHandler(roleService)))))
 
-	// Permission-protected routes (auth + permission check).
+	// Permission-protected routes (platform-only auth + permission check).
 	// Merchant approve requires merchant:manage permission.
 	mux.Handle("POST /api/v1/merchants/{id}/approve",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("merchant:manage")(
-				http.HandlerFunc(makeMerchantApproveHandler(merchantService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("merchant:manage")(
+					http.HandlerFunc(makeMerchantApproveHandler(merchantService)),
+				),
 			),
 		),
 	)
 	// Dict create requires dict:manage permission.
 	mux.Handle("POST /api/v1/dict/categories",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("dict:manage")(
-				http.HandlerFunc(makeDictCreateCategoryHandler(dictService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("dict:manage")(
+					http.HandlerFunc(makeDictCreateCategoryHandler(dictService)),
+				),
 			),
 		),
 	)
 
-	// Announcement routes — platform side (auth + permission).
+	// Announcement routes — platform side (platform-only auth + permission).
 	mux.Handle("GET /api/v1/announcements",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("announcement:view")(
-				http.HandlerFunc(makeAnnouncementListHandler(announcementService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("announcement:view")(
+					http.HandlerFunc(makeAnnouncementListHandler(announcementService)),
+				),
 			),
 		),
 	)
 	mux.Handle("GET /api/v1/announcements/{id}",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("announcement:view")(
-				http.HandlerFunc(makeAnnouncementGetHandler(announcementService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("announcement:view")(
+					http.HandlerFunc(makeAnnouncementGetHandler(announcementService)),
+				),
 			),
 		),
 	)
 	mux.Handle("POST /api/v1/announcements",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("announcement:manage")(
-				http.HandlerFunc(makeAnnouncementCreateHandler(announcementService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("announcement:manage")(
+					http.HandlerFunc(makeAnnouncementCreateHandler(announcementService)),
+				),
 			),
 		),
 	)
 	mux.Handle("PUT /api/v1/announcements/{id}",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("announcement:manage")(
-				http.HandlerFunc(makeAnnouncementUpdateHandler(announcementService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("announcement:manage")(
+					http.HandlerFunc(makeAnnouncementUpdateHandler(announcementService)),
+				),
 			),
 		),
 	)
 	mux.Handle("DELETE /api/v1/announcements/{id}",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("announcement:manage")(
-				http.HandlerFunc(makeAnnouncementDeleteHandler(announcementService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("announcement:manage")(
+					http.HandlerFunc(makeAnnouncementDeleteHandler(announcementService)),
+				),
 			),
 		),
 	)
 	mux.Handle("POST /api/v1/announcements/{id}/pin",
 		middleware.Auth(jwtManager)(
-			permChecker.RequirePermission("announcement:manage")(
-				http.HandlerFunc(makeAnnouncementPinHandler(announcementService)),
+			middleware.RequirePlatformUser(
+				permChecker.RequirePermission("announcement:manage")(
+					http.HandlerFunc(makeAnnouncementPinHandler(announcementService)),
+				),
 			),
 		),
 	)
 
-	// Announcement routes — merchant side (auth only).
-	mux.Handle("GET /api/v1/merchant/announcements", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantAnnouncementListHandler(announcementService))))
-	mux.Handle("GET /api/v1/merchant/announcements/unread-count", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantAnnouncementUnreadCountHandler(announcementService))))
-	mux.Handle("POST /api/v1/merchant/announcements/{id}/read", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantAnnouncementReadHandler(announcementService))))
+	// Announcement routes — merchant side (auth + merchant-only).
+	mux.Handle("GET /api/v1/merchant/announcements", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeMerchantAnnouncementListHandler(announcementService)))))
+	mux.Handle("GET /api/v1/merchant/announcements/unread-count", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeMerchantAnnouncementUnreadCountHandler(announcementService)))))
+	mux.Handle("POST /api/v1/merchant/announcements/{id}/read", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeMerchantAnnouncementReadHandler(announcementService)))))
 
 	// Protected routes.
 	protected := http.NewServeMux()
