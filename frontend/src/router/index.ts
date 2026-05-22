@@ -59,6 +59,11 @@ const router = createRouter({
       component: () => import('@/views/Placeholder.vue'),
     },
     {
+      path: '/merchant/pos',
+      name: 'merchant-pos',
+      component: () => import('@/views/MerchantPos.vue'),
+    },
+    {
       path: '/merchant/categories',
       name: 'merchant-categories',
       component: () => import('@/views/MerchantCategories.vue'),

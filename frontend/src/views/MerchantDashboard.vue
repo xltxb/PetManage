@@ -98,6 +98,7 @@ function handleLogout() {
 }
 
 const quickLinks = [
+  { label: 'POS收银', path: '/merchant/pos', icon: '💰' },
   { label: '商品管理', path: '/merchant/products', icon: '📦' },
   { label: '订单管理', path: '/merchant/orders', icon: '📋' },
   { label: '预约管理', path: '/merchant/appointments', icon: '📅' },

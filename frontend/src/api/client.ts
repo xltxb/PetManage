@@ -384,6 +384,64 @@ class ApiClient {
       notice: string
     }
   }
+
+  // --- POS APIs ---
+
+  posCartCalculate(data: { member_id?: number | null; items: Array<{ product_id?: number; sku_id?: number; service_item_id?: number; quantity: number }> }) {
+    return this.request<{
+      items: Array<{
+        product_id?: number
+        sku_id?: number
+        sku_spec_info?: Record<string, string>
+        service_item_id?: number
+        name: string
+        barcode?: string
+        unit_price_cents: number
+        discount_cents: number
+        quantity: number
+        line_total_cents: number
+      }>
+      original_cents: number
+      discount_cents: number
+      payable_cents: number
+    }>('/api/v1/merchant/pos/cart/calculate', { method: 'POST', body: data })
+  }
+
+  posMemberLookup(phone: string) {
+    return this.request<{
+      member_id: number
+      card_no: string
+      name: string
+      phone: string
+      status: string
+    }>(`/api/v1/merchant/pos/members/lookup?phone=${encodeURIComponent(phone)}`)
+  }
+
+  posCheckout(data: {
+    member_id?: number | null
+    items: Array<{ product_id?: number; sku_id?: number; service_item_id?: number; quantity: number }>
+    payments: Array<{ method: string; amount_cents: number }>
+    order_notes?: string
+  }) {
+    return this.request<any>('/api/v1/merchant/checkout', { method: 'POST', body: data })
+  }
+
+  // --- Service APIs ---
+
+  getServiceCategories() {
+    return this.request<{ categories: any[] }>('/api/v1/merchant/service-categories')
+  }
+
+  getServiceItems(params?: { status?: string; keyword?: string; category_id?: number; page?: number; page_size?: number }) {
+    const search = new URLSearchParams()
+    if (params?.status) search.set('status', params.status)
+    if (params?.keyword) search.set('keyword', params.keyword)
+    if (params?.category_id) search.set('category_id', String(params.category_id))
+    if (params?.page) search.set('page', String(params.page))
+    if (params?.page_size) search.set('page_size', String(params.page_size))
+    const qs = search.toString()
+    return this.request<any>(`/api/v1/merchant/service-items${qs ? '?' + qs : ''}`)
+  }
 }
 
 export const api = new ApiClient()

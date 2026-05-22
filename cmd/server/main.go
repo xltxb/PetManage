@@ -239,6 +239,10 @@ func main() {
 	// Checkout (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService))))
 
+	// POS cash register (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/pos/cart/calculate", middleware.Auth(jwtManager)(http.HandlerFunc(makePosCartCalculateHandler(checkoutService))))
+	mux.Handle("GET /api/v1/merchant/pos/members/lookup", middleware.Auth(jwtManager)(http.HandlerFunc(makePosMemberLookupHandler(checkoutService))))
+
 	// Refund (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/orders/{id}/refund", middleware.Auth(jwtManager)(http.HandlerFunc(makeRefundHandler(riskService))))
 
