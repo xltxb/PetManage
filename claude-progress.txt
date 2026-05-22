@@ -610,3 +610,33 @@ SESSION 20 — F016 商户经营分析 [2026-05-23 03:28 CST]
   ✓ 服务热度排行：展示 Royal Canin Dog Food 2kg (订单1) 和 Chicken Treats 100g (订单1)
   ✓ 时间段筛选：today/week/month/year/all 全部正确返回对应数据
 - 提交: 5c6dc0e feat(F016): merchant business analysis
+================================================================================
+SESSION 21 — F017 平台数据报表导出 [2026-05-23 03:39 CST]
+================================================================================
+
+- 安装 excelize/v2 Go 包用于生成 Excel 文件
+- 创建 internal/report/service.go:
+  - ExportOperatingReport: 全平台经营报表导出
+    - 商户经营概况 Sheet: 商户名称、营业执照号、状态、合同状态、入驻时间、总营收(元)、总订单数、新增会员数、商品数
+    - 从 merchants + merchant_contracts + orders + platform_users + products 表聚合查询
+  - ExportTransactionReport: 交易报表导出
+    - 交易明细 Sheet: 订单编号、商户名称、下单时间、商品明细、数量、订单金额(元)、已付金额(元)、支付方式、订单状态
+    - 从 orders + merchants + order_items + payments 表聚合查询
+    - 支付金额格式化（去除多余小数位）
+  - 支持自定义时间段（start_time/end_time 参数）
+  - 支持多种日期格式解析
+- 后端 API 端点:
+  - GET /api/v1/reports/operating?start_time=&end_time= — 经营报表 Excel 下载 (auth-protected)
+  - GET /api/v1/reports/transactions?start_time=&end_time= — 交易报表 Excel 下载 (auth-protected)
+- 前端:
+  - Dashboard.vue: 新增「数据报表导出」区域，包含开始/结束日期选择器、导出经营报表/导出交易报表按钮
+  - 加载状态、错误/成功提示消息
+  - api/client.ts: 新增 downloadFile() 方法处理二进制文件下载并触发浏览器保存
+- 数据库迁移: 将缺失的迁移 007-011、016 应用到 Supabase（merchant_contracts、system_categories、system_breeds、platform_announcements、products、orders、order_items、payments、stock_flows）
+- 端到端验证全部 5 个步骤通过:
+  ✓ 选择起止时间，点击导出经营报表 → HTTP 200, 有效 Excel 文件（7.4KB）
+  ✓ Excel 包含正确列标题和 20 行商户数据，交易报表包含完整订单详情和支付方式
+  ✓ 报表数据与页面展示数据一致（19 商户、11 活跃、13 会员）
+  ✓ 导出 1 年数据完成时间 0.004s（远低于 30s 要求）
+  ✓ 无权限用户调用返回 401 UNAUTHORIZED
+- 提交: f02bea0 feat(F017): platform data report export

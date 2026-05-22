@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/report"
+	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	"github.com/xltxb/PetManage/pkg/logger"
@@ -109,6 +111,9 @@ func main() {
 	// Initialize report service.
 	reportService := report.NewService(db)
 
+	// Initialize risk control service.
+	riskService := risk.NewService(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -152,7 +157,77 @@ func main() {
 	mux.Handle("POST /api/v1/merchant/products/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductToggleStatusHandler(productService))))
 
 	// Checkout (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, productService))))
+	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService))))
+
+	// Refund (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/orders/{id}/refund", middleware.Auth(jwtManager)(http.HandlerFunc(makeRefundHandler(riskService))))
+
+	// Risk control — rule management (auth + permission).
+	mux.Handle("GET /api/v1/risk/rules",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("risk:view")(
+				http.HandlerFunc(makeRiskRuleListHandler(riskService)),
+			),
+		),
+	)
+	mux.Handle("POST /api/v1/risk/rules",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("risk:manage")(
+				http.HandlerFunc(makeRiskRuleCreateHandler(riskService)),
+			),
+		),
+	)
+	mux.Handle("GET /api/v1/risk/rules/{id}",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("risk:view")(
+				http.HandlerFunc(makeRiskRuleGetHandler(riskService)),
+			),
+		),
+	)
+	mux.Handle("PUT /api/v1/risk/rules/{id}",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("risk:manage")(
+				http.HandlerFunc(makeRiskRuleUpdateHandler(riskService)),
+			),
+		),
+	)
+	mux.Handle("DELETE /api/v1/risk/rules/{id}",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("risk:manage")(
+				http.HandlerFunc(makeRiskRuleDeleteHandler(riskService)),
+			),
+		),
+	)
+	mux.Handle("POST /api/v1/risk/rules/{id}/toggle",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("risk:manage")(
+				http.HandlerFunc(makeRiskRuleToggleHandler(riskService)),
+			),
+		),
+	)
+
+	// Risk control — alert management (auth + permission).
+	mux.Handle("GET /api/v1/risk/alerts",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("risk:view")(
+				http.HandlerFunc(makeRiskAlertListHandler(riskService)),
+			),
+		),
+	)
+	mux.Handle("GET /api/v1/risk/alerts/{id}",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("risk:view")(
+				http.HandlerFunc(makeRiskAlertGetHandler(riskService)),
+			),
+		),
+	)
+	mux.Handle("PUT /api/v1/risk/alerts/{id}/status",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("risk:manage")(
+				http.HandlerFunc(makeRiskAlertStatusHandler(riskService)),
+			),
+		),
+	)
 
 	// Report export (auth-protected).
 	mux.Handle("GET /api/v1/reports/operating", middleware.Auth(jwtManager)(http.HandlerFunc(makeReportOperatingHandler(reportService))))
@@ -2179,7 +2254,7 @@ func makeProductToggleStatusHandler(svc *product.Service) http.HandlerFunc {
 
 // --- Checkout handler ---
 
-func makeCheckoutHandler(checkoutSvc *checkout.Service, productSvc *product.Service) http.HandlerFunc {
+func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := middleware.UserClaimsFromContext(r.Context())
 		if claims == nil {
@@ -2205,6 +2280,11 @@ func makeCheckoutHandler(checkoutSvc *checkout.Service, productSvc *product.Serv
 			}
 			apperrors.WriteError(w, r, apperrors.NewInternalError("checkout failed", err))
 			return
+		}
+
+		// Check high-frequency risk after successful checkout.
+		if req.MemberID != nil {
+			_, _ = riskSvc.CheckHighFrequency(r.Context(), *claims.MerchantID, *req.MemberID)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -2309,5 +2389,379 @@ func makeReportTransactionHandler(svc *report.Service) http.HandlerFunc {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 		w.Write(data)
+	}
+}
+
+// --- Refund handler ---
+
+func makeRefundHandler(riskSvc *risk.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		orderID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || orderID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid order id"))
+			return
+		}
+
+		db := riskSvc.GetDB()
+
+		tx, err := db.BeginTx(r.Context(), nil)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to begin transaction", err))
+			return
+		}
+		defer tx.Rollback()
+
+		// Verify order belongs to the merchant and is completed.
+		var totalCents int
+		err = tx.QueryRowContext(r.Context(),
+			`SELECT total_cents FROM orders
+			 WHERE id = $1 AND merchant_id = $2 AND status = 'completed' FOR UPDATE`,
+			orderID, *claims.MerchantID,
+		).Scan(&totalCents)
+		if err == sql.ErrNoRows {
+			apperrors.WriteError(w, r, apperrors.NewNotFoundError("order not found or already refunded"))
+			return
+		}
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to query order", err))
+			return
+		}
+
+		// Update order status to refunded.
+		_, err = tx.ExecContext(r.Context(),
+			`UPDATE orders SET status = 'refunded', updated_at = NOW() WHERE id = $1`,
+			orderID,
+		)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to refund order", err))
+			return
+		}
+
+		// Restore inventory for each order item.
+		rows, err := tx.QueryContext(r.Context(),
+			`SELECT product_id, quantity FROM order_items WHERE order_id = $1`, orderID,
+		)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to query order items", err))
+			return
+		}
+		type itemRestore struct {
+			productID int64
+			quantity  int
+		}
+		var items []itemRestore
+		for rows.Next() {
+			var ir itemRestore
+			if err := rows.Scan(&ir.productID, &ir.quantity); err != nil {
+				rows.Close()
+				apperrors.WriteError(w, r, apperrors.NewInternalError("failed to scan order item", err))
+				return
+			}
+			items = append(items, ir)
+		}
+		rows.Close()
+
+		for _, ir := range items {
+			_, err = tx.ExecContext(r.Context(),
+				`UPDATE products SET stock = stock + $1, updated_at = NOW() WHERE id = $2`,
+				ir.quantity, ir.productID,
+			)
+			if err != nil {
+				apperrors.WriteError(w, r, apperrors.NewInternalError("failed to restore inventory", err))
+				return
+			}
+
+			// Record stock flow for refund.
+			_, err = tx.ExecContext(r.Context(),
+				`INSERT INTO stock_flows (merchant_id, product_id, order_id, type, quantity_change)
+				 VALUES ($1, $2, $3, 'inbound', $4)`,
+				*claims.MerchantID, ir.productID, orderID, ir.quantity,
+			)
+			if err != nil {
+				apperrors.WriteError(w, r, apperrors.NewInternalError("failed to record stock flow", err))
+				return
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to commit refund", err))
+			return
+		}
+
+		// Check large refund risk (non-blocking, log only).
+		alert, _ := riskSvc.CheckLargeRefund(r.Context(), orderID, *claims.MerchantID, totalCents)
+
+		resp := map[string]interface{}{
+			"order_id":    orderID,
+			"status":      "refunded",
+			"total_cents": totalCents,
+		}
+		if alert != nil {
+			resp["risk_alert"] = map[string]interface{}{
+				"id":          alert.ID,
+				"alert_type":  alert.AlertType,
+				"description": alert.Description,
+				"status":      alert.Status,
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// --- Risk rule handlers ---
+
+func makeRiskRuleListHandler(svc *risk.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rules, err := svc.ListRules(r.Context())
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list risk rules", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"rules": rules,
+			"total": len(rules),
+		})
+	}
+}
+
+func makeRiskRuleCreateHandler(svc *risk.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req risk.CreateRuleRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		rule, err := svc.CreateRule(r.Context(), &req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create rule", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(rule)
+	}
+}
+
+func makeRiskRuleGetHandler(svc *risk.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid rule id"))
+			return
+		}
+
+		rule, err := svc.GetRule(r.Context(), id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get rule", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rule)
+	}
+}
+
+func makeRiskRuleUpdateHandler(svc *risk.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid rule id"))
+			return
+		}
+
+		var req risk.UpdateRuleRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		rule, err := svc.UpdateRule(r.Context(), id, &req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update rule", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rule)
+	}
+}
+
+func makeRiskRuleDeleteHandler(svc *risk.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid rule id"))
+			return
+		}
+
+		if err := svc.DeleteRule(r.Context(), id); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to delete rule", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "rule deleted"})
+	}
+}
+
+func makeRiskRuleToggleHandler(svc *risk.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid rule id"))
+			return
+		}
+
+		rule, err := svc.ToggleRule(r.Context(), id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to toggle rule", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rule)
+	}
+}
+
+// --- Risk alert handlers ---
+
+func makeRiskAlertListHandler(svc *risk.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+
+		params := risk.AlertListParams{}
+
+		if v := q.Get("merchant_id"); v != "" {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				apperrors.WriteError(w, r, apperrors.NewValidationError("invalid merchant_id"))
+				return
+			}
+			params.MerchantID = &id
+		}
+		params.AlertType = q.Get("alert_type")
+		params.Status = q.Get("status")
+
+		if v := q.Get("page"); v != "" {
+			page, err := strconv.Atoi(v)
+			if err == nil {
+				params.Page = page
+			}
+		}
+		if v := q.Get("page_size"); v != "" {
+			size, err := strconv.Atoi(v)
+			if err == nil {
+				params.PageSize = size
+			}
+		}
+
+		resp, err := svc.ListAlerts(r.Context(), &params)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list alerts", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeRiskAlertGetHandler(svc *risk.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid alert id"))
+			return
+		}
+
+		alert, err := svc.GetAlert(r.Context(), id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get alert", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(alert)
+	}
+}
+
+func makeRiskAlertStatusHandler(svc *risk.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid alert id"))
+			return
+		}
+
+		var req risk.UpdateAlertStatusRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		alert, err := svc.UpdateAlertStatus(r.Context(), id, &req, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update alert status", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(alert)
 	}
 }
