@@ -1108,3 +1108,32 @@ SESSION 36 — F078 敏感数据加密 [2026-05-23 07:10 CST]
   ✓ 加密密钥使用环境变量引用（${ENCRYPTION_KEY_V1:-...}），非硬编码
   ✓ 两个会员均使用 v1 密钥加密，解密正确返回脱敏值（密钥版本管理）
 - 提交: 6356d1a feat(F078): sensitive data encryption
+
+================================================================================
+SESSION 37 — F079 数据权限隔离 [2026-05-23 07:11 CST]
+================================================================================
+
+- 审计全部 80+ API 路由的数据隔离状态
+- 发现漏洞: 平台专属端点缺少商户用户拦截 (dashboard、merchant management、risk 等)
+- 创建 RequirePlatformUser 中间件 (claims.MerchantID == nil 检查)
+- 创建 RequireMerchantUser 中间件 (claims.MerchantID != nil 检查)
+- 将 RequirePlatformUser 应用到 50+ 平台专属路由:
+  - 商户管理 (list/freeze/unfreeze/close/approve/reject)
+  - Dashboard (overview/analysis/ranking)
+  - 合同管理 (upload/list/renew/reminders)
+  - 字典管理 (categories/breeds CRUD)
+  - 平台角色/用户管理
+  - 公告管理 (platform side)
+  - 风控规则/预警管理
+  - 投诉工单管理
+  - 报表导出
+  - 操作日志查询
+- 将 RequireMerchantUser 应用到商户专属路由 (refund/announcements)
+- 确认所有商户端 handler 已从 JWT claims.MerchantID 获取商户 ID (非 URL 参数)
+- 端到端验证全部 5 个步骤通过 (34/34 测试):
+  ✓ 商户A的管理员登录后无法看到商户B的会员数据 (列表无交叉)
+  ✓ 商户A伪造商户B的会员ID返回 404 NOT_FOUND (服务级隔离)
+  ✓ 平台管理员可以选择查看特定商户数据 (HTTP 200 for analysis)
+  ✓ 商户用户的Token不能访问平台端点 (14个端点全部 403 FORBIDDEN)
+  ✓ 数据库查询统一加入商户ID过滤条件 (商品/员工/供应商交叉访问全部 404)
+- 提交: cc30bfb feat(F079): data permission isolation
