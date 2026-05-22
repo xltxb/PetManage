@@ -551,3 +551,35 @@ SESSION 18 — F022 店铺基础信息设置 [2026-05-23 03:09 CST]
   ✓ 未填写必填字段（空名称）时提示 "store name is required" (INVALID_PARAMS)
 - 提交: eeefc31 feat(F022): merchant shop settings
 
+================================================================================
+SESSION 19 — F083 核心业务流程端到端测试 [2026-05-23 03:19 CST]
+================================================================================
+
+- 创建迁移 011: products, orders, order_items, payments, stock_flows 五张业务表
+  - products: 商品档案（条码、名称、售价、成本、库存、上架/下架状态）
+  - orders: 订单表（商户ID、会员ID、总额、已付、状态）
+  - order_items: 订单明细（商品ID、商品名称、单价、数量）
+  - payments: 支付记录（支付方式、金额），支持组合支付
+  - stock_flows: 库存流水（出库/入库/调整、数量变化）
+- 创建 internal/product/service.go: 商品管理服务
+  - Create: 创建商品并自动上架(status=active)
+  - List: 按商户查询商品列表，支持 status 筛选
+  - ToggleStatus: 切换商品上架/下架状态
+- 创建 internal/checkout/service.go: 收银开单服务
+  - Checkout: 事务内完成订单创建、库存扣减(FOR UPDATE行锁)、支付记录、库存流水记录
+  - 验证库存充足性、支付金额≥订单总额、支付方式合法性
+  - 支持多商品+组合支付（微信/支付宝/现金/储值）
+- 注册 4 个 API 端点:
+  - POST /api/v1/merchant/products — 创建商品 (auth, merchant-only)
+  - GET /api/v1/merchant/products — 商品列表 (auth, merchant-only)
+  - POST /api/v1/merchant/products/{id}/toggle-status — 上架/下架 (auth, merchant-only)
+  - POST /api/v1/merchant/checkout — 收银开单 (auth, merchant-only)
+- 创建 e2e_test.sh: 24 个自动化测试断言覆盖完整业务流程
+  - Step 1: 提交商户入驻申请 → 获取 merchant_id + pending 状态
+  - Step 2: 平台管理员登录 → 审核通过 → 获取商户管理员账号密码
+  - Step 3: 商户管理员登录 → 首次修改密码 → 重新登录
+  - Step 4: 创建 3 个商品 → 验证商品列表共 3 个 active 商品
+  - Step 5: 收银开单 → 2 商品 + 2 支付方式(微信281元+现金100元=381元) → 订单 total/paid/status 验证
+  - Step 6: 验证库存扣减(P1:50→48, P2:30 不变, P3:100→95)、订单记录、支付流水数据一致性
+- 全部 24 个测试断言通过 (PASS=24, FAIL=0)
+- 提交: 546250a feat(F083): core business flow E2E test
