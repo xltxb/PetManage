@@ -29,6 +29,7 @@ import (
 	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/report"
+	"github.com/xltxb/PetManage/internal/member"
 	"github.com/xltxb/PetManage/internal/supplier"
 	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
@@ -123,6 +124,9 @@ func main() {
 	// Initialize category service.
 	categoryService := category.NewService(db)
 
+	// Initialize member service.
+	memberService := member.NewService(db)
+
 	// Initialize supplier service.
 	supplierService := supplier.NewService(db)
 
@@ -192,6 +196,15 @@ func main() {
 	mux.Handle("POST /api/v1/merchant/suppliers/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierToggleStatusHandler(supplierService))))
 	mux.Handle("POST /api/v1/merchant/suppliers/{id}/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierLinkProductHandler(supplierService))))
 	mux.Handle("DELETE /api/v1/merchant/suppliers/{id}/products/{productId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSupplierUnlinkProductHandler(supplierService))))
+	// Member management (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/members", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberCreateHandler(memberService))))
+	mux.Handle("GET /api/v1/merchant/members", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberListHandler(memberService))))
+	mux.Handle("GET /api/v1/merchant/members/search", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberSearchHandler(memberService))))
+	mux.Handle("GET /api/v1/merchant/members/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberGetHandler(memberService))))
+	mux.Handle("PUT /api/v1/merchant/members/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberUpdateHandler(memberService))))
+	mux.Handle("POST /api/v1/merchant/members/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberToggleStatusHandler(memberService))))
+	mux.Handle("POST /api/v1/merchant/members/batch-import", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberBatchImportHandler(memberService))))
+
 	// Checkout (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService))))
 
@@ -3777,5 +3790,264 @@ func makeSupplierUnlinkProductHandler(svc *supplier.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"message": "product unlinked from supplier"})
+	}
+}
+
+// --- Member handlers ---
+
+func makeMemberCreateHandler(svc *member.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		var req member.CreateMemberRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		m, err := svc.Create(r.Context(), *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create member", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(m)
+	}
+}
+
+func makeMemberListHandler(svc *member.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+
+		result, err := svc.List(r.Context(), *claims.MerchantID, member.ListParams{
+			Status:   r.URL.Query().Get("status"),
+			Keyword:  r.URL.Query().Get("keyword"),
+			Page:     page,
+			PageSize: pageSize,
+		})
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list members", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeMemberSearchHandler(svc *member.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		phone := r.URL.Query().Get("phone")
+		members, err := svc.SearchByPhone(r.Context(), *claims.MerchantID, phone)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to search members", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"members": members,
+			"total":   len(members),
+		})
+	}
+}
+
+func makeMemberGetHandler(svc *member.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		detail, err := svc.GetDetail(r.Context(), id, *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get member", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(detail)
+	}
+}
+
+func makeMemberUpdateHandler(svc *member.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		var req member.UpdateMemberRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		m, err := svc.Update(r.Context(), id, *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update member", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(m)
+	}
+}
+
+func makeMemberToggleStatusHandler(svc *member.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		m, err := svc.ToggleStatus(r.Context(), id, *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to toggle member status", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(m)
+	}
+}
+
+func makeMemberBatchImportHandler(svc *member.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		contentType := r.Header.Get("Content-Type")
+
+		var result *member.BatchImportResult
+		var resultErr error
+
+		if strings.Contains(contentType, "multipart/form-data") {
+			if err := r.ParseMultipartForm(32 << 20); err != nil {
+				apperrors.WriteError(w, r, apperrors.NewValidationError("failed to parse multipart form: "+err.Error()))
+				return
+			}
+
+			file, _, err := r.FormFile("file")
+			if err != nil {
+				apperrors.WriteError(w, r, apperrors.NewValidationError("file is required"))
+				return
+			}
+			defer file.Close()
+
+			result, resultErr = svc.BatchImport(r.Context(), *claims.MerchantID, file)
+		} else {
+			result, resultErr = svc.BulkCreateJSON(r.Context(), *claims.MerchantID, r.Body)
+		}
+
+		if resultErr != nil {
+			if appErr, ok := resultErr.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("batch import failed", resultErr))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
 	}
 }
