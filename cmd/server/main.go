@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xltxb/PetManage/internal/announcement"
 	"github.com/xltxb/PetManage/internal/auth"
 	"github.com/xltxb/PetManage/internal/config"
 	"github.com/xltxb/PetManage/internal/contract"
@@ -83,6 +84,9 @@ func main() {
 	roleService := role.NewService(db)
 	permChecker := middleware.NewPermissionChecker(db)
 
+	// Initialize announcement service.
+	announcementService := announcement.NewService(db)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -153,6 +157,55 @@ func main() {
 			),
 		),
 	)
+
+	// Announcement routes — platform side (auth + permission).
+	mux.Handle("GET /api/v1/announcements",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("announcement:view")(
+				http.HandlerFunc(makeAnnouncementListHandler(announcementService)),
+			),
+		),
+	)
+	mux.Handle("GET /api/v1/announcements/{id}",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("announcement:view")(
+				http.HandlerFunc(makeAnnouncementGetHandler(announcementService)),
+			),
+		),
+	)
+	mux.Handle("POST /api/v1/announcements",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("announcement:manage")(
+				http.HandlerFunc(makeAnnouncementCreateHandler(announcementService)),
+			),
+		),
+	)
+	mux.Handle("PUT /api/v1/announcements/{id}",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("announcement:manage")(
+				http.HandlerFunc(makeAnnouncementUpdateHandler(announcementService)),
+			),
+		),
+	)
+	mux.Handle("DELETE /api/v1/announcements/{id}",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("announcement:manage")(
+				http.HandlerFunc(makeAnnouncementDeleteHandler(announcementService)),
+			),
+		),
+	)
+	mux.Handle("POST /api/v1/announcements/{id}/pin",
+		middleware.Auth(jwtManager)(
+			permChecker.RequirePermission("announcement:manage")(
+				http.HandlerFunc(makeAnnouncementPinHandler(announcementService)),
+			),
+		),
+	)
+
+	// Announcement routes — merchant side (auth only).
+	mux.Handle("GET /api/v1/merchant/announcements", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantAnnouncementListHandler(announcementService))))
+	mux.Handle("GET /api/v1/merchant/announcements/unread-count", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantAnnouncementUnreadCountHandler(announcementService))))
+	mux.Handle("POST /api/v1/merchant/announcements/{id}/read", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantAnnouncementReadHandler(announcementService))))
 
 	// Protected routes.
 	protected := http.NewServeMux()
@@ -1420,6 +1473,255 @@ func makeUserCreateHandler(svc *role.Service) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// --- Announcement handlers (platform side) ---
+
+func makeAnnouncementCreateHandler(svc *announcement.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		var req announcement.CreateAnnouncementRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		a, err := svc.CreateAnnouncement(r.Context(), req, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create announcement", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(a)
+	}
+}
+
+func makeAnnouncementListHandler(svc *announcement.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+
+		params := announcement.ListParams{
+			Scope:    r.URL.Query().Get("scope"),
+			Page:     page,
+			PageSize: pageSize,
+		}
+
+		resp, err := svc.ListAnnouncements(r.Context(), params)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list announcements", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeAnnouncementGetHandler(svc *announcement.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid announcement id"))
+			return
+		}
+
+		detail, err := svc.GetAnnouncement(r.Context(), id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get announcement", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(detail)
+	}
+}
+
+func makeAnnouncementUpdateHandler(svc *announcement.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid announcement id"))
+			return
+		}
+
+		var req announcement.UpdateAnnouncementRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		a, err := svc.UpdateAnnouncement(r.Context(), id, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update announcement", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(a)
+	}
+}
+
+func makeAnnouncementDeleteHandler(svc *announcement.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid announcement id"))
+			return
+		}
+
+		if err := svc.DeleteAnnouncement(r.Context(), id); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to delete announcement", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "announcement deleted"})
+	}
+}
+
+func makeAnnouncementPinHandler(svc *announcement.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid announcement id"))
+			return
+		}
+
+		a, err := svc.PinAnnouncement(r.Context(), id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to toggle pin", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(a)
+	}
+}
+
+// --- Announcement handlers (merchant side) ---
+
+func makeMerchantAnnouncementListHandler(svc *announcement.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		announcements, err := svc.GetMerchantAnnouncements(r.Context(), *claims.MerchantID, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list announcements", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"announcements": announcements,
+			"total":         len(announcements),
+		})
+	}
+}
+
+func makeMerchantAnnouncementUnreadCountHandler(svc *announcement.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		count, err := svc.GetUnreadCount(r.Context(), *claims.MerchantID, claims.UserID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to count unread", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"unread_count": count,
+		})
+	}
+}
+
+func makeMerchantAnnouncementReadHandler(svc *announcement.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		announcementID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || announcementID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid announcement id"))
+			return
+		}
+
+		if err := svc.MarkAsRead(r.Context(), announcementID, claims.UserID); err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to mark as read", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"message": "marked as read"})
 	}
 }
 

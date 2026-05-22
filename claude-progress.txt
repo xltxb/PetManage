@@ -329,3 +329,78 @@ SESSION 11 — F011 系统基础数据配置 [2026-05-23 02:15 CST]
   ✓ 商户创建自定义分类「日用品」(is_platform:false, merchant_id:12)，
     修改平台分类被拒 (403 FORBIDDEN)，删除平台分类被拒
 - 提交: 83ab0fd feat(F011): system data dictionary — categories, breeds with hierarchical tree, enable/disable, soft delete, merchant isolation
+
+================================================================================
+SESSION 12 — F012 平台角色与权限管理 [2026-05-23 02:22 CST]
+================================================================================
+
+- 创建 internal/role/service.go: 角色CRUD + 平台用户管理 + 权限目录 + 操作审计日志
+  - ListRoles, CreateRole, GetRole, UpdateRole, DeleteRole (软删除, super_admin 不可修改/删除)
+  - ListUsers (仅平台用户), CreateUser (默认 must_change_password), AssignRole (含角色变更日志)
+  - GetRolePermissions (供中间件查询), GetAvailablePermissions (12 个权限点, 6 个类别)
+  - recordLog: 记录 role/user 操作到 operation_logs (create_role/update_role/delete_role/create_user/assign_role)
+- 创建 internal/middleware/permission.go: RequirePermission 权限校验中间件
+  - 60 秒进程内缓存 role_id → permissions 映射, 减少 DB 查询
+  - 支持 "*" 通配符 (超级管理员全权限)
+  - 无权限返回 403 FORBIDDEN + "insufficient permissions: X required"
+- 更新 cmd/server/main.go:
+  - 注册 9 个新 API 端点:
+    GET    /api/v1/platform/permissions     — 可用权限列表
+    GET    /api/v1/platform/roles           — 角色列表
+    POST   /api/v1/platform/roles           — 创建角色
+    GET    /api/v1/platform/roles/{id}      — 角色详情
+    PUT    /api/v1/platform/roles/{id}      — 更新角色
+    DELETE /api/v1/platform/roles/{id}      — 删除角色
+    GET    /api/v1/platform/users           — 平台用户列表
+    POST   /api/v1/platform/users           — 创建平台用户
+    PUT    /api/v1/platform/users/{id}/role — 分配角色
+  - POST /api/v1/merchants/{id}/approve → 增加 require("merchant:manage")
+  - POST /api/v1/dict/categories → 增加 require("dict:manage")
+  - 移除旧的无权限检查路由注册 (避免冲突)
+- 12 个可分配权限点:
+  商户管理: merchant:view, merchant:manage
+  合同管理: contract:view, contract:manage
+  数据字典: dict:view, dict:manage
+  权限管理: role:view, role:manage
+  用户管理: user:view, user:manage
+  公告管理: announcement:view, announcement:manage
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建「运营专员」角色 → id=3, permissions: merchant:view, merchant:manage, announcement:view, announcement:manage
+  ✓ 创建平台用户 ops_user1 并分配运营专员角色 → 用户可登录, 审批商户成功 (有 merchant:manage)
+  ✓ ops_user1 访问 POST /api/v1/dict/categories → 403 FORBIDDEN "insufficient permissions: dict:manage required"
+  ✓ 回收 merchant:manage 后 ops_user1 审批商户 → 403 FORBIDDEN "insufficient permissions: merchant:manage required"
+  ✓ operation_logs 完整记录: create_role (record 16), create_user (record 17), update_role (record 19)
+- 提交: e3c8977 feat(F012): platform role and permission management
+
+================================================================================
+SESSION 13 — F013 系统公告管理 [2026-05-23 02:30 CST]
+================================================================================
+
+- 创建迁移 009: platform_announcements, announcement_merchants, announcement_reads 表
+- 创建 internal/announcement/service.go:
+  - CreateAnnouncement: 创建公告，支持 scope=all/merchants，可设置 is_pinned 和 publish_at
+  - ListAnnouncements: 平台端公告列表，含 read_count/target_count 统计，支持 scope 筛选和分页
+  - GetAnnouncement: 公告详情，含已读/未读商户列表
+  - UpdateAnnouncement: 编辑公告，scope 变更时自动同步 merchant 关联
+  - DeleteAnnouncement: 软删除
+  - PinAnnouncement: 切换置顶 (is_pinned toggle)
+  - GetMerchantAnnouncements: 商户端公告列表，仅返回已发布 (publish_at <= NOW()) 且面向该商户的公告
+  - GetUnreadCount: 商户未读公告计数
+  - MarkAsRead: 标记已读 (ON CONFLICT DO NOTHING 保证幂等)
+- 注册 9 个 API 端点:
+  GET    /api/v1/announcements                       — 列表 (announcement:view)
+  GET    /api/v1/announcements/{id}                  — 详情含已读/未读 (announcement:view)
+  POST   /api/v1/announcements                       — 创建 (announcement:manage)
+  PUT    /api/v1/announcements/{id}                  — 编辑 (announcement:manage)
+  DELETE /api/v1/announcements/{id}                  — 删除 (announcement:manage)
+  POST   /api/v1/announcements/{id}/pin              — 切换置顶 (announcement:manage)
+  GET    /api/v1/merchant/announcements              — 商户公告列表 (auth)
+  GET    /api/v1/merchant/announcements/unread-count — 未读计数 (auth)
+  POST   /api/v1/merchant/announcements/{id}/read    — 标记已读 (auth)
+- 端到端验证 5 步全部通过:
+  ✓ 创建公告: 全平台公告(ID=1) + 定向推送(IDs 16,17) + 定时发布(6月1日) 全部创建成功
+  ✓ 商户登录后首页看到未读公告: merchant 17 看到 2 条未读公告，unread_count=2，定时公告不显示
+  ✓ 标记已读: 公告 ID=1 标记已读后 is_read=true，unread_count 降至 1，幂等操作无错误
+  ✓ 已读/未读列表: 公告 ID=1 read_merchants=[17], unread_merchants=[8个]; 公告 ID=3 read=[], unread=[16,17]
+  ✓ 置顶与定时: pin 切换 false→true→false 成功，置顶公告优先排序，定时公告仅平台端可见
+
