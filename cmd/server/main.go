@@ -34,6 +34,7 @@ import (
 	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/pet"
+	"github.com/xltxb/PetManage/internal/points"
 	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/purchase"
 	"github.com/xltxb/PetManage/internal/replenishment"
@@ -172,6 +173,9 @@ func main() {
 
 	// Initialize balance (stored value) service.
 	balanceService := balance.NewService(db)
+
+	// Initialize points service.
+	pointsService := points.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -364,6 +368,16 @@ func main() {
 		mux.Handle("GET /api/v1/merchant/members/{id}/balance", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberBalanceHandler(balanceService))))
 		mux.Handle("GET /api/v1/merchant/members/{id}/balance-transactions", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberBalanceTransactionsHandler(balanceService))))
 
+
+		// Points management (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/points/rules", middleware.Auth(jwtManager)(http.HandlerFunc(makePointsRuleCreateHandler(pointsService))))
+		mux.Handle("GET /api/v1/merchant/points/rules", middleware.Auth(jwtManager)(http.HandlerFunc(makePointsRuleListHandler(pointsService))))
+		mux.Handle("GET /api/v1/merchant/points/rules/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePointsRuleGetHandler(pointsService))))
+		mux.Handle("PUT /api/v1/merchant/points/rules/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePointsRuleUpdateHandler(pointsService))))
+		mux.Handle("DELETE /api/v1/merchant/points/rules/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePointsRuleDeleteHandler(pointsService))))
+		mux.Handle("POST /api/v1/merchant/points/rules/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makePointsRuleToggleHandler(pointsService))))
+		mux.Handle("GET /api/v1/merchant/members/{id}/points/transactions", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberPointTransactionsHandler(pointsService))))
+		mux.Handle("GET /api/v1/merchant/points/expiry-alerts", middleware.Auth(jwtManager)(http.HandlerFunc(makePointsExpiryAlertsHandler(pointsService))))
 	// Pet management (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/members/{id}/pets", middleware.Auth(jwtManager)(http.HandlerFunc(makePetCreateHandler(petService))))
 	mux.Handle("GET /api/v1/merchant/members/{id}/pets", middleware.Auth(jwtManager)(http.HandlerFunc(makePetListHandler(petService))))
@@ -391,7 +405,7 @@ func main() {
 		mux.Handle("DELETE /api/v1/merchant/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleDeleteHandler(merchantRoleService))))
 
 	// Checkout (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService, memberLevelService))))
+	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService, memberLevelService, pointsService))))
 
 	// POS cash register (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/pos/cart/calculate", middleware.Auth(jwtManager)(http.HandlerFunc(makePosCartCalculateHandler(checkoutService))))
@@ -2918,7 +2932,7 @@ func makeSkuToggleStatusHandler(svc *product.Service) http.HandlerFunc {
 
 // --- Checkout handler ---
 
-func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service, levelSvc *memberlevel.Service) http.HandlerFunc {
+func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service, levelSvc *memberlevel.Service, pointsSvc *points.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := middleware.UserClaimsFromContext(r.Context())
 		if claims == nil {
@@ -2946,8 +2960,17 @@ func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service, l
 			return
 		}
 
-		// Check high-frequency risk after successful checkout.
-		if req.MemberID != nil {
+		// Post-checkout: auto-award points based on consume rule; record deduction transactions.
+		if req.MemberID != nil && *req.MemberID > 0 {
+			// Record point deduction transactions for points payment.
+			for _, p := range req.Payments {
+				if p.Method == "points" && p.AmountCents > 0 {
+					_ = pointsSvc.RecordPointsDeduction(r.Context(), *claims.MerchantID, *req.MemberID, resp.OrderID, int64(p.AmountCents), claims.UserID)
+				}
+			}
+			// Auto-award points based on consume rule.
+			_, _ = pointsSvc.EarnPointsAfterCheckout(r.Context(), *claims.MerchantID, *req.MemberID, resp.OrderID, int64(resp.PaidCents))
+			// Check high-frequency risk.
 			_, _ = riskSvc.CheckHighFrequency(r.Context(), *claims.MerchantID, *req.MemberID)
 			// Check member level upgrade.
 			_, _ = levelSvc.CheckAndUpgrade(r.Context(), *claims.MerchantID, *req.MemberID)
