@@ -1925,3 +1925,60 @@ SESSION 58 — F055 员工考勤管理 [2026-05-23 12:52 CST]
 - 提交: c7c8928 feat(F055): employee attendance management
 
 下一步: 继续实现 F056 员工业绩与提成管理
+
+================================================================================
+SESSION 59 — F056 员工业绩与提成管理 [2026-05-23 13:00 CST]
+================================================================================
+
+- 创建迁移 045: commission_rules (提成规则)、commission_records (提成记录) 两张表，order_items 添加 employee_id 外键列
+  - commission_rules: 商户级配置，默认商品5%、服务30%提成率
+  - commission_records: 追踪每笔提成的员工、订单项、金额、费率、状态(confirmed/deducted)、退款关联
+- 创建 internal/commission/service.go:
+  - GetRules/UpdateRules: 获取/更新提成规则，首次查询自动创建默认规则
+  - AssignTechnician: 为订单项分配技师，自动计算提成（商品×商品率，服务×服务率），支持更新已有记录
+  - ListRecords: 分页查询提成记录（支持按员工/订单/类型/状态/日期筛选）
+  - GetMonthlySummary: 月度汇总（按员工分拆商品提成和服务提成，含扣减）
+  - DeductCommission: 退款时扣减对应提成（状态→deducted）
+- 修复: lib/pq 驱动 NUMERIC 列返回 []byte 而非 float64，使用 []byte + strconv.ParseFloat 处理；notes 列 NULL 值需用 sql.NullString
+- 创建 cmd/server/handlers_commission.go: 6 个 API 端点处理器
+- 注册 6 个 API 端点 (auth-protected, merchant-only):
+  - GET    /api/v1/merchant/commission/rules — 获取提成规则
+  - PUT    /api/v1/merchant/commission/rules — 更新提成规则
+  - POST   /api/v1/merchant/commission/assign — 分配技师（自动计算提成）
+  - GET    /api/v1/merchant/commission/records — 提成记录列表
+  - GET    /api/v1/merchant/commission/summary — 月度提成汇总
+  - POST   /api/v1/merchant/commission/deduct — 退款扣减提成
+- 端到端验证全部 5 个步骤通过:
+  ✓ 提成规则：商品5%、服务30%（默认创建 + PUT更新均正常）
+  ✓ 收银开单 + 技师分配：商品15800分×5%=790分，服务8000分×30%=2400分
+  ✓ 员工查看个人提成明细：张三收银3笔商品提成23.70元，考勤测试员工3笔服务提成72.00元
+  ✓ 月度汇总表：显示商品提成/服务提成/扣减/净提成
+  ✓ 退款扣减：refund后提成状态→deducted，汇总表体现7.90元扣减
+- 提交: d50a143 feat(F056): employee performance and commission management
+
+下一步: 继续实现 F057 营收统计与收支明细
+
+================================================================================
+SESSION 60 — F057 营收统计与收支明细 [2026-05-23 13:23 CST]
+================================================================================
+
+- 创建 internal/revenue/service.go:
+  - GetSummary: 按日/周/月统计门店营收，拆分为商品营收、服务营收、储值充值、退款金额
+    - 使用 UNION ALL + date_trunc 聚合 orders (按 order_items.service_item_id IS NULL/NOT NULL 区分商品/服务)、balance_transactions (recharge)、refunds 四类数据
+  - ListTransactions: 统一收支流水列表
+    - UNION ALL 合并 orders(sale)、balance_transactions(recharge)、refunds(refund) 三类交易
+    - 所有筛选条件（日期范围、交易类型、支付方式）应用为外层 WHERE 过滤器
+    - 分页查询，按交易时间倒序
+- 创建 cmd/server/handlers_revenue.go: 2 个 GET-only API 端点
+  - GET /api/v1/merchant/revenue/summary — 营收统计（参数: start_date, end_date, group_by）
+  - GET /api/v1/merchant/revenue/transactions — 收支流水列表（参数: start_date, end_date, type, payment_method, page, page_size）
+- 注册路由到 cmd/server/main.go，导入 internal/revenue 包
+- 端到端验证全部 5 个步骤通过:
+  ✓ 今日营收统计：拆分显示商品营收(268600)、服务营收(24000)、储值充值(0)、退款金额(63200)
+  ✓ 切换日期查看历史营收数据：周/月汇总数据正确
+  ✓ 收支明细列表：展示每笔交易的收支类型(sale/refund)、金额、支付方式(cash)、时间、来源(order/refund)
+  ✓ 按支付方式筛选：all=11, cash=8, wechat=0 筛选正确
+  ✓ 收支流水不可编辑或删除：PUT/DELETE/POST 均返回 404，仅 GET 可用
+- 提交: (pending)
+
+下一步: 继续实现 F058
