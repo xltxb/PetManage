@@ -20,6 +20,7 @@ type CheckoutItem struct {
 	ProductID     *int64 `json:"product_id,omitempty"`
 	SkuID         *int64 `json:"sku_id,omitempty"`
 	ServiceItemID *int64 `json:"service_item_id,omitempty"`
+	PackageID     *int64 `json:"package_id,omitempty"`
 	Quantity      int    `json:"quantity"`
 }
 
@@ -81,6 +82,7 @@ type CartItemInput struct {
 	ProductID     *int64 `json:"product_id,omitempty"`
 	SkuID         *int64 `json:"sku_id,omitempty"`
 	ServiceItemID *int64 `json:"service_item_id,omitempty"`
+	PackageID     *int64 `json:"package_id,omitempty"`
 	Quantity      int    `json:"quantity"`
 }
 
@@ -215,6 +217,18 @@ func (s *Service) CartCalculate(ctx context.Context, merchantID int64, req CartC
 			return nil, apperrors.NewValidationError("quantity must be positive")
 		}
 
+		if item.PackageID != nil && *item.PackageID > 0 {
+			// Expand package into individual service items.
+			pkgItems, orig, disc, err := s.expandPackage(ctx, merchantID, *item.PackageID, item.Quantity)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, pkgItems...)
+			originalCents += orig
+			discountCents += disc
+			continue
+		}
+
 		var result CartItemResult
 
 		if item.ServiceItemID != nil && *item.ServiceItemID > 0 {
@@ -304,7 +318,7 @@ func (s *Service) CartCalculate(ctx context.Context, merchantID int64, req CartC
 				LineTotalCents: priceCents * item.Quantity,
 			}
 		} else {
-			return nil, apperrors.NewValidationError("each item must have product_id, sku_id, or service_item_id")
+			return nil, apperrors.NewValidationError("each item must have product_id, sku_id, service_item_id, or package_id")
 		}
 
 		results = append(results, result)
@@ -361,6 +375,134 @@ func (s *Service) CartCalculate(ctx context.Context, merchantID int64, req CartC
 	return resp, nil
 }
 
+// expandPackage expands a service package into individual CartItemResult entries.
+// Returns the expanded items, original total, and discount amount.
+func (s *Service) expandPackage(ctx context.Context, merchantID int64, packageID int64, quantity int) ([]CartItemResult, int, int, error) {
+	var pkgName string
+	var totalPriceCents, originalPriceCents int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT name, total_price_cents, original_price_cents FROM service_packages
+		 WHERE id = $1 AND merchant_id = $2 AND status = 'active' AND deleted_at IS NULL`,
+		packageID, merchantID,
+	).Scan(&pkgName, &totalPriceCents, &originalPriceCents)
+	if err == sql.ErrNoRows {
+		return nil, 0, 0, apperrors.NewNotFoundError("service package not found or inactive")
+	}
+	if err != nil {
+		return nil, 0, 0, apperrors.NewInternalError("failed to query service package", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT pi.service_item_id, si.name, si.price_cents, si.member_price_cents, pi.sort_order
+		 FROM service_package_items pi
+		 JOIN service_items si ON si.id = pi.service_item_id AND si.deleted_at IS NULL AND si.status = 'active'
+		 WHERE pi.package_id = $1
+		 ORDER BY pi.sort_order ASC`,
+		packageID,
+	)
+	if err != nil {
+		return nil, 0, 0, apperrors.NewInternalError("failed to query package items", err)
+	}
+	defer rows.Close()
+
+	var results []CartItemResult
+	totalItemPrice := 0
+	for rows.Next() {
+		var serviceItemID int64
+		var itemName string
+		var itemPrice, memberPrice int
+		var sortOrder int
+		if err := rows.Scan(&serviceItemID, &itemName, &itemPrice, &memberPrice, &sortOrder); err != nil {
+			return nil, 0, 0, apperrors.NewInternalError("failed to scan package item", err)
+		}
+
+		// Proportional price within package.
+		ratio := float64(itemPrice) / float64(originalPriceCents)
+		proportionalPrice := int(float64(totalPriceCents) * ratio)
+		itemDiscount := itemPrice - proportionalPrice
+
+		results = append(results, CartItemResult{
+			ServiceItemID:  &serviceItemID,
+			Name:           itemName + " [" + pkgName + "]",
+			UnitPriceCents: itemPrice,
+			DiscountCents:  itemDiscount * quantity,
+			Quantity:       quantity,
+			LineTotalCents: proportionalPrice * quantity,
+		})
+		totalItemPrice += itemPrice
+		_ = sortOrder // used for ordering only
+	}
+	if results == nil {
+		return nil, 0, 0, apperrors.NewNotFoundError("package has no active items")
+	}
+
+	origTotal := totalItemPrice * quantity
+	discTotal := (originalPriceCents - totalPriceCents) * quantity
+
+	return results, origTotal, discTotal, rows.Err()
+}
+
+// expandPackageCheckout expands a service package into individual order item details for checkout.
+// Uses the given transaction for consistency.
+func (s *Service) expandPackageCheckout(ctx context.Context, tx *sql.Tx, merchantID int64, packageID int64, quantity int) ([]OrderItemDetail, int, error) {
+	var pkgName string
+	var totalPriceCents, originalPriceCents int
+	err := tx.QueryRowContext(ctx,
+		`SELECT name, total_price_cents, original_price_cents FROM service_packages
+		 WHERE id = $1 AND merchant_id = $2 AND status = 'active' AND deleted_at IS NULL`,
+		packageID, merchantID,
+	).Scan(&pkgName, &totalPriceCents, &originalPriceCents)
+	if err == sql.ErrNoRows {
+		return nil, 0, apperrors.NewNotFoundError("service package not found or inactive")
+	}
+	if err != nil {
+		return nil, 0, apperrors.NewInternalError("failed to query service package", err)
+	}
+
+	rows, err := tx.QueryContext(ctx,
+		`SELECT pi.service_item_id, si.name, si.price_cents, pi.sort_order
+		 FROM service_package_items pi
+		 JOIN service_items si ON si.id = pi.service_item_id AND si.deleted_at IS NULL AND si.status = 'active'
+		 WHERE pi.package_id = $1
+		 ORDER BY pi.sort_order ASC`,
+		packageID,
+	)
+	if err != nil {
+		return nil, 0, apperrors.NewInternalError("failed to query package items", err)
+	}
+	defer rows.Close()
+
+	var details []OrderItemDetail
+	pkgTotal := 0
+	for rows.Next() {
+		var serviceItemID int64
+		var itemName string
+		var itemPrice int
+		var sortOrder int
+		if err := rows.Scan(&serviceItemID, &itemName, &itemPrice, &sortOrder); err != nil {
+			return nil, 0, apperrors.NewInternalError("failed to scan package item", err)
+		}
+
+		ratio := float64(itemPrice) / float64(originalPriceCents)
+		proportionalPrice := int(float64(totalPriceCents) * ratio)
+
+		details = append(details, OrderItemDetail{
+			ServiceItemID: &serviceItemID,
+			ProductName:   itemName + " [" + pkgName + "]",
+			ServiceName:   itemName,
+			PriceCents:    proportionalPrice,
+			Quantity:      quantity,
+		})
+		pkgTotal += proportionalPrice * quantity
+		_ = sortOrder
+	}
+	if details == nil {
+		return nil, 0, apperrors.NewNotFoundError("package has no active items")
+	}
+
+	return details, pkgTotal, rows.Err()
+}
+
 // VerifyCoupon validates a coupon code and returns its details.
 func (s *Service) VerifyCoupon(ctx context.Context, merchantID int64, code string) (*CouponInfo, error) {
 	if code == "" {
@@ -407,6 +549,30 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 	for _, item := range req.Items {
 		if item.Quantity <= 0 {
 			return nil, apperrors.NewValidationError("quantity must be positive")
+		}
+
+		if item.PackageID != nil && *item.PackageID > 0 {
+			// Calculate package total without expanding into itemDetails.
+			var pkgTotalCents int
+			err := tx.QueryRowContext(ctx,
+				`SELECT total_price_cents FROM service_packages
+				 WHERE id = $1 AND merchant_id = $2 AND status = 'active' AND deleted_at IS NULL`,
+				*item.PackageID, merchantID,
+			).Scan(&pkgTotalCents)
+			if err == sql.ErrNoRows {
+				return nil, apperrors.NewNotFoundError("service package not found or inactive")
+			}
+			if err != nil {
+				return nil, apperrors.NewInternalError("failed to query package", err)
+			}
+			// Add a placeholder detail for index tracking.
+			itemDetails = append(itemDetails, OrderItemDetail{
+				ProductName: "package",
+				PriceCents:  pkgTotalCents,
+				Quantity:    item.Quantity,
+			})
+			totalCents += pkgTotalCents * item.Quantity
+			continue
 		}
 
 		var priceCents int
@@ -500,7 +666,7 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 				Quantity:    item.Quantity,
 			}
 		} else {
-			return nil, apperrors.NewValidationError("each item must have product_id, sku_id, or service_item_id")
+			return nil, apperrors.NewValidationError("each item must have product_id, sku_id, service_item_id, or package_id")
 		}
 
 		totalCents += detail.PriceCents * detail.Quantity
@@ -750,6 +916,25 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 
 	// Create order items, deduct inventory, record stock flows.
 	for i, item := range req.Items {
+		if item.PackageID != nil && *item.PackageID > 0 {
+			// Package items were expanded; insert each sub-item separately.
+			pkgItems, _, err := s.expandPackageCheckout(ctx, tx, merchantID, *item.PackageID, item.Quantity)
+			if err != nil {
+				return nil, err
+			}
+			for _, pi := range pkgItems {
+				_, err := tx.ExecContext(ctx,
+					`INSERT INTO order_items (order_id, product_id, product_name, price_cents, quantity, service_item_id)
+					 VALUES ($1, $2, $3, $4, $5, $6)`,
+					orderID, nil, pi.ProductName, pi.PriceCents, pi.Quantity, pi.ServiceItemID,
+				)
+				if err != nil {
+					return nil, apperrors.NewInternalError("failed to create package order item", err)
+				}
+			}
+			continue
+		}
+
 		detail := itemDetails[i]
 
 		if item.ServiceItemID != nil && *item.ServiceItemID > 0 {

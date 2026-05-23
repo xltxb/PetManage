@@ -1456,3 +1456,43 @@ SESSION 40 — F038 宠物疫苗/驱虫到期提醒 [2026-05-23 09:17 CST]
 - 提交: 7bae705 feat(F038): pet vaccine/deworming reminder system
 
 下一步: 继续实现 F039 会员标签管理
+
+================================================================================
+SESSION 47 — F039 会员标签管理 [2026-05-23 09:42 CST]
+================================================================================
+
+- 创建迁移 034: member_tags 表 (标签定义，含名称/颜色/描述/状态)
+  member_tag_relations 表 (会员-标签多对多关系)
+  member_tag_rules 表 (自动打标规则，支持4种规则类型和3种操作符)
+- 创建 internal/membertag/service.go: 会员标签核心服务
+  - Tag CRUD: Create/List/Get/Update/Delete/Toggle
+  - Member tag 关联: AddTags (批量, ON CONFLICT DO NOTHING)/RemoveTag/GetMemberTags
+  - Auto-tag rules CRUD: Create/List/Get/Update/Delete/Toggle
+  - CheckAndApplyRules: 评估所有活跃规则 (total_consumption/order_count/pet_count/last_visit_days)，匹配后自动添加标签
+  - gatherMetrics: 收集会员指标 (累计消费元、订单数、宠物数、距上次访问天数)
+  - ListTagsWithCount: 标签列表含会员计数
+  - 规则验证: rule_type 限定值检查, operator 限定值检查
+- 创建 cmd/server/handlers_membertag.go: 17个API处理器
+  - Tag CRUD: POST/GET/PUT/DELETE /tags, POST /tags/{id}/toggle
+  - Member tag: POST/DELETE/GET /members/{id}/tags, DELETE /members/{id}/tags/{tagId}
+  - Auto-tag rules: POST/GET/PUT/DELETE /tags/rules, POST /tags/rules/{id}/toggle
+  - POST /members/{id}/check-tags: 手动触发规则评估
+- 更新 internal/member/service.go:
+  - ListParams 新增 TagID 字段
+  - List 函数支持 tag_id 子查询过滤 (members.id IN SELECT member_id FROM member_tag_relations WHERE tag_id=X)
+- 更新 cmd/server/main.go:
+  - 导入 membertag 包
+  - 初始化 memberTagService
+  - 注册16条新路由 (全部 auth-protected, merchant-only)
+  - makeMemberListHandler 解析 tag_id 参数
+  - makeCheckoutHandler 签名扩展接收 tagSvc，收银后自动调用 CheckAndApplyRules
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建标签「猫咪主人」(#F59E0B)「高消费」(#EF4444)「多宠物」(#10B981)
+  ✓ 手动为会员张三(ID=50)添加标签，返回完整标签列表(猫咪主人+多宠物)
+  ✓ 自动打标规则 pet_count≥3→高消费 触发后自动添加标签 (张三4只宠物→匹配)
+  ✓ 按标签筛选会员: tag_id=1→1条, tag_id=2→0条, tag_id=3→1条 (移除标签后tag_id=1→0条)
+  ✓ 移除「猫咪主人」标签 → 返回 "tag removed"，会员数据(姓名/手机/4只宠物/余额/积分)完整保留
+  ✓ 额外验证: toggle (active↔inactive), update (color/description), 未认证访问返回401
+- 提交: 7f94a81 feat(F039): member tag management
+
+下一步: 继续实现 F041 服务套餐管理

@@ -42,6 +42,7 @@ import (
 	"github.com/xltxb/PetManage/internal/report"
 	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
+	"github.com/xltxb/PetManage/internal/servicepackage"
 	"github.com/xltxb/PetManage/internal/servicemgmt"
 	"github.com/xltxb/PetManage/internal/supplier"
 	"github.com/xltxb/PetManage/pkg/apperrors"
@@ -162,6 +163,9 @@ func main() {
 
 	// Initialize service management service.
 	serviceMgmtService := servicemgmt.NewService(db)
+
+	// Initialize service package service.
+	servicePackageService := servicepackage.NewService(db)
 
 	// Initialize pet service.
 	petService := pet.NewService(db)
@@ -295,6 +299,14 @@ func main() {
 	mux.Handle("PUT /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemUpdateHandler(serviceMgmtService))))
 	mux.Handle("DELETE /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemDeleteHandler(serviceMgmtService))))
 	mux.Handle("POST /api/v1/merchant/service-items/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemToggleStatusHandler(serviceMgmtService))))
+		// Service package management (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/service-packages", middleware.Auth(jwtManager)(http.HandlerFunc(makePackageCreateHandler(servicePackageService))))
+		mux.Handle("GET /api/v1/merchant/service-packages", middleware.Auth(jwtManager)(http.HandlerFunc(makePackageListHandler(servicePackageService))))
+		mux.Handle("GET /api/v1/merchant/service-packages/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePackageGetHandler(servicePackageService))))
+		mux.Handle("PUT /api/v1/merchant/service-packages/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePackageUpdateHandler(servicePackageService))))
+		mux.Handle("DELETE /api/v1/merchant/service-packages/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePackageDeleteHandler(servicePackageService))))
+		mux.Handle("POST /api/v1/merchant/service-packages/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makePackageToggleHandler(servicePackageService))))
+		mux.Handle("GET /api/v1/merchant/service-packages/{id}/items", middleware.Auth(jwtManager)(http.HandlerFunc(makePackageItemsHandler(servicePackageService))))
 		// Member management (auth + merchant permission).
 		mux.Handle("POST /api/v1/merchant/members",
 			middleware.Auth(jwtManager)(
