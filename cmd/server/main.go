@@ -40,6 +40,7 @@ import (
 	"github.com/xltxb/PetManage/internal/memberlevel"
 	"github.com/xltxb/PetManage/internal/membertag"
 	"github.com/xltxb/PetManage/internal/middleware"
+	"github.com/xltxb/PetManage/internal/monitor"
 	"github.com/xltxb/PetManage/internal/notification"
 	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/orders"
@@ -271,6 +272,9 @@ func main() {
 		// Initialize rate limiter + circuit breaker for open platform.
 		rlCfg := ratelimit.DefaultConfig()
 		rlService := ratelimit.New(rlCfg)
+
+		// Initialize API monitoring service (async log writer).
+		monitorService := monitor.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -718,9 +722,13 @@ func main() {
 		mux.HandleFunc("POST /api/v1/open/token", makeOpenTokenHandler(openTokenService))
 		mux.HandleFunc("POST /api/v1/open/token/refresh", makeOpenRefreshHandler(openTokenService))
 
-		// Open platform — rate-limit + circuit-breaker middleware wrapper.
+		// Open platform — rate-limit + circuit-breaker + monitoring middleware wrapper.
 	openAPIWrap := func(h http.Handler) http.Handler {
-		return middleware.OpenAPIAuth(openTokenService)(rlService.OpenAPIMiddleware()(h))
+		return middleware.OpenAPIAuth(openTokenService)(
+			monitorService.Middleware(
+				rlService.OpenAPIMiddleware()(h),
+			),
+		)
 	}
 
 	// Open platform — API test endpoint (open platform auth required).
@@ -759,6 +767,29 @@ func main() {
 			mux.Handle("POST /api/open/v1/coupons/{id}/claim", openAPIWrap(http.HandlerFunc(makeOpenCouponClaimHandler(couponService))))
 			mux.Handle("GET /api/open/v1/activities", openAPIWrap(http.HandlerFunc(makeOpenActivitiesHandler(promotionService))))
 			mux.Handle("POST /api/open/v1/groupon/verify", openAPIWrap(http.HandlerFunc(makeOpenGrouponVerifyHandler(verificationService))))
+
+		// F076: API monitoring dashboard (platform-only auth).
+		mux.Handle("GET /api/v1/monitor/endpoints",
+			middleware.Auth(jwtManager)(
+				middleware.RequirePlatformUser(
+					http.HandlerFunc(makeMonitorEndpointsHandler(monitorService)),
+				),
+			),
+		)
+		mux.Handle("GET /api/v1/monitor/developers",
+			middleware.Auth(jwtManager)(
+				middleware.RequirePlatformUser(
+					http.HandlerFunc(makeMonitorDevelopersHandler(monitorService)),
+				),
+			),
+		)
+		mux.Handle("GET /api/v1/monitor/anomalies",
+			middleware.Auth(jwtManager)(
+				middleware.RequirePlatformUser(
+					http.HandlerFunc(makeMonitorAnomaliesHandler(monitorService)),
+				),
+			),
+		)
 
 		// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",

@@ -901,6 +901,26 @@ class ApiClient {
     return this.request<any>(`/api/v1/merchant/shift/${shiftId}/confirm`, { method: 'POST' })
   }
 
+  // === Monitoring (F076) ===
+
+  async getMonitorEndpoints(params: { period?: string; keyword?: string; sort_by?: string; sort_dir?: string }) {
+    const query = new URLSearchParams()
+    if (params.period) query.set('period', params.period)
+    if (params.keyword) query.set('keyword', params.keyword)
+    if (params.sort_by) query.set('sort_by', params.sort_by)
+    if (params.sort_dir) query.set('sort_dir', params.sort_dir)
+    const qs = query.toString()
+    return this.request<any[]>(`/api/v1/monitor/endpoints${qs ? '?' + qs : ''}`)
+  }
+
+  async getMonitorDevelopers(period?: string) {
+    const qs = period ? `?period=${period}` : ''
+    return this.request<any[]>(`/api/v1/monitor/developers${qs}`)
+  }
+
+  async getMonitorAnomalies(period?: string) {
+    const qs = period ? `?period=${period}` : ''
+    return this.request<any[]>(`/api/v1/monitor/anomalies${qs}`)
   }
 
 }

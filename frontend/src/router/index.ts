@@ -113,6 +113,11 @@ const router = createRouter({
       name: 'merchant-analysis',
       component: () => import('@/views/MerchantAnalysis.vue'),
     },
+    {
+      path: '/monitor',
+      name: 'monitor',
+      component: () => import('@/views/MonitorDashboard.vue'),
+    },
   ],
 })
 
