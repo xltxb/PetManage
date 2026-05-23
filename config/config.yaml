@@ -39,3 +39,11 @@ encryption:
   keys:
     v1: ${ENCRYPTION_KEY_V1:-32lv7TPsDWcj+yupHIYQzHunVG7TY3sfnpOFMFrO/No=}
     v2: ${ENCRYPTION_KEY_V2:-zxrBzMjIOaUoqvtHtH8KAKTNo6Ko63uwEatAAWy5aqs=}
+
+backup:
+  enabled: true
+  backup_dir: ${BACKUP_DIR:-./backups}
+  full_backup_time: "03:00"
+  incremental_interval_min: 60
+  retention_days: 30
+  compression: true

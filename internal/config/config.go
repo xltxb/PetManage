@@ -16,6 +16,7 @@ type Config struct {
 	JWT        JWTConfig        `yaml:"jwt"`
 	Log        LogConfig        `yaml:"log"`
 	Encryption EncryptionConfig `yaml:"encryption"`
+	Backup     BackupConfig     `yaml:"backup"`
 }
 
 type ServerConfig struct {
@@ -62,6 +63,15 @@ type LogConfig struct {
 	Level    string `yaml:"level"`
 	Output   string `yaml:"output"`
 	FilePath string `yaml:"file_path"`
+}
+
+type BackupConfig struct {
+	Enabled                bool   `yaml:"enabled"`
+	BackupDir              string `yaml:"backup_dir"`
+	FullBackupTime         string `yaml:"full_backup_time"`
+	IncrementalIntervalMin int    `yaml:"incremental_interval_min"`
+	RetentionDays          int    `yaml:"retention_days"`
+	Compression            bool   `yaml:"compression"`
 }
 
 var envVarPattern = regexp.MustCompile(`\$\{(\w+)(?::-([^}]*))?\}`)

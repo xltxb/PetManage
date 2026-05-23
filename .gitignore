@@ -40,6 +40,9 @@ logs/
 # Uploads
 uploads/
 
+# Backups
+backups/
+
 # Build
 build/
 dist/

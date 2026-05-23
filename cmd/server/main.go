@@ -17,6 +17,8 @@ import (
 	"github.com/xltxb/PetManage/internal/appointment"
 	"github.com/xltxb/PetManage/internal/attendance"
 	"github.com/xltxb/PetManage/internal/auth"
+	"github.com/xltxb/PetManage/internal/backup"
+	"github.com/xltxb/PetManage/internal/cron"
 	"github.com/xltxb/PetManage/internal/balance"
 	"github.com/xltxb/PetManage/internal/category"
 	"github.com/xltxb/PetManage/internal/checkout"
@@ -275,6 +277,13 @@ func main() {
 
 		// Initialize API monitoring service (async log writer).
 		monitorService := monitor.NewService(db)
+
+		// Initialize backup service and cron scheduler.
+		backupSrvc, err := backup.NewService(db, cfg.Backup, cfg.DSN(), lgr)
+		if err != nil {
+			lgr.Fatal("Failed to initialize backup service", zap.Error(err))
+		}
+		cronScheduler := cron.New(lgr)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -1060,6 +1069,38 @@ func main() {
 	mux.Handle("GET /api/v1/merchant/announcements/unread-count", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeMerchantAnnouncementUnreadCountHandler(announcementService)))))
 	mux.Handle("POST /api/v1/merchant/announcements/{id}/read", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeMerchantAnnouncementReadHandler(announcementService)))))
 
+	// F081: Backup management endpoints (platform-only auth).
+	mux.Handle("GET /api/v1/admin/backups", middleware.Auth(jwtManager)(
+		middleware.RequirePlatformUser(
+			http.HandlerFunc(makeBackupListHandler(backupSrvc)),
+		),
+	))
+	mux.Handle("POST /api/v1/admin/backups/full", middleware.Auth(jwtManager)(
+		middleware.RequirePlatformUser(
+			http.HandlerFunc(makeBackupFullHandler(backupSrvc, notifService)),
+		),
+	))
+	mux.Handle("POST /api/v1/admin/backups/incremental", middleware.Auth(jwtManager)(
+		middleware.RequirePlatformUser(
+			http.HandlerFunc(makeBackupIncrementalHandler(backupSrvc, notifService)),
+		),
+	))
+	mux.Handle("POST /api/v1/admin/backups/{id}/restore", middleware.Auth(jwtManager)(
+		middleware.RequirePlatformUser(
+			http.HandlerFunc(makeBackupRestoreHandler(backupSrvc)),
+		),
+	))
+	mux.Handle("GET /api/v1/admin/backups/status", middleware.Auth(jwtManager)(
+		middleware.RequirePlatformUser(
+			http.HandlerFunc(makeBackupStatusHandler(cronScheduler)),
+		),
+	))
+	mux.Handle("GET /api/v1/admin/backups/tables", middleware.Auth(jwtManager)(
+		middleware.RequirePlatformUser(
+			http.HandlerFunc(makeBackupTablesHandler(backupSrvc)),
+		),
+	))
+
 	// Protected routes.
 	protected := http.NewServeMux()
 	protected.HandleFunc("/api/v1/demo/protected", demoProtectedHandler)
@@ -1086,6 +1127,14 @@ func main() {
 	h = middleware.RequestID(h)
 	h = middleware.WithClientIP(h)
 	h = middleware.Recovery(lgr)(h)
+
+	// Register backup jobs and start the cron scheduler.
+	if cfg.Backup.Enabled {
+		backupSrvc.RegisterSchedulerJobs(cronScheduler)
+		cronScheduler.Start()
+		defer cronScheduler.Stop()
+	}
+	defer monitorService.Close()
 
 	addr := ":" + cfg.Server.Port
 	lgr.Info("Pet Store Management System starting",
@@ -6038,5 +6087,107 @@ func makeOrderReceiptHandler(svc *receipttemplate.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(receipt)
+	}
+}
+
+// F081: Backup management handlers.
+
+func makeBackupListHandler(svc *backup.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		records, err := svc.ListBackups()
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list backups", err))
+			return
+		}
+		if records == nil {
+			records = []backup.Record{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": records,
+		})
+	}
+}
+
+func makeBackupFullHandler(svc *backup.Service, notifSvc *notification.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rec, err := svc.FullBackup()
+		if err != nil {
+			notifSvc.Create(r.Context(), &notification.Notification{
+				Title:   "数据库全量备份失败",
+				Content: fmt.Sprintf("备份任务执行失败: %v", err),
+			})
+			apperrors.WriteError(w, r, apperrors.NewInternalError("full backup failed", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": rec,
+		})
+	}
+}
+
+func makeBackupIncrementalHandler(svc *backup.Service, notifSvc *notification.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rec, err := svc.IncrementalBackup()
+		if err != nil {
+			notifSvc.Create(r.Context(), &notification.Notification{
+				Title:   "数据库增量备份失败",
+				Content: fmt.Sprintf("增量备份任务执行失败: %v", err),
+			})
+			apperrors.WriteError(w, r, apperrors.NewInternalError("incremental backup failed", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": rec,
+		})
+	}
+}
+
+func makeBackupRestoreHandler(svc *backup.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		backupID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid backup id"))
+			return
+		}
+		if err := svc.Restore(backupID); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("restore failed", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "restore completed successfully",
+		})
+	}
+}
+
+func makeBackupStatusHandler(scheduler *cron.Scheduler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		stats := scheduler.Stats()
+		if stats == nil {
+			stats = []cron.JobStats{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data":   stats,
+			"status": "running",
+		})
+	}
+}
+
+func makeBackupTablesHandler(svc *backup.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tables, err := svc.GetAvailableTables()
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get tables", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": tables,
+		})
 	}
 }
