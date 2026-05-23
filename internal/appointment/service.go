@@ -51,6 +51,7 @@ type CreateAppointmentRequest struct {
 // ListParams holds optional filters and pagination for listing appointments.
 type ListParams struct {
 	Status   string
+	MemberID int64
 	Page     int
 	PageSize int
 }
@@ -273,6 +274,11 @@ func (s *Service) List(ctx context.Context, merchantID int64, params ListParams)
 	if params.Status != "" {
 		conditions = append(conditions, "a.status = $"+strconv.Itoa(argIdx))
 		args = append(args, params.Status)
+		argIdx++
+	}
+	if params.MemberID > 0 {
+		conditions = append(conditions, "a.member_id = $"+strconv.Itoa(argIdx))
+		args = append(args, params.MemberID)
 		argIdx++
 	}
 
@@ -719,6 +725,42 @@ func (s *Service) GetChangeLogs(ctx context.Context, merchantID, appointmentID i
 		logs = []ChangeLog{}
 	}
 	return logs, rows.Err()
+}
+
+// BookedSlot represents a time slot that is already booked.
+type BookedSlot struct {
+	AppointmentTime time.Time `json:"appointment_time"`
+	AppointmentID   int64     `json:"appointment_id"`
+	Status          string    `json:"status"`
+}
+
+// GetBookedSlots returns all non-cancelled appointment times for a specific employee on a given date.
+func (s *Service) GetBookedSlots(ctx context.Context, merchantID, employeeID int64, date string) ([]BookedSlot, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, appointment_time, status FROM appointments
+		 WHERE merchant_id = $1 AND employee_id = $2
+		 AND appointment_time::date = $3::date
+		 AND status != 'cancelled' AND deleted_at IS NULL
+		 ORDER BY appointment_time ASC`,
+		merchantID, employeeID, date,
+	)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to get booked slots", err)
+	}
+	defer rows.Close()
+
+	var slots []BookedSlot
+	for rows.Next() {
+		var s BookedSlot
+		if err := rows.Scan(&s.AppointmentID, &s.AppointmentTime, &s.Status); err != nil {
+			return nil, apperrors.NewInternalError("failed to scan booked slot", err)
+		}
+		slots = append(slots, s)
+	}
+	if slots == nil {
+		slots = []BookedSlot{}
+	}
+	return slots, rows.Err()
 }
 
 // logChange records a change in the appointment_change_logs table.

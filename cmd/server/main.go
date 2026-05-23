@@ -730,6 +730,13 @@ func main() {
 			mux.Handle("POST /api/open/v1/members/{id}/pets", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPetCreateHandler(petService))))
 			mux.Handle("GET /api/open/v1/members/{id}/pets", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPetListHandler(petService))))
 
+			// Open platform — F072: booking & technician availability API.
+			mux.Handle("POST /api/open/v1/bookings", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBookingCreateHandler(appointmentService))))
+			mux.Handle("GET /api/open/v1/bookings", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBookingListHandler(appointmentService))))
+			mux.Handle("PUT /api/open/v1/bookings/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBookingUpdateHandler(appointmentService))))
+			mux.Handle("DELETE /api/open/v1/bookings/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBookingCancelHandler(appointmentService))))
+			mux.Handle("GET /api/open/v1/technicians/{id}/availability", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenTechnicianAvailabilityHandler(employeeService, scheduleService, appointmentService))))
+
 		// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
 		middleware.Auth(jwtManager)(

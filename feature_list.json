@@ -1016,7 +1016,7 @@
         "DELETE /api/open/v1/bookings/:id 取消预约",
         "GET /api/open/v1/technicians/:id/availability?date=2026-06-01 查询技师可用时段"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F073",

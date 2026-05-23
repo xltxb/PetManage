@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
+	"github.com/xltxb/PetManage/internal/appointment"
 	"github.com/xltxb/PetManage/internal/dictionary"
+	"github.com/xltxb/PetManage/internal/employee"
 	"github.com/xltxb/PetManage/internal/member"
 	"github.com/xltxb/PetManage/internal/memberlevel"
 	"github.com/xltxb/PetManage/internal/merchant"
@@ -13,6 +16,7 @@ import (
 	"github.com/xltxb/PetManage/internal/openplatform"
 	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/internal/product"
+	"github.com/xltxb/PetManage/internal/schedule"
 	"github.com/xltxb/PetManage/internal/servicemgmt"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 )
@@ -415,4 +419,316 @@ func makeOpenPetListHandler(ps *pet.Service) http.HandlerFunc {
 			"pets": pets,
 		})
 	}
+}
+
+// =============================================================================
+// F072: Booking & Technician Availability API handlers
+// =============================================================================
+
+// POST /api/open/v1/bookings — create a new appointment.
+func makeOpenBookingCreateHandler(as *appointment.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		merchantID := getOpenAPIMerchantID(r)
+		if merchantID == 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("no merchant associated with this developer"))
+			return
+		}
+
+		var req appointment.CreateAppointmentRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body: "+err.Error()))
+			return
+		}
+
+		apt, err := as.Create(r.Context(), merchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create booking", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(apt)
+	}
+}
+
+// GET /api/open/v1/bookings — list bookings for a member.
+func makeOpenBookingListHandler(as *appointment.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		merchantID := getOpenAPIMerchantID(r)
+		if merchantID == 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("no merchant associated with this developer"))
+			return
+		}
+
+		q := r.URL.Query()
+		memberIDStr := q.Get("member_id")
+		if memberIDStr == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("member_id is required"))
+			return
+		}
+		memberID, err := strconv.ParseInt(memberIDStr, 10, 64)
+		if err != nil || memberID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member_id"))
+			return
+		}
+
+		page := 1
+		pageSize := 20
+		if p := q.Get("page"); p != "" {
+			if v, err := strconv.Atoi(p); err == nil && v > 0 {
+				page = v
+			}
+		}
+		if ps := q.Get("page_size"); ps != "" {
+			if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 100 {
+				pageSize = v
+			}
+		}
+
+		params := appointment.ListParams{
+			MemberID: memberID,
+			Status:   q.Get("status"),
+			Page:     page,
+			PageSize: pageSize,
+		}
+
+		result, err := as.List(r.Context(), merchantID, params)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list bookings", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+// PUT /api/open/v1/bookings/{id} — update booking time and/or remark.
+func makeOpenBookingUpdateHandler(as *appointment.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		merchantID := getOpenAPIMerchantID(r)
+		if merchantID == 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("no merchant associated with this developer"))
+			return
+		}
+
+		bookingID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || bookingID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid booking id"))
+			return
+		}
+
+		var body struct {
+			NewTime string `json:"new_time"`
+			Remark  string `json:"remark"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body: "+err.Error()))
+			return
+		}
+
+		// If new_time is provided, reschedule.
+		if body.NewTime != "" {
+			newTime, err := time.Parse(time.RFC3339, body.NewTime)
+			if err != nil {
+				apperrors.WriteError(w, r, apperrors.NewValidationError("invalid new_time format, use RFC3339"))
+				return
+			}
+			if newTime.Before(time.Now()) {
+				apperrors.WriteError(w, r, apperrors.NewValidationError("new_time must be in the future"))
+				return
+			}
+
+			_, err = as.Reschedule(r.Context(), merchantID, bookingID, appointment.RescheduleRequest{
+				NewTime: body.NewTime,
+				Reason:  body.Remark,
+			})
+			if err != nil {
+				if appErr, ok := err.(*apperrors.AppError); ok {
+					apperrors.WriteError(w, r, appErr)
+					return
+				}
+				apperrors.WriteError(w, r, apperrors.NewInternalError("failed to reschedule booking", err))
+				return
+			}
+		}
+
+		// Return the updated booking.
+		apt, err := as.GetByID(r.Context(), merchantID, bookingID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get updated booking", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apt)
+	}
+}
+
+// DELETE /api/open/v1/bookings/{id} — cancel a booking.
+func makeOpenBookingCancelHandler(as *appointment.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		merchantID := getOpenAPIMerchantID(r)
+		if merchantID == 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("no merchant associated with this developer"))
+			return
+		}
+
+		bookingID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || bookingID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid booking id"))
+			return
+		}
+
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+
+		apt, err := as.Cancel(r.Context(), merchantID, bookingID, appointment.CancelRequest{
+			Reason: body.Reason,
+		})
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to cancel booking", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "booking cancelled",
+			"booking": apt,
+		})
+	}
+}
+
+// GET /api/open/v1/technicians/{id}/availability — query technician availability for a given date.
+func makeOpenTechnicianAvailabilityHandler(es *employee.Service, ss *schedule.Service, as *appointment.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		merchantID := getOpenAPIMerchantID(r)
+		if merchantID == 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("no merchant associated with this developer"))
+			return
+		}
+
+		techID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || techID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid technician id"))
+			return
+		}
+
+		// Verify technician exists and is active.
+		emp, err := es.GetByID(r.Context(), merchantID, techID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get technician", err))
+			return
+		}
+		if emp.Status != "active" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("technician is not active"))
+			return
+		}
+
+		// Date parameter, default to today.
+		dateStr := r.URL.Query().Get("date")
+		if dateStr == "" {
+			dateStr = time.Now().Format("2006-01-02")
+		}
+
+		// Get the technician's schedule for this date.
+		schedules, err := ss.List(r.Context(), merchantID, techID, dateStr, dateStr)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get schedule", err))
+			return
+		}
+
+		shiftType := "rest"
+		shiftHours := map[string]string{"start": "", "end": ""}
+		if len(schedules) > 0 && schedules[0].ShiftType != "rest" {
+			shiftType = schedules[0].ShiftType
+			hours, ok := schedule.ShiftHours[shiftType]
+			if ok {
+				shiftHours["start"] = hours.Start
+				shiftHours["end"] = hours.End
+			}
+		}
+
+		// Get booked slots for this technician on this date.
+		bookedSlots, err := as.GetBookedSlots(r.Context(), merchantID, techID, dateStr)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get booked slots", err))
+			return
+		}
+
+		// Compute available time slots in 30-minute increments.
+		type Slot struct {
+			Time     string `json:"time"`
+			Booked   bool   `json:"booked"`
+			BookingID int64  `json:"booking_id,omitempty"`
+		}
+
+		var slots []Slot
+		if shiftType != "rest" {
+			start, _ := time.Parse("15:04", shiftHours["start"])
+			end, _ := time.Parse("15:04", shiftHours["end"])
+
+			// Build a set of booked times for quick lookup.
+			bookedSet := make(map[string]BookedSlotInfo)
+			for _, bs := range bookedSlots {
+				t := bs.AppointmentTime.Format("15:04")
+				bookedSet[t] = BookedSlotInfo{Booked: true, BookingID: bs.AppointmentID}
+			}
+
+			for t := start; t.Before(end); t = t.Add(30 * time.Minute) {
+				timeStr := t.Format("15:04")
+				if info, booked := bookedSet[timeStr]; booked {
+					slots = append(slots, Slot{Time: timeStr, Booked: true, BookingID: info.BookingID})
+				} else {
+					slots = append(slots, Slot{Time: timeStr, Booked: false})
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"technician": map[string]interface{}{
+				"id":       emp.ID,
+				"name":     emp.Name,
+				"position": emp.Position,
+			},
+			"date":       dateStr,
+			"shift_type": shiftType,
+			"shift_hours": map[string]string{
+				"start": shiftHours["start"],
+				"end":   shiftHours["end"],
+			},
+			"booked_slots": bookedSlots,
+			"slots":        slots,
+		})
+	}
+}
+
+// BookedSlotInfo is used for the availability map lookup.
+type BookedSlotInfo struct {
+	Booked    bool
+	BookingID int64
 }
