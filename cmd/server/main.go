@@ -535,6 +535,17 @@ func main() {
 		mux.Handle("POST /api/v1/merchant/notifications/upcoming-reminders", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationSendUpcomingHandler(notifService))))
 		mux.Handle("POST /api/v1/merchant/notifications/{id}/mark-read", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationMarkReadHandler(notifService))))
 
+		// Notification settings and templates (auth-protected, merchant-only).
+		mux.Handle("GET /api/v1/merchant/notification/settings", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationSettingsGetHandler(notifService))))
+		mux.Handle("PUT /api/v1/merchant/notification/settings", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationSettingsUpdateHandler(notifService))))
+		mux.Handle("GET /api/v1/merchant/notification/templates", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationTemplatesGetHandler(notifService))))
+		mux.Handle("PUT /api/v1/merchant/notification/templates", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationTemplatesUpdateHandler(notifService))))
+
+		// Notification triggers (auth-protected).
+		mux.Handle("POST /api/v1/merchant/notification/birthday", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationBirthdayHandler(notifService))))
+		mux.Handle("POST /api/v1/merchant/notification/inventory-alert", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationInventoryAlertHandler(notifService))))
+		mux.Handle("GET /api/v1/merchant/notification/send-records", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationSendRecordsHandler(notifService))))
+
 		// Schedule management (auth-protected, merchant-only).
 		mux.Handle("GET /api/v1/merchant/schedules", middleware.Auth(jwtManager)(http.HandlerFunc(makeScheduleListHandler(scheduleService))))
 		mux.Handle("PUT /api/v1/merchant/schedules", middleware.Auth(jwtManager)(http.HandlerFunc(makeScheduleUpsertHandler(scheduleService))))

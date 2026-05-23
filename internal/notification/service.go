@@ -22,6 +22,7 @@ type Notification struct {
 	RelatedID  int64     `json:"related_id"`
 	IsRead     bool      `json:"is_read"`
 	SendStatus string    `json:"send_status"`
+	Channel    string    `json:"channel"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -35,7 +36,7 @@ func NewService(db *sql.DB) *Service {
 	return &Service{db: db}
 }
 
-const notificationColumns = `id, merchant_id, user_id, user_type, title, content, category, related_id, is_read, send_status, created_at`
+const notificationColumns = `id, merchant_id, user_id, user_type, title, content, category, related_id, is_read, send_status, channel, created_at`
 
 // Create creates a new notification.
 func (s *Service) Create(ctx context.Context, n *Notification) (*Notification, error) {
@@ -47,8 +48,8 @@ func (s *Service) Create(ctx context.Context, n *Notification) (*Notification, e
 	}
 
 	result, err := scanNotificationRow(s.db.QueryRowContext(ctx,
-		`INSERT INTO notifications (merchant_id, user_id, user_type, title, content, category, related_id, send_status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, 'success')
+		`INSERT INTO notifications (merchant_id, user_id, user_type, title, content, category, related_id, send_status, channel)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, 'success', 'system')
 		 RETURNING `+notificationColumns,
 		n.MerchantID, n.UserID, n.UserType, n.Title, n.Content, n.Category, n.RelatedID,
 	))
@@ -315,7 +316,7 @@ func scanNotificationRow(row *sql.Row) (*Notification, error) {
 	err := row.Scan(
 		&n.ID, &n.MerchantID, &n.UserID, &n.UserType,
 		&n.Title, &n.Content, &n.Category, &n.RelatedID,
-		&n.IsRead, &n.SendStatus, &n.CreatedAt,
+		&n.IsRead, &n.SendStatus, &n.Channel, &n.CreatedAt,
 	)
 	return n, err
 }
@@ -325,7 +326,7 @@ func scanNotificationRows(rows *sql.Rows) (*Notification, error) {
 	err := rows.Scan(
 		&n.ID, &n.MerchantID, &n.UserID, &n.UserType,
 		&n.Title, &n.Content, &n.Category, &n.RelatedID,
-		&n.IsRead, &n.SendStatus, &n.CreatedAt,
+		&n.IsRead, &n.SendStatus, &n.Channel, &n.CreatedAt,
 	)
 	return n, err
 }
