@@ -51,6 +51,7 @@ import (
 	"github.com/xltxb/PetManage/internal/purchase"
 	"github.com/xltxb/PetManage/internal/replenishment"
 	"github.com/xltxb/PetManage/internal/report"
+	"github.com/xltxb/PetManage/internal/review"
 	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
 	"github.com/xltxb/PetManage/internal/schedule"
@@ -230,6 +231,7 @@ func main() {
 
 	// Initialize service record service for archiving.
 	serviceRecordService := servicerecord.NewService(db)
+	reviewService := review.NewService(db)
 	appointmentService.SetServiceRecordService(serviceRecordService)
 
 	// Initialize orders service.
@@ -577,6 +579,13 @@ func main() {
 			mux.Handle("GET /api/v1/merchant/pets/{petId}/service-records", middleware.Auth(jwtManager)(http.HandlerFunc(makePetServiceRecordsHandler(serviceRecordService))))
 			mux.Handle("GET /api/v1/merchant/members/{memberId}/service-records", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberServiceRecordsHandler(serviceRecordService))))
 			mux.Handle("POST /api/v1/merchant/service-records/{id}/evaluate", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceRecordEvaluateHandler(serviceRecordService))))
+
+		// Review management (auth-protected, merchant-only).
+		mux.Handle("GET /api/v1/merchant/reviews", middleware.Auth(jwtManager)(http.HandlerFunc(makeReviewListHandler(reviewService))))
+		mux.Handle("GET /api/v1/merchant/reviews/stats", middleware.Auth(jwtManager)(http.HandlerFunc(makeReviewStatsHandler(reviewService))))
+		mux.Handle("GET /api/v1/merchant/reviews/employee-stats", middleware.Auth(jwtManager)(http.HandlerFunc(makeReviewEmployeeStatsHandler(reviewService))))
+		mux.Handle("GET /api/v1/merchant/reviews/{type}/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeReviewGetHandler(reviewService))))
+		mux.Handle("POST /api/v1/merchant/reviews/{type}/{id}/reply", middleware.Auth(jwtManager)(http.HandlerFunc(makeReviewReplyHandler(reviewService))))
 
 		// Notification management (auth-protected, merchant-only).
 		mux.Handle("GET /api/v1/merchant/notifications", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationListHandler(notifService))))

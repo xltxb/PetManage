@@ -58,6 +58,7 @@ type Evaluation struct {
 type EvaluateRequest struct {
 	Rating  int    `json:"rating"`
 	Content string `json:"content"`
+	Images  string `json:"images"`
 }
 
 // ListParams holds optional filters and pagination.
@@ -374,12 +375,12 @@ func (s *Service) SubmitEvaluation(ctx context.Context, merchantID, recordID int
 	// Upsert evaluation (one evaluation per service record).
 	eval := &Evaluation{}
 	err = s.db.QueryRowContext(ctx,
-		`INSERT INTO service_evaluations (merchant_id, member_id, pet_id, appointment_id, service_record_id, employee_id, rating, content)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO service_evaluations (merchant_id, member_id, pet_id, appointment_id, service_record_id, employee_id, rating, content, images)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 ON CONFLICT (service_record_id) DO UPDATE
-		 SET rating = $7, content = $8, updated_at = NOW()
+		 SET rating = $7, content = $8, images = $9, updated_at = NOW()
 		 RETURNING id, merchant_id, member_id, pet_id, appointment_id, service_record_id, employee_id, rating, content, created_at, updated_at`,
-		merchantID, memberID, petID, appointmentID, recordID, employeeID, req.Rating, req.Content,
+		merchantID, memberID, petID, appointmentID, recordID, employeeID, req.Rating, req.Content, req.Images,
 	).Scan(
 		&eval.ID, &eval.MerchantID, &eval.MemberID, &eval.PetID, &eval.AppointmentID,
 		&eval.ServiceRecordID, &eval.EmployeeID, &eval.Rating, &eval.Content,
