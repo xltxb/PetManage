@@ -1728,3 +1728,73 @@ SESSION 53 — F046 服务进度全流程管控 [2026-05-23 11:09 CST]
 
 下一步: 继续实现 F047 技师服务绩效统计
 
+================================================================================
+SESSION 54 — F047 服务记录归档 [2026-05-23 11:40 CST]
+================================================================================
+
+- 创建迁移 040: pet_service_records 表（服务归档）+ service_evaluations 表（服务评价）
+- 创建 internal/servicerecord/service.go: 服务记录归档核心服务
+  - ArchiveOnComplete: 预约完成时自动创建宠物服务记录
+  - 自动解析 service_items.materials JSON，结构化扣减产品库存（含 stock_flows 审计记录）
+  - ListByPet/ListByMember: 按宠物/会员维度查询服务历史（含 JOIN 评价信息）
+  - SubmitEvaluation: 提交/更新服务评价（1-5 星 + 文字），一个服务记录一条评价（UNIQUE 约束）
+  - GetByID: 单条服务记录详情含评价
+- 集成到预约完成流程: appointment.Service.Complete → ArchiveOnComplete
+- 注册 4 个 API 端点 (auth-protected, merchant-only):
+  - GET /api/v1/merchant/service-records/{id} — 服务记录详情（含评价）
+  - GET /api/v1/merchant/pets/{petId}/service-records — 宠物服务历史
+  - GET /api/v1/merchant/members/{memberId}/service-records — 会员服务历史
+  - POST /api/v1/merchant/service-records/{id}/evaluate — 提交评价
+- 端到端验证全部 5 个步骤通过:
+  ✓ 服务完成后，宠物档案的服务记录中新增该次服务（pet/14/service-records 返回 1 条记录）
+  ✓ 服务记录包含：服务日期(2026-05-23T16:00)、服务项目(标准洗澡-中型犬)、技师(F047技师张三)、耗材使用(宠物沐浴露500ml x2)、备注(F047测试3-归档)
+  ✓ 会员消费记录中新增对应消费记录（member/55/service-records 返回 1 条记录）
+  ✓ 耗材消耗自动从库存中扣减（产品 stock: 100→96, 含 stock_flows 出库记录）
+  ✓ 服务评价关联到宠物档案和技师业绩（评分 5★，评价内容正确显示在 service-records 和 pet records 中）
+- 提交: 03c56c9 feat(F047): service record archiving
+
+下一步: 继续实现 F050 订单管理与退款
+
+
+================================================================================
+SESSION 55 — F050 订单管理与退款 [2026-05-23 11:42 CST]
+================================================================================
+
+- 数据库迁移 (041_order_refunds):
+  - orders 表 status CHECK 扩展: 新增 'partially_refunded' 状态
+  - 新建 refunds 表: id, order_id, merchant_id, refund_type(full/partial), reason, amount_cents, status(completed/pending_approval/approved/rejected), requested_by, approved_by
+  - 新建 refund_items 表: id, refund_id, order_item_id, quantity, amount_cents
+- 新建 internal/orders/service.go:
+  - ListOrders: 订单列表查询，支持按订单号/会员名/手机号/状态/日期范围筛选，分页
+  - GetOrderDetail: 订单详情含商品明细(items)、支付明细(payments)、退款记录(refunds)
+  - RefundOrder: 全额/部分退款
+    - 状态验证: completed/partially_refunded 可退款
+    - 部分退款: 按 order_item_id 指定退款商品和数量
+    - 超过 500 元需审批: refunds.status = 'pending_approval', 订单状态不变
+    - 库存自动恢复: 产品 stock 和 product_skus stock 增量恢复
+    - 支付原路返还: balance(调用 RefundBalance)、points(返还积分)、coupon(恢复激活)
+    - 记录 stock_flows(inbound) 和 refunds + refund_items
+    - 非阻塞风控检查: CheckLargeRefund
+- API 端点 (auth-protected, merchant-only):
+  - GET /api/v1/merchant/orders — 订单列表(支持筛选和分页)
+  - GET /api/v1/merchant/orders/{id} — 订单详情
+  - POST /api/v1/merchant/orders/{id}/refund — 退款(支持 full/partial)
+- 前端:
+  - OrderList.vue: 订单管理页面(替换 Placeholder)
+    - 筛选栏: 搜索框、状态选择、日期范围、查询按钮
+    - 订单表格: 订单号、会员、金额、状态、时间、操作按钮
+    - 详情弹窗: 商品明细表、支付明细表、退款记录表
+    - 全额退款: 确认对话框 → API 调用
+    - 部分退款: 勾选商品 → 确认 → API 调用(选择部分商品退款)
+    - 分页组件
+  - API 客户端: getOrders, getOrder, refundOrder 方法
+  - 路由更新: /merchant/orders → OrderList.vue
+- 端到端验证全部 6 个步骤通过:
+  ✓ 订单列表支持按订单号、状态筛选(过滤结果正确)
+  ✓ 订单详情展示商品明细(items)、支付明细(payments)、退款记录(refunds)
+  ✓ 整单退款: 所有商品退款成功，订单状态→refunded
+  ✓ 部分退款: 选择1件商品退款，订单状态→partially_refunded
+  ✓ 退款后库存自动恢复(stock_flows inbound 记录)，财务流水生成退款记录(refunds + refund_items)
+  ✓ 退款金额超过500元需店长审批(needs_approval=true, status=pending_approval, 订单状态不变)
+- 提交: 9126081 feat(F050): order management and refund
+
