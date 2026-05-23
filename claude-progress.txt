@@ -2375,3 +2375,28 @@ SESSION 7 — F069 API鉴权机制 [2026-05-23 23:29 CST]
   ✓ refresh_token → 新令牌对
 - 提交: d9f5448
 
+
+================================================================================
+SESSION 42 — F070 基础信息API (开放平台) [2026-05-23 23:40 CST]
+================================================================================
+
+- 数据库迁移 055: open_developers 表添加 merchant_id 列，支持开发者关联商户
+- 更新 JWT Claims: OpenPlatformClaims 新增 MerchantID 字段
+- 更新 TokenService: GenerateTokenPair/RefreshAccessToken 查询并传递 merchant_id 到 JWT
+- 更新 Approve 服务: 支持通过 query param 传入 merchant_id 关联开发者到商户
+- 更新 Application 结构体: 添加 MerchantID *int64 字段
+- 创建 cmd/server/handlers_openapi_v1.go: 5 个开放 API 处理器
+  - GET /api/open/v1/shop/info → 店铺名称、地址、营业时间、联系电话、Logo URL、公告
+  - GET /api/open/v1/products → 商品分页列表 (status=active, 支持 page/page_size)
+  - GET /api/open/v1/products/{id} → 商品详情含多规格 (SKUs)
+  - GET /api/open/v1/services → 服务项目列表 (status=active, 含价格和时长)
+  - GET /api/open/v1/breeds → 宠物品种查询 (支持 ?type=dog/cat 筛选)
+- 所有端点受 OpenAPIAuth 中间件保护 (Bearer token + HMAC-SHA256 签名)
+- 端到端验证全部 5 个步骤通过:
+  ✓ GET /api/open/v1/shop/info → 返回 name, address, business_hours, contact_phone, notice
+  ✓ GET /api/open/v1/products → 返回 3 个商品，含分页 (total=3, page=1)
+  ✓ GET /api/open/v1/products/1 → 返回商品详情 (Royal Canin Dog Food 2kg, barcode, price_cents, skus)
+  ✓ GET /api/open/v1/services → 返回 1 个服务项目 (标准洗澡-小型犬, ¥80.00, 30min)
+  ✓ GET /api/open/v1/breeds?type=dog → 返回 1 个犬品种 (金毛寻回犬)
+- 安全验证通过: 无 auth→401, 无效 token→401, 无效签名→SIGNATURE_INVALID, 缺签名头→SIGNATURE_MISSING
+- 提交: 3b8037e feat(F070): open platform basic info APIs — shop info, product list/detail, service list, and breed query endpoints
