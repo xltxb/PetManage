@@ -2050,3 +2050,28 @@ SESSION 62 — F067 通知设置 [2026-05-23 21:00 CST]
 - 提交: 3f4c5cd feat(F067): notification settings
 
 下一步: 继续实现 F059 自动化财务报表
+
+================================================================================
+SESSION 63 — F059 自动化财务报表 [2026-05-23 21:10 CST]
+================================================================================
+
+- 实现 internal/statement/service.go: 财务报表服务
+  - GetProfitLoss: 利润表（营收、成本、毛利、费用、净利自动计算）
+  - GetRevenueDetail: 营收明细表（商品销售、服务收入、充值收入、退款支出）
+  - GetProductSales: 商品销售报表（按分类统计销售数量、金额、成本、毛利）
+  - GetServicePerformance: 服务业绩报表（服务项目完成量/金额 + 技师排行）
+- 实现 cmd/server/handlers_statement.go: 4 个 HTTP 处理器
+- 在 main.go 中注册 4 条路由（auth-protected, merchant-only）
+  - GET /api/v1/merchant/statements/profit-loss
+  - GET /api/v1/merchant/statements/revenue-detail
+  - GET /api/v1/merchant/statements/product-sales
+  - GET /api/v1/merchant/statements/service-performance
+- 端到端验证全部 6 个步骤通过:
+  ✓ 利润表：展示营收、成本、费用、毛利、净利，数据自动计算
+  ✓ 营收明细表：展示各营收来源的明细金额（商品/服务/退款）
+  ✓ 商品销售报表：展示各类别商品销售数量/金额/毛利
+  ✓ 服务业绩报表：展示各服务项目完成量/金额/技师排行
+  ✓ 报表数据与数据库实际一致（psql 直接验证）
+  ✓ 支持按月切换查看（不同月份返回不同数据，year-only 返回全年）
+- 参数校验：year 必填、有效范围，month 可选（0=全年）
+- 提交: d801bda feat(F059): automated financial statements
