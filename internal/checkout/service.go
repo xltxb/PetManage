@@ -34,10 +34,11 @@ type CheckoutPayment struct {
 
 // CheckoutRequest is the request body for creating an order.
 type CheckoutRequest struct {
-	MemberID   *int64            `json:"member_id"`
-	Items      []CheckoutItem    `json:"items"`
-	Payments   []CheckoutPayment `json:"payments"`
-	OrderNotes string            `json:"order_notes"`
+	MemberID             *int64            `json:"member_id"`
+	Items                []CheckoutItem    `json:"items"`
+	Payments             []CheckoutPayment `json:"payments"`
+	OrderNotes           string            `json:"order_notes"`
+	PromotionActivityID  *int64            `json:"promotion_activity_id,omitempty"`
 }
 
 // CheckoutResponse is the response after a successful checkout.
@@ -103,22 +104,26 @@ type CartItemResult struct {
 
 // CartCalculateRequest is the request body for cart calculation.
 type CartCalculateRequest struct {
-	MemberID *int64          `json:"member_id"`
-	Items    []CartItemInput `json:"items"`
+	MemberID            *int64          `json:"member_id"`
+	Items               []CartItemInput `json:"items"`
+	PromotionActivityID *int64          `json:"promotion_activity_id,omitempty"`
 }
 
 // CartCalculateResponse is the response for cart calculation.
 type CartCalculateResponse struct {
-	Items                []CartItemResult `json:"items"`
-	OriginalCents        int              `json:"original_cents"`
-	DiscountCents        int              `json:"discount_cents"`
-	LevelDiscountCents   int              `json:"level_discount_cents"`
-	LevelDiscountPercent int              `json:"level_discount_percent"`
-	PayableCents         int              `json:"payable_cents"`
-	MemberBalanceCents   int              `json:"member_balance_cents"`
-	MemberPoints         int              `json:"member_points"`
-	PointsMultiplier     int              `json:"points_multiplier"`
-	MaxPointsDeductCents int              `json:"max_points_deduct_cents"`
+	Items                 []CartItemResult `json:"items"`
+	OriginalCents         int              `json:"original_cents"`
+	DiscountCents         int              `json:"discount_cents"`
+	LevelDiscountCents    int              `json:"level_discount_cents"`
+	LevelDiscountPercent  int              `json:"level_discount_percent"`
+	PromotionDiscountCents int             `json:"promotion_discount_cents"`
+	PromotionName         string           `json:"promotion_name,omitempty"`
+	PromotionType         string           `json:"promotion_type,omitempty"`
+	PayableCents          int              `json:"payable_cents"`
+	MemberBalanceCents    int              `json:"member_balance_cents"`
+	MemberPoints          int              `json:"member_points"`
+	PointsMultiplier      int              `json:"points_multiplier"`
+	MaxPointsDeductCents  int              `json:"max_points_deduct_cents"`
 }
 
 // PointsToCentsRate defines how many points equal 1 cent (100 points = 100 cents = ¥1).
@@ -212,6 +217,66 @@ func (s *Service) CartCalculate(ctx context.Context, merchantID int64, req CartC
 	var results []CartItemResult
 	originalCents := 0
 	discountCents := 0
+
+	// Look up promotion if specified.
+	var flashSaleProductID int64
+	var flashSalePriceCents int
+	var flashSaleRemaining int
+	var promotionID int64
+	var promotionType string
+	var promotionName string
+	var fullReductionThreshold int
+	var fullReductionReduce int
+	var discountPercent int
+	if req.PromotionActivityID != nil && *req.PromotionActivityID > 0 {
+		var rulesJSON json.RawMessage
+		var promoType string
+		var promoName string
+		err := s.db.QueryRowContext(ctx,
+			`SELECT name, type, rules FROM promotion_activities
+			 WHERE id = $1 AND merchant_id = $2 AND status = 'active' AND deleted_at IS NULL
+			   AND start_time <= NOW() AND end_time >= NOW()`,
+			*req.PromotionActivityID, merchantID,
+		).Scan(&promoName, &promoType, &rulesJSON)
+		if err == nil {
+			promotionID = *req.PromotionActivityID
+			promotionType = promoType
+			promotionName = promoName
+			switch promoType {
+			case "flash_sale":
+				var fs struct {
+					ProductID      int64 `json:"product_id"`
+					FlashPriceCents int  `json:"flash_price_cents"`
+					RemainingStock int   `json:"remaining_stock"`
+					FlashStock      int   `json:"flash_stock"`
+				}
+				if json.Unmarshal(rulesJSON, &fs) == nil {
+					flashSaleProductID = fs.ProductID
+					flashSalePriceCents = fs.FlashPriceCents
+					flashSaleRemaining = fs.RemainingStock
+					if flashSaleRemaining == 0 {
+						flashSaleRemaining = fs.FlashStock
+					}
+				}
+			case "full_reduction":
+				var fr struct {
+					ThresholdCents int `json:"threshold_cents"`
+					ReduceCents    int `json:"reduce_cents"`
+				}
+				if json.Unmarshal(rulesJSON, &fr) == nil {
+					fullReductionThreshold = fr.ThresholdCents
+					fullReductionReduce = fr.ReduceCents
+				}
+			case "discount":
+				var d struct {
+					DiscountPercent int `json:"discount_percent"`
+				}
+				if json.Unmarshal(rulesJSON, &d) == nil {
+					discountPercent = d.DiscountPercent
+				}
+			}
+		}
+	}
 
 	for _, item := range req.Items {
 		if item.Quantity <= 0 {
@@ -309,14 +374,21 @@ func (s *Service) CartCalculate(ctx context.Context, merchantID int64, req CartC
 				return nil, apperrors.NewInternalError("failed to query product", err)
 			}
 
+			effectivePrice := priceCents
+			itemDiscount := 0
+			if flashSaleProductID > 0 && *item.ProductID == flashSaleProductID {
+				effectivePrice = flashSalePriceCents
+				itemDiscount = (priceCents - flashSalePriceCents) * item.Quantity
+			}
+
 			result = CartItemResult{
 				ProductID:      item.ProductID,
 				Name:           name,
 				Barcode:        barcode,
 				UnitPriceCents: priceCents,
-				DiscountCents:  0,
+				DiscountCents:  itemDiscount,
 				Quantity:       item.Quantity,
-				LineTotalCents: priceCents * item.Quantity,
+				LineTotalCents: effectivePrice * item.Quantity,
 			}
 		} else {
 			return nil, apperrors.NewValidationError("each item must have product_id, sku_id, service_item_id, or package_id")
@@ -360,21 +432,46 @@ func (s *Service) CartCalculate(ctx context.Context, merchantID int64, req CartC
 				resp.LevelDiscountPercent = levelDiscountPercent
 				resp.DiscountCents += levelDiscount
 				resp.PayableCents = originalCents - resp.DiscountCents
-			}
+				}
 
-			// Max points deduction: minimum of (total points / rate) and (50% of payable amount)
-			maxFromPoints := points / PointsToCentsRate
-			maxFromRatio := int(float64(resp.PayableCents) * MaxPointsRatio)
-			if maxFromPoints > maxFromRatio {
-				resp.MaxPointsDeductCents = maxFromRatio
-			} else {
-				resp.MaxPointsDeductCents = maxFromPoints
+				// Max points deduction: minimum of (total points / rate) and (50% of payable amount)
+				maxFromPoints := points / PointsToCentsRate
+				maxFromRatio := int(float64(resp.PayableCents) * MaxPointsRatio)
+				if maxFromPoints > maxFromRatio {
+					resp.MaxPointsDeductCents = maxFromRatio
+				} else {
+					resp.MaxPointsDeductCents = maxFromPoints
+				}
 			}
 		}
-	}
 
-	return resp, nil
-}
+		// Apply promotion discount.
+		if promotionID > 0 {
+			var promoDiscount int
+			if promotionType == "flash_sale" {
+				// Flash sale discount is already applied at item level; sum it up.
+				for _, item := range resp.Items {
+					promoDiscount += item.DiscountCents
+				}
+			} else if promotionType == "full_reduction" && fullReductionThreshold > 0 &&
+				resp.PayableCents >= fullReductionThreshold {
+				promoDiscount = fullReductionReduce
+			} else if promotionType == "discount" && discountPercent > 0 && discountPercent < 100 {
+				promoDiscount = resp.PayableCents - (resp.PayableCents * discountPercent / 100)
+			}
+			if promoDiscount > 0 {
+				resp.PromotionDiscountCents = promoDiscount
+				resp.PromotionName = promotionName
+				resp.PromotionType = promotionType
+				if promotionType != "flash_sale" {
+					resp.DiscountCents += promoDiscount
+					resp.PayableCents = originalCents - resp.DiscountCents
+				}
+			}
+		}
+
+		return resp, nil
+	}
 
 // expandPackage expands a service package into individual CartItemResult entries.
 // Returns the expanded items, original total, and discount amount.
@@ -871,8 +968,55 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 		}
 	}
 
-	// Apply coupon deduction: it reduces the effective total.
-	effectiveTotal := totalCents - couponDeducted
+	// Apply promotion discount if a promotion is linked.
+	promotionDeducted := 0
+	if req.PromotionActivityID != nil && *req.PromotionActivityID > 0 {
+		var promoType string
+		var rulesJSON json.RawMessage
+		err := tx.QueryRowContext(ctx,
+			`SELECT type, rules FROM promotion_activities WHERE id = $1 FOR UPDATE`,
+			*req.PromotionActivityID,
+		).Scan(&promoType, &rulesJSON)
+		if err == nil {
+			switch promoType {
+			case "flash_sale":
+				var fs struct {
+					ProductID       int64 `json:"product_id"`
+					FlashPriceCents int   `json:"flash_price_cents"`
+				}
+				if json.Unmarshal(rulesJSON, &fs) == nil {
+					for _, item := range req.Items {
+						if item.ProductID != nil && *item.ProductID == fs.ProductID {
+							var origPrice int
+							_ = tx.QueryRowContext(ctx,
+								`SELECT price_cents FROM products WHERE id = $1`,
+								*item.ProductID,
+							).Scan(&origPrice)
+							promotionDeducted += (origPrice - fs.FlashPriceCents) * item.Quantity
+						}
+					}
+				}
+			case "full_reduction":
+				var fr struct {
+					ThresholdCents int `json:"threshold_cents"`
+					ReduceCents    int `json:"reduce_cents"`
+				}
+				if json.Unmarshal(rulesJSON, &fr) == nil && totalCents >= fr.ThresholdCents {
+					promotionDeducted = fr.ReduceCents
+				}
+			case "discount":
+				var d struct {
+					DiscountPercent int `json:"discount_percent"`
+				}
+				if json.Unmarshal(rulesJSON, &d) == nil && d.DiscountPercent > 0 && d.DiscountPercent < 100 {
+					promotionDeducted = totalCents - (totalCents * d.DiscountPercent / 100)
+				}
+			}
+		}
+	}
+
+	// Apply coupon + promotion deduction: they reduce the effective total.
+	effectiveTotal := totalCents - couponDeducted - promotionDeducted
 	if effectiveTotal < 0 {
 		effectiveTotal = 0
 	}
@@ -893,13 +1037,89 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 	var orderID int64
 	var orderCreatedAt time.Time
 	err = tx.QueryRowContext(ctx,
-		`INSERT INTO orders (merchant_id, member_id, total_cents, paid_cents, status, notes)
-		 VALUES ($1, $2, $3, $4, 'completed', $5)
+		`INSERT INTO orders (merchant_id, member_id, total_cents, paid_cents, status, notes, promotion_activity_id)
+		 VALUES ($1, $2, $3, $4, 'completed', $5, $6)
 		 RETURNING id, created_at`,
-		merchantID, req.MemberID, totalCents, paidCents, nullIfEmpty(req.OrderNotes),
+		merchantID, req.MemberID, totalCents, paidCents, nullIfEmpty(req.OrderNotes), req.PromotionActivityID,
 	).Scan(&orderID, &orderCreatedAt)
 	if err != nil {
 		return nil, apperrors.NewInternalError("failed to create order", err)
+	}
+
+	// Update promotion stats if a promotion was applied.
+	if req.PromotionActivityID != nil && *req.PromotionActivityID > 0 {
+		// Calculate promotion discount.
+		var promoDiscount int
+		var promoType string
+		_ = tx.QueryRowContext(ctx,
+			`SELECT type FROM promotion_activities WHERE id = $1`,
+			*req.PromotionActivityID,
+		).Scan(&promoType)
+
+		if promoType == "flash_sale" {
+			var rulesJSON json.RawMessage
+			_ = tx.QueryRowContext(ctx,
+				`SELECT rules FROM promotion_activities WHERE id = $1`,
+				*req.PromotionActivityID,
+			).Scan(&rulesJSON)
+			var fs struct {
+				ProductID       int64 `json:"product_id"`
+				FlashPriceCents int   `json:"flash_price_cents"`
+			}
+			if json.Unmarshal(rulesJSON, &fs) == nil {
+				for _, item := range req.Items {
+					if item.ProductID != nil && *item.ProductID == fs.ProductID {
+						var originalPrice int
+						_ = tx.QueryRowContext(ctx,
+							`SELECT price_cents FROM products WHERE id = $1`, *item.ProductID,
+						).Scan(&originalPrice)
+						promoDiscount += (originalPrice - fs.FlashPriceCents) * item.Quantity
+					}
+				}
+				// Deduct flash_sale stock.
+				_, _ = tx.ExecContext(ctx,
+					`UPDATE promotion_activities
+					 SET rules = jsonb_set(rules, '{remaining_stock}', to_jsonb(
+					   GREATEST(0, COALESCE((rules->>'remaining_stock')::int, (rules->>'flash_stock')::int) - 1)
+					 ))
+					 WHERE id = $1`,
+					*req.PromotionActivityID,
+				)
+			}
+		} else {
+			var rulesJSON json.RawMessage
+			_ = tx.QueryRowContext(ctx,
+				`SELECT type, rules FROM promotion_activities WHERE id = $1`,
+				*req.PromotionActivityID,
+			).Scan(&promoType, &rulesJSON)
+			if promoType == "full_reduction" {
+				var fr struct {
+					ThresholdCents int `json:"threshold_cents"`
+					ReduceCents    int `json:"reduce_cents"`
+				}
+				if json.Unmarshal(rulesJSON, &fr) == nil && totalCents >= fr.ThresholdCents {
+					promoDiscount = fr.ReduceCents
+				}
+			} else if promoType == "discount" {
+				var d struct {
+					DiscountPercent int `json:"discount_percent"`
+				}
+				if json.Unmarshal(rulesJSON, &d) == nil && d.DiscountPercent > 0 && d.DiscountPercent < 100 {
+					promoDiscount = totalCents - (totalCents * d.DiscountPercent / 100)
+				}
+			}
+		}
+
+		if promoDiscount > 0 {
+			_, _ = tx.ExecContext(ctx,
+				`UPDATE promotion_activities
+				 SET total_order_count = total_order_count + 1,
+				     total_discount_cents = total_discount_cents + $1,
+				     updated_at = NOW()
+				 WHERE id = $2`,
+				promoDiscount, *req.PromotionActivityID,
+			)
+		}
 	}
 
 	// Link coupon to order if used.

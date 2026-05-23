@@ -45,6 +45,7 @@ import (
 	"github.com/xltxb/PetManage/internal/orders"
 	"github.com/xltxb/PetManage/internal/payable"
 	"github.com/xltxb/PetManage/internal/pet"
+	"github.com/xltxb/PetManage/internal/promotion"
 	"github.com/xltxb/PetManage/internal/points"
 	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/purchase"
@@ -245,6 +246,9 @@ func main() {
 
 	// Initialize coupon management service.
 	couponService := coupon.NewService(db)
+
+	// Initialize promotion service.
+	promotionService := promotion.NewService(db)
 
 		// Initialize service card management service.
 		scService := servicecard.NewService(db)
@@ -647,7 +651,17 @@ func main() {
 		mux.Handle("GET /api/v1/merchant/coupons/codes", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponCodeListHandler(couponService))))
 		mux.Handle("GET /api/v1/merchant/coupons/stats", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponStatsHandler(couponService))))
 
-			// Service card management (auth-protected, merchant-only).
+		// Promotion activity management (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/promotions", middleware.Auth(jwtManager)(http.HandlerFunc(makePromotionCreateHandler(promotionService))))
+		mux.Handle("GET /api/v1/merchant/promotions", middleware.Auth(jwtManager)(http.HandlerFunc(makePromotionListHandler(promotionService))))
+		mux.Handle("GET /api/v1/merchant/promotions/active", middleware.Auth(jwtManager)(http.HandlerFunc(makePromotionActiveHandler(promotionService))))
+		mux.Handle("GET /api/v1/merchant/promotions/stats", middleware.Auth(jwtManager)(http.HandlerFunc(makePromotionStatsHandler(promotionService))))
+		mux.Handle("GET /api/v1/merchant/promotions/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePromotionGetHandler(promotionService))))
+		mux.Handle("PUT /api/v1/merchant/promotions/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePromotionUpdateHandler(promotionService))))
+		mux.Handle("DELETE /api/v1/merchant/promotions/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePromotionDeleteHandler(promotionService))))
+		mux.Handle("POST /api/v1/merchant/promotions/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makePromotionToggleHandler(promotionService))))
+
+		// Service card management (auth-protected, merchant-only).
 			mux.Handle("POST /api/v1/merchant/service-cards/templates", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCTemplateCreateHandler(scService))))
 			mux.Handle("GET /api/v1/merchant/service-cards/templates", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCTemplateListHandler(scService))))
 			mux.Handle("GET /api/v1/merchant/service-cards/templates/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCTemplateGetHandler(scService))))
