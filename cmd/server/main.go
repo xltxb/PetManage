@@ -22,6 +22,7 @@ import (
 	"github.com/xltxb/PetManage/internal/checkout"
 	"github.com/xltxb/PetManage/internal/commission"
 	"github.com/xltxb/PetManage/internal/coupon"
+	"github.com/xltxb/PetManage/internal/servicecard"
 	"github.com/xltxb/PetManage/internal/fixedexpense"
 	"github.com/xltxb/PetManage/internal/revenue"
 	"github.com/xltxb/PetManage/internal/statement"
@@ -244,6 +245,9 @@ func main() {
 
 	// Initialize coupon management service.
 	couponService := coupon.NewService(db)
+
+		// Initialize service card management service.
+		scService := servicecard.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -643,7 +647,20 @@ func main() {
 		mux.Handle("GET /api/v1/merchant/coupons/codes", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponCodeListHandler(couponService))))
 		mux.Handle("GET /api/v1/merchant/coupons/stats", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponStatsHandler(couponService))))
 
-	// Risk control — rule management (platform-only auth + permission).
+			// Service card management (auth-protected, merchant-only).
+			mux.Handle("POST /api/v1/merchant/service-cards/templates", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCTemplateCreateHandler(scService))))
+			mux.Handle("GET /api/v1/merchant/service-cards/templates", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCTemplateListHandler(scService))))
+			mux.Handle("GET /api/v1/merchant/service-cards/templates/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCTemplateGetHandler(scService))))
+			mux.Handle("PUT /api/v1/merchant/service-cards/templates/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCTemplateUpdateHandler(scService))))
+			mux.Handle("POST /api/v1/merchant/service-cards/templates/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCTemplateToggleHandler(scService))))
+			mux.Handle("POST /api/v1/merchant/service-cards/templates/{id}/purchase", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCTemplatePurchaseHandler(scService))))
+			mux.Handle("GET /api/v1/merchant/service-cards/member/{memberId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCMemberCardsHandler(scService))))
+			mux.Handle("GET /api/v1/merchant/service-cards/expiring", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCExpiringHandler(scService))))
+			mux.Handle("GET /api/v1/merchant/service-cards/code", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCCardByCodeHandler(scService))))
+			mux.Handle("GET /api/v1/merchant/service-cards", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCAllCardsHandler(scService))))
+			mux.Handle("GET /api/v1/merchant/service-cards/usage-logs/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCUsageLogsHandler(scService))))
+
+		// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
 		middleware.Auth(jwtManager)(
 			middleware.RequirePlatformUser(
