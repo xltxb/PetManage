@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -36,6 +35,7 @@ import (
 	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/internal/notification"
 	"github.com/xltxb/PetManage/internal/operationlog"
+	"github.com/xltxb/PetManage/internal/orders"
 	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/internal/points"
 	"github.com/xltxb/PetManage/internal/product"
@@ -201,6 +201,9 @@ func main() {
 	// Initialize service record service for archiving.
 	serviceRecordService := servicerecord.NewService(db)
 	appointmentService.SetServiceRecordService(serviceRecordService)
+
+	// Initialize orders service.
+	ordersService := orders.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -501,8 +504,10 @@ func main() {
 	mux.Handle("GET /api/v1/merchant/pos/members/lookup", middleware.Auth(jwtManager)(http.HandlerFunc(makePosMemberLookupHandler(checkoutService))))
 	mux.Handle("GET /api/v1/merchant/pos/coupons/verify", middleware.Auth(jwtManager)(http.HandlerFunc(makePosCouponVerifyHandler(checkoutService))))
 
-	// Refund (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/orders/{id}/refund", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeRefundHandler(riskService)))))
+		// Orders — listing, detail, refund (auth-protected, merchant-only).
+		mux.Handle("GET /api/v1/merchant/orders", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeOrderListHandler(ordersService)))))
+		mux.Handle("GET /api/v1/merchant/orders/{id}", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeOrderDetailHandler(ordersService)))))
+		mux.Handle("POST /api/v1/merchant/orders/{id}/refund", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeRefundHandler(ordersService, riskService)))))
 
 	// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
@@ -3172,134 +3177,6 @@ func makeReportTransactionHandler(svc *report.Service) http.HandlerFunc {
 	}
 }
 
-// --- Refund handler ---
-
-func makeRefundHandler(riskSvc *risk.Service) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		claims := middleware.UserClaimsFromContext(r.Context())
-		if claims == nil {
-			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
-			return
-		}
-		if claims.MerchantID == nil {
-			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
-			return
-		}
-
-		idStr := r.PathValue("id")
-		orderID, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil || orderID <= 0 {
-			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid order id"))
-			return
-		}
-
-		db := riskSvc.GetDB()
-
-		tx, err := db.BeginTx(r.Context(), nil)
-		if err != nil {
-			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to begin transaction", err))
-			return
-		}
-		defer tx.Rollback()
-
-		// Verify order belongs to the merchant and is completed.
-		var totalCents int
-		err = tx.QueryRowContext(r.Context(),
-			`SELECT total_cents FROM orders
-			 WHERE id = $1 AND merchant_id = $2 AND status = 'completed' FOR UPDATE`,
-			orderID, *claims.MerchantID,
-		).Scan(&totalCents)
-		if err == sql.ErrNoRows {
-			apperrors.WriteError(w, r, apperrors.NewNotFoundError("order not found or already refunded"))
-			return
-		}
-		if err != nil {
-			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to query order", err))
-			return
-		}
-
-		// Update order status to refunded.
-		_, err = tx.ExecContext(r.Context(),
-			`UPDATE orders SET status = 'refunded', updated_at = NOW() WHERE id = $1`,
-			orderID,
-		)
-		if err != nil {
-			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to refund order", err))
-			return
-		}
-
-		// Restore inventory for each order item.
-		rows, err := tx.QueryContext(r.Context(),
-			`SELECT product_id, quantity FROM order_items WHERE order_id = $1`, orderID,
-		)
-		if err != nil {
-			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to query order items", err))
-			return
-		}
-		type itemRestore struct {
-			productID int64
-			quantity  int
-		}
-		var items []itemRestore
-		for rows.Next() {
-			var ir itemRestore
-			if err := rows.Scan(&ir.productID, &ir.quantity); err != nil {
-				rows.Close()
-				apperrors.WriteError(w, r, apperrors.NewInternalError("failed to scan order item", err))
-				return
-			}
-			items = append(items, ir)
-		}
-		rows.Close()
-
-		for _, ir := range items {
-			_, err = tx.ExecContext(r.Context(),
-				`UPDATE products SET stock = stock + $1, updated_at = NOW() WHERE id = $2`,
-				ir.quantity, ir.productID,
-			)
-			if err != nil {
-				apperrors.WriteError(w, r, apperrors.NewInternalError("failed to restore inventory", err))
-				return
-			}
-
-			// Record stock flow for refund.
-			_, err = tx.ExecContext(r.Context(),
-				`INSERT INTO stock_flows (merchant_id, product_id, order_id, type, quantity_change)
-				 VALUES ($1, $2, $3, 'inbound', $4)`,
-				*claims.MerchantID, ir.productID, orderID, ir.quantity,
-			)
-			if err != nil {
-				apperrors.WriteError(w, r, apperrors.NewInternalError("failed to record stock flow", err))
-				return
-			}
-		}
-
-		if err := tx.Commit(); err != nil {
-			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to commit refund", err))
-			return
-		}
-
-		// Check large refund risk (non-blocking, log only).
-		alert, _ := riskSvc.CheckLargeRefund(r.Context(), orderID, *claims.MerchantID, totalCents)
-
-		resp := map[string]interface{}{
-			"order_id":    orderID,
-			"status":      "refunded",
-			"total_cents": totalCents,
-		}
-		if alert != nil {
-			resp["risk_alert"] = map[string]interface{}{
-				"id":          alert.ID,
-				"alert_type":  alert.AlertType,
-				"description": alert.Description,
-				"status":      alert.Status,
-			}
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}
-}
 
 // --- Risk rule handlers ---
 

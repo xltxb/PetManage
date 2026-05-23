@@ -31,7 +31,7 @@ const router = createRouter({
     {
       path: '/merchant/orders',
       name: 'merchant-orders',
-      component: () => import('@/views/Placeholder.vue'),
+      component: () => import('@/views/OrderList.vue'),
     },
     {
       path: '/merchant/appointments',

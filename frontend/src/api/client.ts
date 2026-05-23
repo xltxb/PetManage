@@ -622,7 +622,90 @@ class ApiClient {
 	    return this.request<any>(`/api/v1/merchant/appointments/${id}/pickup`, { method: "POST" })
 	  }
 
-	  // --- Schedule APIs ---
+	  // --- Order APIs ---
+
+  getOrders(params?: { keyword?: string; status?: string; date_from?: string; date_to?: string; page?: number; page_size?: number }) {
+    const search = new URLSearchParams()
+    if (params?.keyword) search.set('keyword', params.keyword)
+    if (params?.status) search.set('status', params.status)
+    if (params?.date_from) search.set('date_from', params.date_from)
+    if (params?.date_to) search.set('date_to', params.date_to)
+    if (params?.page) search.set('page', String(params.page))
+    if (params?.page_size) search.set('page_size', String(params.page_size))
+    const qs = search.toString()
+    return this.request<{
+      orders: Array<{
+        id: number
+        merchant_id: number
+        member_id: number | null
+        member_name: string
+        total_cents: number
+        paid_cents: number
+        status: string
+        notes: string
+        created_at: string
+        updated_at: string
+      }>
+      total: number
+      page: number
+      page_size: number
+    }>(`/api/v1/merchant/orders${qs ? '?' + qs : ''}`)
+  }
+
+  getOrder(id: number) {
+    return this.request<{
+      id: number
+      merchant_id: number
+      member_id: number | null
+      member_name: string
+      total_cents: number
+      paid_cents: number
+      status: string
+      notes: string
+      items: Array<{
+        id: number
+        product_id: number | null
+        product_name: string
+        price_cents: number
+        quantity: number
+        product_sku_id: number | null
+        sku_spec_info?: Record<string, string>
+        service_item_id: number | null
+      }>
+      payments: Array<{
+        id: number
+        order_id: number
+        method: string
+        amount_cents: number
+        created_at: string
+      }>
+      refunds: Array<{
+        id: number
+        order_id: number
+        refund_type: string
+        reason: string
+        amount_cents: number
+        status: string
+        requested_by: number
+        approved_by: number | null
+        created_at: string
+      }>
+      created_at: string
+      updated_at: string
+    }>(`/api/v1/merchant/orders/${id}`)
+  }
+
+  refundOrder(id: number, data: { refund_type: string; reason?: string; items?: Array<{ order_item_id: number; quantity: number }> }) {
+    return this.request<{
+      refund_id: number
+      order_id: number
+      amount_cents: number
+      status: string
+      needs_approval?: boolean
+    }>(`/api/v1/merchant/orders/${id}/refund`, { method: 'POST', body: data })
+  }
+
+  // --- Schedule APIs ---
 
 	  getSchedules(params?: { employee_id?: number; start_date?: string; end_date?: string }) {
 	    const search = new URLSearchParams()
