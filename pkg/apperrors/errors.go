@@ -25,6 +25,8 @@ const (
 	CodeAppKeyInvalid     = "APPKEY_INVALID"
 	CodeCSRFMissing       = "CSRF_MISSING"
 	CodeCSRFInvalid       = "CSRF_INVALID"
+	CodeRateLimitExceeded = "RATE_LIMIT_EXCEEDED"
+	CodeServiceUnavailable = "SERVICE_UNAVAILABLE"
 )
 
 var codeToStatus = map[string]int{
@@ -45,6 +47,8 @@ var codeToStatus = map[string]int{
 	CodeAppKeyInvalid:     http.StatusUnauthorized,
 	CodeCSRFMissing:       http.StatusForbidden,
 	CodeCSRFInvalid:       http.StatusForbidden,
+	CodeRateLimitExceeded:  http.StatusTooManyRequests,
+	CodeServiceUnavailable: http.StatusServiceUnavailable,
 }
 
 // AppError is a structured application error.

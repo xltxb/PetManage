@@ -49,6 +49,7 @@ import (
 	"github.com/xltxb/PetManage/internal/points"
 	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/purchase"
+	"github.com/xltxb/PetManage/internal/ratelimit"
 	"github.com/xltxb/PetManage/internal/replenishment"
 	"github.com/xltxb/PetManage/internal/report"
 	"github.com/xltxb/PetManage/internal/openplatform"
@@ -266,6 +267,10 @@ func main() {
 		cfg.JWT.AccessTokenTTL,
 		cfg.JWT.RefreshTokenTTL,
 	)
+
+		// Initialize rate limiter + circuit breaker for open platform.
+		rlCfg := ratelimit.DefaultConfig()
+		rlService := ratelimit.New(rlCfg)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -713,42 +718,47 @@ func main() {
 		mux.HandleFunc("POST /api/v1/open/token", makeOpenTokenHandler(openTokenService))
 		mux.HandleFunc("POST /api/v1/open/token/refresh", makeOpenRefreshHandler(openTokenService))
 
-		// Open platform — API test endpoint (open platform auth required).
-		mux.Handle("GET /api/v1/open/ping", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPingHandler())))
+		// Open platform — rate-limit + circuit-breaker middleware wrapper.
+	openAPIWrap := func(h http.Handler) http.Handler {
+		return middleware.OpenAPIAuth(openTokenService)(rlService.OpenAPIMiddleware()(h))
+	}
+
+	// Open platform — API test endpoint (open platform auth required).
+	mux.Handle("GET /api/v1/open/ping", openAPIWrap(http.HandlerFunc(makeOpenPingHandler())))
 
 		// Open platform — v1 API endpoints (F070: basic info APIs).
-		mux.Handle("GET /api/open/v1/shop/info", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenShopInfoHandler(merchantService))))
-		mux.Handle("GET /api/open/v1/products", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenProductListHandler(productService))))
-		mux.Handle("GET /api/open/v1/products/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenProductDetailHandler(productService))))
-		mux.Handle("GET /api/open/v1/services", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenServiceListHandler(serviceMgmtService))))
-		mux.Handle("GET /api/open/v1/breeds", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBreedsHandler(dictService))))
+		mux.Handle("GET /api/open/v1/shop/info", openAPIWrap(http.HandlerFunc(makeOpenShopInfoHandler(merchantService))))
+		mux.Handle("GET /api/open/v1/products", openAPIWrap(http.HandlerFunc(makeOpenProductListHandler(productService))))
+		mux.Handle("GET /api/open/v1/products/{id}", openAPIWrap(http.HandlerFunc(makeOpenProductDetailHandler(productService))))
+		mux.Handle("GET /api/open/v1/services", openAPIWrap(http.HandlerFunc(makeOpenServiceListHandler(serviceMgmtService))))
+		mux.Handle("GET /api/open/v1/breeds", openAPIWrap(http.HandlerFunc(makeOpenBreedsHandler(dictService))))
 
 			// Open platform — F071: member & pet API.
-			mux.Handle("POST /api/open/v1/members/register", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenMemberRegisterHandler(memberService, memberLevelService))))
-			mux.Handle("GET /api/open/v1/members/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenMemberGetHandler(memberService, memberLevelService))))
-			mux.Handle("PUT /api/open/v1/members/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenMemberUpdateHandler(memberService))))
-			mux.Handle("POST /api/open/v1/members/{id}/pets", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPetCreateHandler(petService))))
-			mux.Handle("GET /api/open/v1/members/{id}/pets", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPetListHandler(petService))))
+			mux.Handle("POST /api/open/v1/members/register", openAPIWrap(http.HandlerFunc(makeOpenMemberRegisterHandler(memberService, memberLevelService))))
+			mux.Handle("GET /api/open/v1/members/{id}", openAPIWrap(http.HandlerFunc(makeOpenMemberGetHandler(memberService, memberLevelService))))
+			mux.Handle("PUT /api/open/v1/members/{id}", openAPIWrap(http.HandlerFunc(makeOpenMemberUpdateHandler(memberService))))
+			mux.Handle("POST /api/open/v1/members/{id}/pets", openAPIWrap(http.HandlerFunc(makeOpenPetCreateHandler(petService))))
+			mux.Handle("GET /api/open/v1/members/{id}/pets", openAPIWrap(http.HandlerFunc(makeOpenPetListHandler(petService))))
 
 			// Open platform — F072: booking & technician availability API.
-			mux.Handle("POST /api/open/v1/bookings", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBookingCreateHandler(appointmentService))))
-			mux.Handle("GET /api/open/v1/bookings", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBookingListHandler(appointmentService))))
-			mux.Handle("PUT /api/open/v1/bookings/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBookingUpdateHandler(appointmentService))))
-			mux.Handle("DELETE /api/open/v1/bookings/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBookingCancelHandler(appointmentService))))
-			mux.Handle("GET /api/open/v1/technicians/{id}/availability", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenTechnicianAvailabilityHandler(employeeService, scheduleService, appointmentService))))
+			mux.Handle("POST /api/open/v1/bookings", openAPIWrap(http.HandlerFunc(makeOpenBookingCreateHandler(appointmentService))))
+			mux.Handle("GET /api/open/v1/bookings", openAPIWrap(http.HandlerFunc(makeOpenBookingListHandler(appointmentService))))
+			mux.Handle("PUT /api/open/v1/bookings/{id}", openAPIWrap(http.HandlerFunc(makeOpenBookingUpdateHandler(appointmentService))))
+			mux.Handle("DELETE /api/open/v1/bookings/{id}", openAPIWrap(http.HandlerFunc(makeOpenBookingCancelHandler(appointmentService))))
+			mux.Handle("GET /api/open/v1/technicians/{id}/availability", openAPIWrap(http.HandlerFunc(makeOpenTechnicianAvailabilityHandler(employeeService, scheduleService, appointmentService))))
 
 			// Open platform — F073: order & payment API.
-			mux.Handle("POST /api/open/v1/orders", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenOrderCreateHandler(checkoutService, ordersService))))
-			mux.Handle("GET /api/open/v1/orders", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenOrderListHandler(ordersService))))
-			mux.Handle("GET /api/open/v1/orders/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenOrderDetailHandler(ordersService))))
-			mux.Handle("POST /api/open/v1/orders/{id}/pay-callback", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPayCallbackHandler(ordersService))))
-			mux.Handle("POST /api/open/v1/orders/{id}/refund", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenOrderRefundHandler(ordersService))))
+			mux.Handle("POST /api/open/v1/orders", openAPIWrap(http.HandlerFunc(makeOpenOrderCreateHandler(checkoutService, ordersService))))
+			mux.Handle("GET /api/open/v1/orders", openAPIWrap(http.HandlerFunc(makeOpenOrderListHandler(ordersService))))
+			mux.Handle("GET /api/open/v1/orders/{id}", openAPIWrap(http.HandlerFunc(makeOpenOrderDetailHandler(ordersService))))
+			mux.Handle("POST /api/open/v1/orders/{id}/pay-callback", openAPIWrap(http.HandlerFunc(makeOpenPayCallbackHandler(ordersService))))
+			mux.Handle("POST /api/open/v1/orders/{id}/refund", openAPIWrap(http.HandlerFunc(makeOpenOrderRefundHandler(ordersService))))
 
 			// Open platform — F074: marketing & verification API.
-			mux.Handle("POST /api/open/v1/coupons/verify", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenCouponVerifyHandler(db))))
-			mux.Handle("POST /api/open/v1/coupons/{id}/claim", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenCouponClaimHandler(couponService))))
-			mux.Handle("GET /api/open/v1/activities", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenActivitiesHandler(promotionService))))
-			mux.Handle("POST /api/open/v1/groupon/verify", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenGrouponVerifyHandler(verificationService))))
+			mux.Handle("POST /api/open/v1/coupons/verify", openAPIWrap(http.HandlerFunc(makeOpenCouponVerifyHandler(db))))
+			mux.Handle("POST /api/open/v1/coupons/{id}/claim", openAPIWrap(http.HandlerFunc(makeOpenCouponClaimHandler(couponService))))
+			mux.Handle("GET /api/open/v1/activities", openAPIWrap(http.HandlerFunc(makeOpenActivitiesHandler(promotionService))))
+			mux.Handle("POST /api/open/v1/groupon/verify", openAPIWrap(http.HandlerFunc(makeOpenGrouponVerifyHandler(verificationService))))
 
 		// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",

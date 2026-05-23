@@ -1057,7 +1057,7 @@
         "熔断后请求直接返回 SERVICE_UNAVAILABLE，不经过业务逻辑",
         "熔断恢复探测：半开状态下部分请求通过"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F076",
