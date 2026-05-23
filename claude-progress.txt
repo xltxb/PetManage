@@ -1410,3 +1410,49 @@ SESSION 45 — F036 积分管理 [2026-05-23 09:03 CST]
 - 提交: 68fe419 feat(F036): points management
 
 下一步: 继续实现 F038 宠物疫苗/驱虫到期提醒
+
+================================================================================
+SESSION 40 — F038 宠物疫苗/驱虫到期提醒 [2026-05-23 09:17 CST]
+================================================================================
+
+- 实现 internal/pet/service.go: 疫苗/驱虫健康提醒服务
+  - normalizeVaccineRecords/normalizeDewormingRecords: 录入时自动计算下次到期日
+    - 疫苗未填next_date → date + 1年
+    - 驱虫未填next_date → date + 3个月
+  - GetHealthReminders: 查询疫苗/驱虫到期提醒
+    - 使用 jsonb_array_elements 横向展开JSONB数组
+    - 支持 type=all|vaccine|deworming 类型筛选
+    - 支持 days 参数控制到期窗口（默认7天）
+    - 支持 page/page_size 分页
+    - 按 days_left ASC + pet_name ASC 排序
+    - 返回 pet_id, pet_name, member_id, member_name, card_no, reminder_type, item_name, last_date, next_date, days_left, notes
+  - GetHealthReminderCounts: 返回疫苗/驱虫到期数量（用于仪表盘）
+  - 修复: PostgreSQL中int参数与date运算类型歧义 → 使用 ($2 || ' days')::interval 显式转换
+  - 修复: Scan错误未检查导致静默失败 → 返回 apperrors
+- 实现 HealthReminder 提醒数据结构（HealthReminder, HealthReminderParams, HealthReminderCounts）
+- 实现 API 端点 (auth-protected, merchant-only):
+  - GET /api/v1/merchant/pets/health-reminders?type=&days=&page=&page_size= — 提醒列表
+  - GET /api/v1/merchant/pets/health-reminders/count?days= — 提醒计数
+- 更新 internal/merchant/dashboard.go:
+  - DashboardResponse 新增 vaccine_reminder_count, deworming_reminder_count 字段
+  - GetDashboard 方法新增 petSvc 参数，查询7天内疫苗/驱虫到期数量
+- 前端改造:
+  - api/client.ts: 新增 getHealthReminders / getHealthReminderCounts 方法，Dashboard类型新增字段
+  - views/MerchantDashboard.vue: 新增「疫苗到期提醒」和「驱虫到期提醒」预警卡片
+    - 高亮边框（cyan/emerald），点击跳转健康提醒页面
+  - views/HealthReminders.vue: 新建健康提醒列表页
+    - 标签切换（全部/疫苗/驱虫）
+    - 表格展示：宠物、会员、类型、项目名称、上次日期、下次到期、状态（逾期/剩余天数）
+    - 加载/空数据/错误状态处理
+  - router/index.ts: 注册 /merchant/health-reminders 路由
+- 端到端验证全部 5 个步骤通过:
+  ✓ 录入疫苗记录（狂犬疫苗，未填next_date）→ 自动计算 2025-06-01+1年=2026-06-01
+  ✓ 录入驱虫记录（未填next_date）→ 自动计算 2025-09-01+3月=2025-12-01
+  ✓ 仪表盘展示疫苗到期提醒计数（vaccine_reminder_count=1）
+  ✓ 仪表盘展示驱虫到期提醒计数（deworming_reminder_count=1）
+  ✓ 完成新记录后提醒消除（更新旺财的疫苗记录→计数从1降至0）
+  ✓ 到期提醒列表支持类型筛选（vaccine/deworming/all）、分页、字段完整性验证
+  ✓ 未认证访问返回 401 UNAUTHORIZED
+- 提交: 7bae705 feat(F038): pet vaccine/deworming reminder system
+
+下一步: 继续实现 F039 会员标签管理
