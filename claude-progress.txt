@@ -1880,3 +1880,48 @@ SESSION 57 — F052 小票模板自定义与打印 [2026-05-23 12:23 CST]
 - 提交: 366b7e5 feat(F052): receipt template customization and printing
 
 下一步: 继续实现 F053 员工档案管理
+
+================================================================================
+SESSION 58 — F055 员工考勤管理 [2026-05-23 12:52 CST]
+================================================================================
+
+- 创建迁移 044: attendance_records (打卡记录)、leave_requests (请假申请)、overtime_records (加班登记) 三张表
+  - attendance_records: 按日记录签到/签退时间，自动判断迟到(9:00后)和早退(18:00前)
+  - leave_requests: 支持年假/病假/事假/其他四种类型，店长审批(approve/reject)
+  - overtime_records: 记录加班起止时间，自动计算时长，店长审批
+- 创建 internal/attendance/service.go:
+  - CheckIn: 员工签到，自动计算迟到分钟数
+  - CheckOut: 员工签退，自动计算早退分钟数
+  - GetTodayStatus: 查询今日打卡状态
+  - ApplyLeave: 提交请假申请，校验日期和类型
+  - ListLeaves: 请假列表（支持按员工/状态筛选，员工只能看自己的）
+  - ReviewLeave: 店长审批请假（approve/reject），reviewed_by 支持 NULL（非员工审批人）
+  - ApplyOvertime: 加班登记（自动计算时长）
+  - ListOvertime: 加班列表（支持筛选）
+  - ReviewOvertime: 审批加班
+  - GetStats: 考勤统计（出勤天数/迟到次数/早退次数/请假天数(按类型)/加班时长）
+  - GetEmployeeIDByUser: 从 platform_users 查询当前用户的 employee_id
+- 创建 cmd/server/handlers_attendance.go: 10 个 API 端点处理器
+  - employeeId 从 JWT claims → platform_users 查询，非员工用户拒绝打卡类操作
+  - 员工自查询时自动限定自己的数据，管理者可查看全部
+- 注册 10 个 API 端点 (auth-protected, merchant-only):
+  - POST   /api/v1/merchant/attendance/check-in — 签到
+  - POST   /api/v1/merchant/attendance/check-out — 签退
+  - GET    /api/v1/merchant/attendance/today — 今日打卡状态
+  - POST   /api/v1/merchant/attendance/leave — 请假申请
+  - GET    /api/v1/merchant/attendance/leaves — 请假列表
+  - PUT    /api/v1/merchant/attendance/leaves/{id}/review — 审批请假
+  - POST   /api/v1/merchant/attendance/overtime — 加班登记
+  - GET    /api/v1/merchant/attendance/overtime — 加班列表
+  - PUT    /api/v1/merchant/attendance/overtime/{id}/review — 审批加班
+  - GET    /api/v1/merchant/attendance/stats — 考勤统计
+- 端到端验证全部 5 个步骤通过 (8/8 assertions):
+  ✓ 员工登录后点击「签到」，记录签到时间 (status=late, late_minutes=230)
+  ✓ 下班时点击「签退」，记录签退时间 (early_leave_minutes=311)
+  ✓ 提交请假申请：年假 5/26-5/27，店长审批通过 (pending→approved)
+  ✓ 加班登记：3h 加班(18:00-21:00)，原因"月底盘点加班"，店长审批通过
+  ✓ 考勤统计：present=1, leave=2, overtime=3h, late=1 (按月度统计)
+- 修复: reviewed_by 非员工审批人时传 NULL 避免 FK 约束冲突
+- 提交: c7c8928 feat(F055): employee attendance management
+
+下一步: 继续实现 F056 员工业绩与提成管理
