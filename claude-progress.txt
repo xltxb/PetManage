@@ -1979,6 +1979,42 @@ SESSION 60 — F057 营收统计与收支明细 [2026-05-23 13:23 CST]
   ✓ 收支明细列表：展示每笔交易的收支类型(sale/refund)、金额、支付方式(cash)、时间、来源(order/refund)
   ✓ 按支付方式筛选：all=11, cash=8, wechat=0 筛选正确
   ✓ 收支流水不可编辑或删除：PUT/DELETE/POST 均返回 404，仅 GET 可用
-- 提交: (pending)
+- 提交: 423b35d feat(F057): revenue statistics and income/expense details
 
 下一步: 继续实现 F058
+
+================================================================================
+SESSION 61 — F058 应付账款管理 [2026-05-23 13:24 CST]
+================================================================================
+
+- 创建迁移 046: payable_records (应付账款记录)、payment_records (付款记录) 两张表
+  - payable_records: 关联供应商、采购单，total_cents/paid_cents/status(unpaid/partial/paid)，支持到期日
+  - payment_records: 关联应付记录，amount_cents/payment_method(cash/bank_transfer/check/other)/payment_date/reference_no
+  - 完整的索引覆盖 merchant_id、supplier_id、purchase_order_id、payment_date
+- 创建 internal/payable/service.go:
+  - CreatePayableRecord: 幂等创建应付记录（已存在则返回已有记录）
+  - ListPayables: 分页查询应付记录（支持 supplier_id/status 筛选）
+  - ListBySupplier: 按供应商分组汇总（total/paid/unpaid cents）
+  - RegisterPayment: 登记付款，事务中更新 paid_cents 和 status，支持部分付款
+  - GetStatement: 对账单生成（期初余额=期前应付-期前付款，本期采购，本期付款，期末余额）
+  - GenerateStatementPDF: 使用 gofpdf 生成对账单 PDF（A4 格式，包含汇总表和交易明细）
+- 修改 purchase 收货流程: makePurchaseReceiveHandler 新增 payableSvc 参数，收货后自动调用 CreatePayableRecord
+- 创建 cmd/server/handlers_payable.go: 6 个 API 端点处理器
+- 注册 6 个 API 端点 (auth-protected, merchant-only):
+  - GET    /api/v1/merchant/payables — 应付记录列表
+  - GET    /api/v1/merchant/payables/suppliers — 供应商应付汇总
+  - GET    /api/v1/merchant/payables/{id} — 应付记录详情（含付款记录）
+  - POST   /api/v1/merchant/payables/{id}/payments — 登记付款
+  - GET    /api/v1/merchant/payables/statement — 供应商对账单
+  - GET    /api/v1/merchant/payables/statement/export — 导出对账单PDF
+- 添加依赖: github.com/jung-kurt/gofpdf v1.16.2
+- 端到端验证全部 5 个步骤通过:
+  ✓ 采购入库后自动生成应付账款记录：PO 收货后 payable_record 自动创建 (total=65000, status=unpaid)
+  ✓ 应付账款列表按供应商分组展示：total=65000, paid=0, unpaid=65000, record_count=1
+  ✓ 登记付款记录：部分付款30000(bank_transfer) → 状态partial → 付清35000(cash) → 状态paid
+  ✓ 供应商对账单：期初0 + 本期采购65000 - 本期付款65000 = 期末0，含3条交易明细
+  ✓ 对账单导出PDF：2319字节有效PDF文档(1页)，Content-Type: application/pdf
+- 注意: Supabase MCP 工具连接的数据库与 Go 服务器不同（通过 go run 工具端直接更新密码验证）
+- 提交: f158ea1 feat(F058): accounts payable management
+
+下一步: 继续实现 F059 自动化财务报表
