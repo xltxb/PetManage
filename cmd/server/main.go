@@ -456,6 +456,10 @@ func main() {
 		mux.Handle("POST /api/v1/merchant/appointments/{id}/confirm", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentConfirmHandler(appointmentService))))
 		mux.Handle("POST /api/v1/merchant/appointments/{id}/reschedule", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentRescheduleHandler(appointmentService))))
 		mux.Handle("POST /api/v1/merchant/appointments/{id}/cancel", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCancelHandler(appointmentService))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/arrive", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentArriveHandler(appointmentService))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/start", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentStartHandler(appointmentService))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/complete", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCompleteHandler(appointmentService))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/pickup", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentPickupHandler(appointmentService))))
 		mux.Handle("GET /api/v1/merchant/appointments/{id}/change-logs", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentChangeLogsHandler(appointmentService))))
 
 		// Notification management (auth-protected, merchant-only).

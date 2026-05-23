@@ -416,11 +416,8 @@ func (s *Service) Reschedule(ctx context.Context, merchantID, appointmentID int6
 	if err != nil {
 		return nil, err
 	}
-	if apt.Status == "cancelled" {
-		return nil, apperrors.NewValidationError("cancelled appointments cannot be rescheduled")
-	}
-	if apt.Status == "completed" {
-		return nil, apperrors.NewValidationError("completed appointments cannot be rescheduled")
+	if apt.Status == "cancelled" || apt.Status == "picked_up" {
+		return nil, apperrors.NewValidationError("terminal appointments cannot be rescheduled")
 	}
 
 	if strings.TrimSpace(req.NewTime) == "" {
@@ -497,8 +494,8 @@ func (s *Service) Cancel(ctx context.Context, merchantID, appointmentID int64, r
 	if apt.Status == "cancelled" {
 		return nil, apperrors.NewValidationError("appointment is already cancelled")
 	}
-	if apt.Status == "completed" {
-		return nil, apperrors.NewValidationError("completed appointments cannot be cancelled")
+	if apt.Status == "picked_up" {
+		return nil, apperrors.NewValidationError("picked up appointments cannot be cancelled")
 	}
 
 	oldStatus := apt.Status
@@ -529,6 +526,154 @@ func (s *Service) Cancel(ctx context.Context, merchantID, appointmentID int64, r
 			apt.EmployeeID, "employee", "cancelled",
 			map[string]string{"reason": req.Reason})
 	}
+
+	return s.GetByID(ctx, merchantID, appointmentID)
+}
+
+// Arrive marks a confirmed appointment as arrived (pet checked in at store).
+func (s *Service) Arrive(ctx context.Context, merchantID, appointmentID int64) (*AppointmentDetail, error) {
+	apt, err := s.GetByID(ctx, merchantID, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	if apt.Status != "confirmed" {
+		return nil, apperrors.NewValidationError("only confirmed appointments can be marked as arrived, current status: " + apt.Status)
+	}
+
+	oldStatus := apt.Status
+	newStatus := "arrived"
+
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE appointments SET status = $1, updated_at = NOW()
+		 WHERE id = $2 AND merchant_id = $3 AND deleted_at IS NULL`,
+		newStatus, appointmentID, merchantID,
+	)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to update appointment", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, apperrors.NewNotFoundError("appointment not found")
+	}
+
+	s.logChange(ctx, merchantID, appointmentID, "arrived",
+		map[string]string{"status": oldStatus},
+		map[string]string{"status": newStatus},
+		"")
+
+	if s.notifSvc != nil {
+		s.notifSvc.SendAppointmentNotification(ctx, merchantID, appointmentID,
+			apt.EmployeeID, "employee", "arrived",
+			map[string]string{"appointment_time": apt.AppointmentTime.Format("2006-01-02 15:04")})
+	}
+
+	return s.GetByID(ctx, merchantID, appointmentID)
+}
+
+// Start begins the service for an arrived appointment.
+func (s *Service) Start(ctx context.Context, merchantID, appointmentID int64) (*AppointmentDetail, error) {
+	apt, err := s.GetByID(ctx, merchantID, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	if apt.Status != "arrived" {
+		return nil, apperrors.NewValidationError("only arrived appointments can be started, current status: " + apt.Status)
+	}
+
+	oldStatus := apt.Status
+	newStatus := "in_progress"
+
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE appointments SET status = $1, updated_at = NOW()
+		 WHERE id = $2 AND merchant_id = $3 AND deleted_at IS NULL`,
+		newStatus, appointmentID, merchantID,
+	)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to update appointment", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, apperrors.NewNotFoundError("appointment not found")
+	}
+
+	s.logChange(ctx, merchantID, appointmentID, "started",
+		map[string]string{"status": oldStatus},
+		map[string]string{"status": newStatus},
+		"")
+
+	return s.GetByID(ctx, merchantID, appointmentID)
+}
+
+// Complete marks a service as finished and notifies the member to pick up their pet.
+func (s *Service) Complete(ctx context.Context, merchantID, appointmentID int64) (*AppointmentDetail, error) {
+	apt, err := s.GetByID(ctx, merchantID, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	if apt.Status != "in_progress" {
+		return nil, apperrors.NewValidationError("only in-progress appointments can be completed, current status: " + apt.Status)
+	}
+
+	oldStatus := apt.Status
+	newStatus := "completed"
+
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE appointments SET status = $1, updated_at = NOW()
+		 WHERE id = $2 AND merchant_id = $3 AND deleted_at IS NULL`,
+		newStatus, appointmentID, merchantID,
+	)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to update appointment", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, apperrors.NewNotFoundError("appointment not found")
+	}
+
+	s.logChange(ctx, merchantID, appointmentID, "completed",
+		map[string]string{"status": oldStatus},
+		map[string]string{"status": newStatus},
+		"")
+
+	if s.notifSvc != nil {
+		s.notifSvc.SendAppointmentNotification(ctx, merchantID, appointmentID,
+			apt.MemberID, "member", "completed",
+			map[string]string{"appointment_time": apt.AppointmentTime.Format("2006-01-02 15:04")})
+	}
+
+	return s.GetByID(ctx, merchantID, appointmentID)
+}
+
+// Pickup marks a completed appointment as picked up by the customer.
+func (s *Service) Pickup(ctx context.Context, merchantID, appointmentID int64) (*AppointmentDetail, error) {
+	apt, err := s.GetByID(ctx, merchantID, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	if apt.Status != "completed" {
+		return nil, apperrors.NewValidationError("only completed appointments can be picked up, current status: " + apt.Status)
+	}
+
+	oldStatus := apt.Status
+	newStatus := "picked_up"
+
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE appointments SET status = $1, updated_at = NOW()
+		 WHERE id = $2 AND merchant_id = $3 AND deleted_at IS NULL`,
+		newStatus, appointmentID, merchantID,
+	)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to update appointment", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, apperrors.NewNotFoundError("appointment not found")
+	}
+
+	s.logChange(ctx, merchantID, appointmentID, "picked_up",
+		map[string]string{"status": oldStatus},
+		map[string]string{"status": newStatus},
+		"")
 
 	return s.GetByID(ctx, merchantID, appointmentID)
 }

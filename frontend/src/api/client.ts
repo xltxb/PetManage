@@ -606,6 +606,22 @@ class ApiClient {
 	    }> }>(`/api/v1/merchant/appointments/${id}/change-logs`)
 	  }
 
+	  arriveAppointment(id: number) {
+	    return this.request<any>(`/api/v1/merchant/appointments/${id}/arrive`, { method: "POST" })
+	  }
+
+	  startAppointment(id: number) {
+	    return this.request<any>(`/api/v1/merchant/appointments/${id}/start`, { method: "POST" })
+	  }
+
+	  completeAppointment(id: number) {
+	    return this.request<any>(`/api/v1/merchant/appointments/${id}/complete`, { method: "POST" })
+	  }
+
+	  pickupAppointment(id: number) {
+	    return this.request<any>(`/api/v1/merchant/appointments/${id}/pickup`, { method: "POST" })
+	  }
+
 	  // --- Schedule APIs ---
 
 	  getSchedules(params?: { employee_id?: number; start_date?: string; end_date?: string }) {

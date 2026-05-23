@@ -231,6 +231,142 @@ func makeAppointmentCancelHandler(svc *appointment.Service) http.HandlerFunc {
 	}
 }
 
+// makeAppointmentArriveHandler marks a confirmed appointment as arrived.
+func makeAppointmentArriveHandler(svc *appointment.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid appointment id"))
+			return
+		}
+
+		apt, err := svc.Arrive(r.Context(), *claims.MerchantID, id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to mark appointment as arrived", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apt)
+	}
+}
+
+// makeAppointmentStartHandler starts the service for an arrived appointment.
+func makeAppointmentStartHandler(svc *appointment.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid appointment id"))
+			return
+		}
+
+		apt, err := svc.Start(r.Context(), *claims.MerchantID, id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to start appointment", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apt)
+	}
+}
+
+// makeAppointmentCompleteHandler completes the service and notifies member.
+func makeAppointmentCompleteHandler(svc *appointment.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid appointment id"))
+			return
+		}
+
+		apt, err := svc.Complete(r.Context(), *claims.MerchantID, id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to complete appointment", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apt)
+	}
+}
+
+// makeAppointmentPickupHandler marks a completed appointment as picked up.
+func makeAppointmentPickupHandler(svc *appointment.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid appointment id"))
+			return
+		}
+
+		apt, err := svc.Pickup(r.Context(), *claims.MerchantID, id)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to mark appointment as picked up", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(apt)
+	}
+}
+
 // makeAppointmentChangeLogsHandler returns the change history for an appointment.
 func makeAppointmentChangeLogsHandler(svc *appointment.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

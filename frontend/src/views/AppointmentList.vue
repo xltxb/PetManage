@@ -100,16 +100,22 @@ const employeesLoading = ref(false)
 
 const statusLabels: Record<string, string> = {
   pending: '待确认',
-  confirmed: '已确认',
+  confirmed: '已接单',
+  arrived: '已到店',
+  in_progress: '服务中',
+  completed: '待取宠',
+  picked_up: '已完成',
   cancelled: '已取消',
-  completed: '已完成',
 }
 
 const statusColors: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-800',
   confirmed: 'bg-blue-100 text-blue-800',
+  arrived: 'bg-indigo-100 text-indigo-800',
+  in_progress: 'bg-purple-100 text-purple-800',
+  completed: 'bg-orange-100 text-orange-800',
+  picked_up: 'bg-green-100 text-green-800',
   cancelled: 'bg-gray-100 text-gray-500',
-  completed: 'bg-green-100 text-green-800',
 }
 
 if (!auth.user) {
@@ -336,19 +342,33 @@ const cancelTarget = ref<Appointment | null>(null)
 const cancelReason = ref('')
 const actionError = ref('')
 
+// New action states
+const arriveTarget = ref<Appointment | null>(null)
+const startTarget = ref<Appointment | null>(null)
+const completeTarget = ref<Appointment | null>(null)
+const pickupTarget = ref<Appointment | null>(null)
+
 // Change log state
 const changeLogTarget = ref<Appointment | null>(null)
 const changeLogs = ref<any[]>([])
 const logsLoading = ref(false)
 
 const actionLabels: Record<string, string> = {
-  confirmed: '确认',
+  confirmed: '接单',
+  arrived: '到店',
+  started: '开始服务',
+  completed: '服务完成',
+  picked_up: '取宠',
   rescheduled: '改期',
   cancelled: '取消',
 }
 
 const actionColors: Record<string, string> = {
   confirmed: 'bg-green-100 text-green-700',
+  arrived: 'bg-indigo-100 text-indigo-700',
+  started: 'bg-purple-100 text-purple-700',
+  completed: 'bg-orange-100 text-orange-700',
+  picked_up: 'bg-teal-100 text-teal-700',
   rescheduled: 'bg-blue-100 text-blue-700',
   cancelled: 'bg-red-100 text-red-700',
 }
@@ -442,6 +462,95 @@ async function openChangeLogs(apt: Appointment) {
   }
 }
 
+// --- New life cycle actions ---
+
+function openArriveDialog(apt: Appointment) {
+  arriveTarget.value = apt
+}
+
+async function doArrive() {
+  if (!arriveTarget.value) return
+  actionLoading.value = true
+  try {
+    await api.arriveAppointment(arriveTarget.value.id)
+    arriveTarget.value = null
+    loadAppointments()
+  } catch (e: any) {
+    alert(e.message || '\u5230\u5e97\u786e\u8ba4\u5931\u8d25')
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+function openStartDialog(apt: Appointment) {
+  startTarget.value = apt
+}
+
+async function doStart() {
+  if (!startTarget.value) return
+  actionLoading.value = true
+  try {
+    await api.startAppointment(startTarget.value.id)
+    startTarget.value = null
+    loadAppointments()
+  } catch (e: any) {
+    alert(e.message || '\u5f00\u59cb\u670d\u52a1\u5931\u8d25')
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+function openCompleteDialog(apt: Appointment) {
+  completeTarget.value = apt
+}
+
+async function doComplete() {
+  if (!completeTarget.value) return
+  actionLoading.value = true
+  try {
+    await api.completeAppointment(completeTarget.value.id)
+    completeTarget.value = null
+    loadAppointments()
+  } catch (e: any) {
+    alert(e.message || '\u5b8c\u6210\u670d\u52a1\u5931\u8d25')
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+function openPickupDialog(apt: Appointment) {
+  pickupTarget.value = apt
+}
+
+async function doPickup() {
+  if (!pickupTarget.value) return
+  actionLoading.value = true
+  try {
+    await api.pickupAppointment(pickupTarget.value.id)
+    pickupTarget.value = null
+    loadAppointments()
+  } catch (e: any) {
+    alert(e.message || '\u53d6\u5ba0\u786e\u8ba4\u5931\u8d25')
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+// Progress step definitions for visualization
+const progressSteps = ['pending', 'confirmed', 'arrived', 'in_progress', 'completed', 'picked_up']
+const progressStepLabels: Record<string, string> = {
+  pending: '\u5f85\u786e\u8ba4',
+  confirmed: '\u5df2\u63a5\u5355',
+  arrived: '\u5df2\u5230\u5e97',
+  in_progress: '\u670d\u52a1\u4e2d',
+  completed: '\u5f85\u53d6\u5ba0',
+  picked_up: '\u5df2\u5b8c\u6210',
+}
+
+function getProgressStepIndex(status: string): number {
+  return progressSteps.indexOf(status)
+}
+
 onMounted(loadAppointments)
 </script>
 
@@ -478,7 +587,7 @@ onMounted(loadAppointments)
       <!-- Status tabs -->
       <div class="flex gap-2 mb-4">
         <button
-          v-for="tab in [{k:'',l:'全部'},{k:'pending',l:'待确认'},{k:'confirmed',l:'已确认'},{k:'completed',l:'已完成'},{k:'cancelled',l:'已取消'}]"
+          v-for="tab in [{k:'',l:'全部'},{k:'pending',l:'待确认'},{k:'confirmed',l:'已接单'},{k:'arrived',l:'已到店'},{k:'in_progress',l:'服务中'},{k:'completed',l:'待取宠'},{k:'picked_up',l:'已完成'},{k:'cancelled',l:'已取消'}]"
           :key="tab.k"
           @click="setStatusFilter(tab.k)"
           :class="[
@@ -544,19 +653,39 @@ onMounted(loadAppointments)
                 </span>
               </td>
               <td class="px-4 py-3">
-                <div class="flex gap-1">
+                <div class="flex gap-1 flex-wrap">
                   <button
                     v-if="apt.status === 'pending'"
                     @click="openConfirmDialog(apt)"
                     class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded hover:bg-green-200 cursor-pointer"
-                  >确认</button>
+                  >接单</button>
                   <button
-                    v-if="apt.status === 'pending' || apt.status === 'confirmed'"
+                    v-if="apt.status === 'confirmed'"
+                    @click="openArriveDialog(apt)"
+                    class="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-200 cursor-pointer"
+                  >到店</button>
+                  <button
+                    v-if="apt.status === 'arrived'"
+                    @click="openStartDialog(apt)"
+                    class="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded hover:bg-purple-200 cursor-pointer"
+                  >开始服务</button>
+                  <button
+                    v-if="apt.status === 'in_progress'"
+                    @click="openCompleteDialog(apt)"
+                    class="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded hover:bg-orange-200 cursor-pointer"
+                  >完成服务</button>
+                  <button
+                    v-if="apt.status === 'completed'"
+                    @click="openPickupDialog(apt)"
+                    class="text-xs bg-teal-100 text-teal-700 px-2 py-1 rounded hover:bg-teal-200 cursor-pointer"
+                  >确认取宠</button>
+                  <button
+                    v-if="apt.status === 'pending' || apt.status === 'confirmed' || apt.status === 'arrived' || apt.status === 'in_progress'"
                     @click="openRescheduleModal(apt)"
                     class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded hover:bg-blue-200 cursor-pointer"
                   >改期</button>
                   <button
-                    v-if="apt.status === 'pending' || apt.status === 'confirmed'"
+                    v-if="apt.status !== 'cancelled' && apt.status !== 'picked_up' && apt.status !== 'completed'"
                     @click="openCancelModal(apt)"
                     class="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 cursor-pointer"
                   >取消</button>
@@ -852,10 +981,10 @@ onMounted(loadAppointments)
       <div v-if="confirmTarget" class="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center" @click.self="confirmTarget = null">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
           <div class="px-6 py-4 border-b">
-            <h2 class="text-lg font-semibold">确认预约</h2>
+            <h2 class="text-lg font-semibold">接单确认</h2>
           </div>
           <div class="px-6 py-4">
-            <p class="text-sm text-gray-600">确认预约后状态将变为「已确认」，会员将收到通知。</p>
+            <p class="text-sm text-gray-600">接单后状态将变为「已接单」，会员将收到通知。</p>
             <div class="bg-gray-50 rounded p-3 mt-3 text-sm text-gray-600">
               <p>会员：{{ confirmTarget.member_name }}</p>
               <p>时间：{{ formatTime(confirmTarget.appointment_time) }}</p>
@@ -864,7 +993,7 @@ onMounted(loadAppointments)
           <div class="px-6 py-4 border-t flex justify-end gap-2">
             <button @click="confirmTarget = null" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded cursor-pointer">取消</button>
             <button @click="doConfirm" :disabled="actionLoading" class="px-4 py-2 text-sm bg-green-600 text-white rounded hover:bg-green-700 cursor-pointer disabled:opacity-50">
-              {{ actionLoading ? '确认中...' : '确认预约' }}
+              {{ actionLoading ? '确认中...' : '确认接单' }}
             </button>
           </div>
         </div>
@@ -931,6 +1060,106 @@ onMounted(loadAppointments)
       </div>
     </Teleport>
 
+    <!-- Arrive Dialog -->
+    <Teleport to="body">
+      <div v-if="arriveTarget" class="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center" @click.self="arriveTarget = null">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
+          <div class="px-6 py-4 border-b">
+            <h2 class="text-lg font-semibold">确认到店</h2>
+          </div>
+          <div class="px-6 py-4">
+            <p class="text-sm text-gray-600">确认宠物已到店，状态将变为「已到店」。</p>
+            <div class="bg-gray-50 rounded p-3 mt-3 text-sm text-gray-600">
+              <p>会员：{{ arriveTarget.member_name }}</p>
+              <p>宠物：{{ arriveTarget.pet_name }}</p>
+              <p>时间：{{ formatTime(arriveTarget.appointment_time) }}</p>
+            </div>
+          </div>
+          <div class="px-6 py-4 border-t flex justify-end gap-2">
+            <button @click="arriveTarget = null" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded cursor-pointer">取消</button>
+            <button @click="doArrive" :disabled="actionLoading" class="px-4 py-2 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700 cursor-pointer disabled:opacity-50">
+              {{ actionLoading ? '确认中...' : '确认到店' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Start Dialog -->
+    <Teleport to="body">
+      <div v-if="startTarget" class="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center" @click.self="startTarget = null">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
+          <div class="px-6 py-4 border-b">
+            <h2 class="text-lg font-semibold">开始服务</h2>
+          </div>
+          <div class="px-6 py-4">
+            <p class="text-sm text-gray-600">确认开始服务，状态将变为「服务中」。</p>
+            <div class="bg-gray-50 rounded p-3 mt-3 text-sm text-gray-600">
+              <p>会员：{{ startTarget.member_name }}</p>
+              <p>宠物：{{ startTarget.pet_name }}</p>
+              <p>服务：{{ startTarget.service_item_name }}</p>
+            </div>
+          </div>
+          <div class="px-6 py-4 border-t flex justify-end gap-2">
+            <button @click="startTarget = null" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded cursor-pointer">取消</button>
+            <button @click="doStart" :disabled="actionLoading" class="px-4 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 cursor-pointer disabled:opacity-50">
+              {{ actionLoading ? '确认中...' : '开始服务' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Complete Dialog -->
+    <Teleport to="body">
+      <div v-if="completeTarget" class="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center" @click.self="completeTarget = null">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
+          <div class="px-6 py-4 border-b">
+            <h2 class="text-lg font-semibold">完成服务</h2>
+          </div>
+          <div class="px-6 py-4">
+            <p class="text-sm text-gray-600">确认服务已完成，状态将变为「待取宠」，会员将收到取宠通知。</p>
+            <div class="bg-gray-50 rounded p-3 mt-3 text-sm text-gray-600">
+              <p>会员：{{ completeTarget.member_name }}</p>
+              <p>宠物：{{ completeTarget.pet_name }}</p>
+              <p>服务：{{ completeTarget.service_item_name }}</p>
+            </div>
+          </div>
+          <div class="px-6 py-4 border-t flex justify-end gap-2">
+            <button @click="completeTarget = null" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded cursor-pointer">取消</button>
+            <button @click="doComplete" :disabled="actionLoading" class="px-4 py-2 text-sm bg-orange-600 text-white rounded hover:bg-orange-700 cursor-pointer disabled:opacity-50">
+              {{ actionLoading ? '确认中...' : '完成服务' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Pickup Dialog -->
+    <Teleport to="body">
+      <div v-if="pickupTarget" class="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center" @click.self="pickupTarget = null">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
+          <div class="px-6 py-4 border-b">
+            <h2 class="text-lg font-semibold">确认取宠</h2>
+          </div>
+          <div class="px-6 py-4">
+            <p class="text-sm text-gray-600">确认客户已取宠，状态将变为「已完成」。</p>
+            <div class="bg-gray-50 rounded p-3 mt-3 text-sm text-gray-600">
+              <p>会员：{{ pickupTarget.member_name }}</p>
+              <p>宠物：{{ pickupTarget.pet_name }}</p>
+              <p>服务：{{ pickupTarget.service_item_name }}</p>
+            </div>
+          </div>
+          <div class="px-6 py-4 border-t flex justify-end gap-2">
+            <button @click="pickupTarget = null" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded cursor-pointer">取消</button>
+            <button @click="doPickup" :disabled="actionLoading" class="px-4 py-2 text-sm bg-teal-600 text-white rounded hover:bg-teal-700 cursor-pointer disabled:opacity-50">
+              {{ actionLoading ? '确认中...' : '确认取宠' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- Change Logs Modal -->
     <Teleport to="body">
       <div v-if="changeLogTarget" class="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center" @click.self="changeLogTarget = null">
@@ -939,6 +1168,38 @@ onMounted(loadAppointments)
             <h2 class="text-lg font-semibold">变更记录 - {{ changeLogTarget.member_name }}</h2>
           </div>
           <div class="px-6 py-4">
+            <!-- Progress Stepper -->
+            <div v-if="changeLogTarget" class="mb-4">
+              <p class="text-sm font-medium text-gray-700 mb-2">服务进度</p>
+              <div class="flex items-center gap-1 overflow-x-auto pb-2">
+                <template v-for="(step, idx) in progressSteps" :key="step">
+                  <div class="flex flex-col items-center gap-1 min-w-[60px]">
+                    <div
+                      :class="[
+                        'w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium',
+                        getProgressStepIndex(changeLogTarget.status) >= idx
+                          ? changeLogTarget.status === 'cancelled'
+                            ? 'bg-red-500 text-white'
+                            : 'bg-green-500 text-white'
+                          : 'bg-gray-200 text-gray-500',
+                      ]"
+                    >
+                      {{ getProgressStepIndex(changeLogTarget.status) >= idx ? '✓' : idx + 1 }}
+                    </div>
+                    <span class="text-[10px] whitespace-nowrap"
+                      :class="getProgressStepIndex(changeLogTarget.status) >= idx ? 'text-gray-700 font-medium' : 'text-gray-400'"
+                    >{{ progressStepLabels[step] }}</span>
+                  </div>
+                  <div
+                    v-if="idx < progressSteps.length - 1"
+                    :class="[
+                      'h-0.5 flex-1 min-w-[8px]',
+                      getProgressStepIndex(changeLogTarget.status) > idx ? 'bg-green-500' : 'bg-gray-200',
+                    ]"
+                  ></div>
+                </template>
+              </div>
+            </div>
             <div v-if="logsLoading" class="text-center py-4 text-gray-400 text-sm">加载中...</div>
             <div v-else-if="!changeLogs.length" class="text-center py-4 text-gray-400 text-sm">暂无变更记录</div>
             <div v-else class="space-y-3">
@@ -949,7 +1210,9 @@ onMounted(loadAppointments)
                   </span>
                   <span class="text-xs text-gray-400">{{ new Date(log.created_at).toLocaleString('zh-CN') }}</span>
                 </div>
-                <div class="text-gray-600" v-if="log.action === 'confirmed'">状态：{{ log.old_value?.status }} → {{ log.new_value?.status }}</div>
+                <div class="text-gray-600" v-if="log.action === 'confirmed' || log.action === 'arrived' || log.action === 'started' || log.action === 'completed' || log.action === 'picked_up'">
+                  状态：{{ log.old_value?.status }} → {{ log.new_value?.status }}
+                </div>
                 <div class="text-gray-600" v-if="log.action === 'rescheduled'">时间：{{ log.new_value?.appointment_time }}</div>
                 <div class="text-gray-600" v-if="log.action === 'cancelled'">状态：{{ log.old_value?.status }} → 已取消</div>
                 <div v-if="log.reason" class="text-gray-400 text-xs mt-1">原因：{{ log.reason }}</div>

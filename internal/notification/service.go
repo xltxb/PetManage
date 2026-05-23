@@ -231,6 +231,12 @@ func (s *Service) SendAppointmentNotification(ctx context.Context, merchantID in
 		} else {
 			content = "您的预约已取消"
 		}
+	case "arrived":
+		title = "宠物已到店"
+		content = fmt.Sprintf("预约时间 %s 的宠物已到店，请准备开始服务", details["appointment_time"])
+	case "completed":
+		title = "服务已完成"
+		content = "您的宠物服务已完成，请到店取宠"
 	case "upcoming":
 		title = "服务即将开始"
 		content = fmt.Sprintf("您预约的服务将于 %s 开始，请准时到达", details["appointment_time"])

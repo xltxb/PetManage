@@ -1641,3 +1641,51 @@ SESSION 51 — F044 预约提醒 [2026-05-23 10:42 CST]
 
 下一步: 继续实现 F045 技师排班管理
 
+================================================================================
+SESSION 52 — F045 技师排班管理 [2026-05-23 10:51 CST]
+================================================================================
+
+- 数据库迁移 039: employee_schedules 表
+  - 字段: id/merchant_id/employee_id/schedule_date/shift_type
+  - shift_type 约束: morning/evening/rest
+  - 唯一索引: (employee_id, schedule_date) WHERE deleted_at IS NULL
+- Go 后端新增 (internal/schedule/service.go):
+  - Upsert: 单日排班 upsert (INSERT ON CONFLICT DO UPDATE)
+  - BatchSet: 批量设置一周排班
+  - List: 按员工/日期范围查询排班
+  - CopyWeek: 从源员工复制排班到目标员工（支持跨周）
+  - GetOnDutyEmployees: 按预约时间返回在岗员工（JOIN employees + schedules，时间范围过滤）
+  - IsOnDuty: 校验员工在指定时间是否在岗
+  - 班次时段定义: 早班 09:00-17:00, 晚班 13:00-21:00
+- HTTP handlers (cmd/server/handlers_schedule.go):
+  - GET /api/v1/merchant/schedules — 排班列表
+  - PUT /api/v1/merchant/schedules — 单日排班 upsert
+  - POST /api/v1/merchant/schedules/batch — 批量设置
+  - POST /api/v1/merchant/schedules/copy-week — 复制排班
+  - GET /api/v1/merchant/schedules/on-duty — 在岗员工查询
+- 预约集成 (internal/appointment/service.go):
+  - Service 新增 scheduleSvc 字段 + SetScheduleService 方法
+  - Create 方法中新增排班校验: 员工不在岗/休息日拒绝预约
+  - 已有预约不受排班修改影响（验证通过：改休息日后旧预约保留，新预约被拒）
+- 前端 API client: getSchedules/upsertSchedule/batchSetSchedules/copyWeekSchedules/getOnDutyEmployees
+- 前端 ScheduleCalendar.vue:
+  - 周历视图：7天网格，点击切换早班/晚班/休息
+  - 颜色编码：黄=早班, 蓝=晚班, 灰=休息
+  - 周导航（上/下一周）
+  - 快速设置按钮（周一至五早班，周末休息）
+  - 复制排班弹窗（从其他技师复制当周排班）
+- 前端 AppointmentList.vue:
+  - loadEmployees 改为根据预约时间调用 on-duty 接口过滤
+  - watch 监听日期/时间字段自动刷新员工列表
+- 前端路由: /merchant/schedules → ScheduleCalendar.vue
+- 前端导航: 仪表盘快捷链接 + 预约页面添加排班入口
+- 端到端验证全部 5 个步骤通过:
+  ✓ 批量设置周排班：5天（周一早班、周二早班、周三休息、周四晚班、周五晚班）
+  ✓ 排班表以日历形式可视化展示（ScheduleCalendar.vue 周历视图，构建成功）
+  ✓ 预约时只显示在岗技师：on-duty API 正确过滤（休息日返回空，在岗日返回员工列表）
+  ✓ 修改排班后已有预约不受影响：预约 ID 14 在改休息日后依然存在；新预约被拒
+  ✓ 按周复制排班：员工3→员工4 成功复制5天排班（修复 DATE 列返回 "T00:00:00Z" 截取 bug）
+- 提交: a6291c5 feat(F045): employee shift scheduling
+
+下一步: 继续实现 F046 服务进度全流程管控
+
