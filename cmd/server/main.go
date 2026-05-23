@@ -39,6 +39,7 @@ import (
 	"github.com/xltxb/PetManage/internal/notification"
 	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/orders"
+	"github.com/xltxb/PetManage/internal/payable"
 	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/internal/points"
 	"github.com/xltxb/PetManage/internal/product"
@@ -163,6 +164,9 @@ func main() {
 
 	// Initialize purchase service.
 	purchaseService := purchase.NewService(db)
+
+	// Initialize payable service.
+	payableService := payable.NewService(db)
 
 	// Initialize replenishment service.
 	replenishmentService := replenishment.NewService(db)
@@ -298,8 +302,15 @@ func main() {
 	mux.Handle("PUT /api/v1/merchant/purchases/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseUpdateHandler(purchaseService))))
 	mux.Handle("POST /api/v1/merchant/purchases/{id}/submit", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseSubmitHandler(purchaseService))))
 	mux.Handle("POST /api/v1/merchant/purchases/{id}/confirm", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseConfirmHandler(purchaseService))))
-	mux.Handle("POST /api/v1/merchant/purchases/{id}/receive", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseReceiveHandler(purchaseService))))
+	mux.Handle("POST /api/v1/merchant/purchases/{id}/receive", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseReceiveHandler(purchaseService, payableService))))
 	mux.Handle("POST /api/v1/merchant/purchases/{id}/void", middleware.Auth(jwtManager)(http.HandlerFunc(makePurchaseVoidHandler(purchaseService))))
+		// Accounts payable management (auth-protected, merchant-only).
+		mux.Handle("GET /api/v1/merchant/payables", middleware.Auth(jwtManager)(http.HandlerFunc(makePayableListHandler(payableService))))
+		mux.Handle("GET /api/v1/merchant/payables/suppliers", middleware.Auth(jwtManager)(http.HandlerFunc(makePayableSupplierSummaryHandler(payableService))))
+		mux.Handle("GET /api/v1/merchant/payables/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makePayableGetHandler(payableService))))
+		mux.Handle("POST /api/v1/merchant/payables/{id}/payments", middleware.Auth(jwtManager)(http.HandlerFunc(makePayableRegisterPaymentHandler(payableService))))
+		mux.Handle("GET /api/v1/merchant/payables/statement", middleware.Auth(jwtManager)(http.HandlerFunc(makePayableStatementHandler(payableService))))
+		mux.Handle("GET /api/v1/merchant/payables/statement/export", middleware.Auth(jwtManager)(http.HandlerFunc(makePayableStatementExportHandler(payableService))))
 		// Replenishment suggestions (auth-protected, merchant-only).
 		mux.Handle("GET /api/v1/merchant/replenishment/suggestions", middleware.Auth(jwtManager)(http.HandlerFunc(makeReplenishSuggestionsHandler(replenishmentService))))
 		mux.Handle("POST /api/v1/merchant/replenishment/generate-po", middleware.Auth(jwtManager)(http.HandlerFunc(makeReplenishGeneratePOHandler(replenishmentService, purchaseService))))

@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/xltxb/PetManage/internal/middleware"
+	"github.com/xltxb/PetManage/internal/payable"
 	"github.com/xltxb/PetManage/internal/purchase"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 )
@@ -224,7 +226,7 @@ func makePurchaseConfirmHandler(svc *purchase.Service) http.HandlerFunc {
 	}
 }
 
-func makePurchaseReceiveHandler(svc *purchase.Service) http.HandlerFunc {
+func makePurchaseReceiveHandler(purchaseSvc *purchase.Service, payableSvc *payable.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := middleware.UserClaimsFromContext(r.Context())
 		if claims == nil {
@@ -243,7 +245,7 @@ func makePurchaseReceiveHandler(svc *purchase.Service) http.HandlerFunc {
 			return
 		}
 
-		po, err := svc.Receive(r.Context(), id, *claims.MerchantID)
+		po, err := purchaseSvc.Receive(r.Context(), id, *claims.MerchantID)
 		if err != nil {
 			if appErr, ok := err.(*apperrors.AppError); ok {
 				apperrors.WriteError(w, r, appErr)
@@ -251,6 +253,12 @@ func makePurchaseReceiveHandler(svc *purchase.Service) http.HandlerFunc {
 			}
 			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to receive purchase order", err))
 			return
+		}
+
+		// Auto-create payable record
+		_, payErr := payableSvc.CreatePayableRecord(r.Context(), *claims.MerchantID, po.SupplierID, po.ID, po.TotalCents, po.OrderNo)
+		if payErr != nil {
+			log.Printf("WARNING: failed to create payable record for PO %d: %v", po.ID, payErr)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
