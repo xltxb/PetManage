@@ -256,6 +256,15 @@ func main() {
 		mux.Handle("POST /api/v1/merchant/inventory/surplus", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventorySurplusHandler(inventoryService))))
 		mux.Handle("GET /api/v1/merchant/inventory/flows", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryFlowsHandler(inventoryService))))
 
+		// Inventory count checks (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/inventory/checks", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckCreateHandler(inventoryService))))
+		mux.Handle("GET /api/v1/merchant/inventory/checks", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckListHandler(inventoryService))))
+		mux.Handle("GET /api/v1/merchant/inventory/checks/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckGetHandler(inventoryService))))
+		mux.Handle("PUT /api/v1/merchant/inventory/checks/{id}/items/{itemId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckUpdateItemHandler(inventoryService))))
+		mux.Handle("POST /api/v1/merchant/inventory/checks/{id}/submit", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckSubmitHandler(inventoryService))))
+		mux.Handle("POST /api/v1/merchant/inventory/checks/{id}/confirm", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckConfirmHandler(inventoryService))))
+		mux.Handle("POST /api/v1/merchant/inventory/checks/{id}/approve", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckApproveHandler(inventoryService))))
+
 		// Service management (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryCreateHandler(serviceMgmtService))))
 	mux.Handle("GET /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryListHandler(serviceMgmtService))))
@@ -5111,5 +5120,204 @@ func makeReplenishGeneratePOHandler(replenishSvc *replenishment.Service, purchas
 			"purchase_orders": results,
 			"total":           len(results),
 		})
+	}
+}
+
+// --- Inventory count check handlers ---
+
+func makeInventoryCheckCreateHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		var req inventory.CreateCheckRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		check, err := svc.CreateCheck(r.Context(), *claims.MerchantID, claims.UserID, claims.Username, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create count check", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(check)
+	}
+}
+
+func makeInventoryCheckListHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		q := r.URL.Query()
+		params := inventory.ListChecksParams{
+			Status:    q.Get("status"),
+			CheckType: q.Get("check_type"),
+			Page:      1,
+			PageSize:  20,
+		}
+		if v := q.Get("page"); v != "" {
+			if p, err := strconv.Atoi(v); err == nil {
+				params.Page = p
+			}
+		}
+		if v := q.Get("page_size"); v != "" {
+			if s, err := strconv.Atoi(v); err == nil {
+				params.PageSize = s
+			}
+		}
+
+		result, err := svc.ListChecks(r.Context(), *claims.MerchantID, params)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list checks", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeInventoryCheckGetHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		checkID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid check id"))
+			return
+		}
+		check, err := svc.GetCheck(r.Context(), *claims.MerchantID, checkID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get check", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(check)
+	}
+}
+
+func makeInventoryCheckUpdateItemHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		checkID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid check id"))
+			return
+		}
+		itemID, err := strconv.ParseInt(r.PathValue("itemId"), 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid item id"))
+			return
+		}
+		var req inventory.UpdateCheckItemRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		item, err := svc.UpdateCheckItem(r.Context(), *claims.MerchantID, checkID, itemID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update check item", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(item)
+	}
+}
+
+func makeInventoryCheckSubmitHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		checkID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid check id"))
+			return
+		}
+		check, err := svc.SubmitCheck(r.Context(), *claims.MerchantID, checkID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to submit check", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(check)
+	}
+}
+
+func makeInventoryCheckConfirmHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		checkID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid check id"))
+			return
+		}
+		check, err := svc.ConfirmCheck(r.Context(), *claims.MerchantID, claims.UserID, claims.Username, checkID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to confirm check", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(check)
+	}
+}
+
+func makeInventoryCheckApproveHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		checkID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid check id"))
+			return
+		}
+		check, err := svc.ApproveCheck(r.Context(), *claims.MerchantID, claims.UserID, claims.Username, checkID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to approve check", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(check)
 	}
 }
