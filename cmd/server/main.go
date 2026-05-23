@@ -21,6 +21,7 @@ import (
 	"github.com/xltxb/PetManage/internal/category"
 	"github.com/xltxb/PetManage/internal/checkout"
 	"github.com/xltxb/PetManage/internal/commission"
+	"github.com/xltxb/PetManage/internal/coupon"
 	"github.com/xltxb/PetManage/internal/fixedexpense"
 	"github.com/xltxb/PetManage/internal/revenue"
 	"github.com/xltxb/PetManage/internal/statement"
@@ -240,6 +241,9 @@ func main() {
 
 	// Initialize shift service.
 	shiftService := shift.NewService(db)
+
+	// Initialize coupon management service.
+	couponService := coupon.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -628,6 +632,16 @@ func main() {
 		mux.Handle("GET /api/v1/merchant/shift/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeShiftGetHandler(shiftService))))
 		mux.Handle("POST /api/v1/merchant/shift/{id}/confirm", middleware.Auth(jwtManager)(http.HandlerFunc(makeShiftConfirmHandler(shiftService))))
 		mux.Handle("GET /api/v1/merchant/shift/today", middleware.Auth(jwtManager)(http.HandlerFunc(makeShiftTodayHandler(shiftService))))
+
+		// Coupon management (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/coupons/templates", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponTemplateCreateHandler(couponService))))
+		mux.Handle("GET /api/v1/merchant/coupons/templates", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponTemplateListHandler(couponService))))
+		mux.Handle("GET /api/v1/merchant/coupons/templates/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponTemplateGetHandler(couponService))))
+		mux.Handle("PUT /api/v1/merchant/coupons/templates/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponTemplateUpdateHandler(couponService))))
+		mux.Handle("POST /api/v1/merchant/coupons/templates/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponTemplateToggleHandler(couponService))))
+		mux.Handle("POST /api/v1/merchant/coupons/templates/{id}/issue", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponIssueHandler(couponService))))
+		mux.Handle("GET /api/v1/merchant/coupons/codes", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponCodeListHandler(couponService))))
+		mux.Handle("GET /api/v1/merchant/coupons/stats", middleware.Auth(jwtManager)(http.HandlerFunc(makeCouponStatsHandler(couponService))))
 
 	// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",

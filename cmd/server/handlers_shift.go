@@ -33,7 +33,7 @@ func makeShiftCreateHandler(shiftSvc *shift.Service) http.HandlerFunc {
 
 		sr, err := shiftSvc.CreateShiftReport(r.Context(), merchantID, employeeID)
 		if err != nil {
-			writeAppError(w, err)
+			writeAppError(w, r, err)
 			return
 		}
 
@@ -64,7 +64,7 @@ func makeShiftGetHandler(shiftSvc *shift.Service) http.HandlerFunc {
 
 		sr, err := shiftSvc.GetShiftReport(r.Context(), merchantID, id)
 		if err != nil {
-			writeAppError(w, err)
+			writeAppError(w, r, err)
 			return
 		}
 
@@ -101,7 +101,7 @@ func makeShiftListHandler(shiftSvc *shift.Service) http.HandlerFunc {
 
 		result, err := shiftSvc.ListShiftReports(r.Context(), merchantID, params)
 		if err != nil {
-			writeAppError(w, err)
+			writeAppError(w, r, err)
 			return
 		}
 
@@ -138,7 +138,7 @@ func makeShiftConfirmHandler(shiftSvc *shift.Service) http.HandlerFunc {
 
 		sr, err := shiftSvc.ConfirmShiftReport(r.Context(), merchantID, id, confirmerID)
 		if err != nil {
-			writeAppError(w, err)
+			writeAppError(w, r, err)
 			return
 		}
 
@@ -168,7 +168,7 @@ func makeShiftTodayHandler(shiftSvc *shift.Service) http.HandlerFunc {
 
 		sr, err := shiftSvc.GetTodayShiftStatus(r.Context(), merchantID, employeeID)
 		if err != nil {
-			writeAppError(w, err)
+			writeAppError(w, r, err)
 			return
 		}
 
@@ -198,7 +198,7 @@ func getEmployeeID(claims *auth.Claims) int64 {
 }
 
 // writeAppError writes an application error response.
-func writeAppError(w http.ResponseWriter, err error) {
+func writeAppError(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	// Check for standard error codes from apperrors package.
 	codeToStatus := map[string]int{

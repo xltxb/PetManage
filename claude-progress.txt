@@ -2143,3 +2143,65 @@ SESSION 65 — F061 日结对账 [2026-05-23 21:23 CST]
   ✓ 交班历史查询支持 status 筛选和分页
 - 额外验证: 重复交班→409 CONFLICT, 无auth→401, 无employee_id→403
 - 提交: fb349cd feat(F061): daily shift reconciliation
+
+================================================================================
+SESSION 66 — F062 成本与利润核算 [2026-05-23 22:10 CST]
+================================================================================
+
+- 数据库迁移 049: order_items 和 service_items 表新增 cost_cents 列，创建 fixed_expenses 固定费用表
+- 更新收银开单流程(internal/checkout/service.go):
+  - 商品结账时自动获取 products.cost_cents 或 product_skus.cost_cents 写入 order_items.cost_cents
+  - 服务项目结账时自动获取 service_items.cost_cents 写入 order_items.cost_cents
+  - 套餐展开结算同步获取各子服务项目的 cost_cents
+  - OrderItemDetail 结构体新增 CostCents 字段返回前端
+- 更新服务项目管理(internal/servicemgmt/service.go):
+  - ServiceItem/CreateServiceItemRequest/UpdateServiceItemRequest 新增 CostCents 字段
+  - serviceItemColumns、scanItemRow、scanItemRows 包含 cost_cents
+  - INSERT/UPDATE 语句包含 cost_cents 参数
+- 创建固定费用管理 API(internal/fixedexpense/service.go):
+  - CRUD: Create/List/Update/Delete，支持 category 筛选（rent/utilities/salary/other）
+  - 4 个 API 端点: POST/GET/PUT/DELETE /api/v1/merchant/fixed-expenses
+  - cmd/server/handlers_fixedexpense.go: HTTP 处理器含商户权限校验
+- 更新利润表(internal/statement/service.go → GetProfitLoss):
+  - 商品成本: 使用 order_items.cost_cents（冻结成本）替代 products.cost_cents 实时计算
+  - 服务耗材成本: 新增查询 order_items.cost_cents WHERE service_item_id IS NOT NULL
+  - 员工提成: 新增查询 commission_records WHERE status='confirmed'
+  - 固定费用: 新增查询 fixed_expenses
+  - 采购支出: 保留 purchase_orders WHERE status='received'
+  - 新增 11 项 P&L 明细: 营收、商品成本、服务耗材成本、毛利、员工提成、固定费用、采购支出、费用合计、净利、毛利率、净利率
+- 同步更新 export.go 和 product sales 报表使用冻结成本
+- 端到端验证全部 5 个步骤通过:
+  ✓ 销售商品时自动按进价结转成本 (product cost=10000×2=20000)
+  ✓ 服务完成时自动扣减耗材成本 (service cost=3000×1=3000)
+  ✓ 员工提成费用自动计入 (product=1000 + service=2400 = 3400)
+  ✓ 利润表展示毛利率 ((营收48000-商品成本20000-服务成本3000)/营收48000=52.08%)
+  ✓ 净利率计算包含所有费用项（提成3400 + 租金50000 + 水电10000 = -38400 净利）
+- 提交: 1b64bd5 feat(F062): cost and profit accounting
+
+================================================================================
+SESSION 67 — F063 优惠券管理 [2026-05-23 22:19 CST]
+================================================================================
+
+- 数据库迁移 050: 创建 coupon_templates 表（模板定义）和 coupon_codes 表（发行实例追踪）
+- 创建 internal/coupon/service.go: 完整优惠券管理服务
+  - 模板 CRUD: CreateTemplate/GetTemplate/ListTemplates/UpdateTemplate/ToggleTemplate
+  - 支持 5 种券类型: full_reduction(满减)/discount(折扣)/cash_voucher(代金券)/new_member(新人券)/birthday(生日券)
+  - 支持 3 种发放方式: manual(手动)/auto_new_member(新会员自动)/auto_birthday(生日自动)
+  - 发放规则: validity_days 有效期、max_claims_per_member 每人限领、min_order_cents 最低消费、applicable_categories 适用分类
+  - 特殊字段: max_discount_cents 折扣上限(仅 discount 类型)
+  - IssueCoupons: 向指定会员发放优惠券码，自动检测领取上限
+  - 兼容性: 发放时同步写入旧 coupons 表，确保收银端(POS)与核销服务无缝工作
+  - GetStats: 统计每个模板的发行数、核销数、核销率
+  - ListCodes: 查询已发行券码，支持按模板/会员/状态筛选
+- cmd/server/handlers_coupon.go: 8 个 HTTP 处理器
+  - POST/GET /api/v1/merchant/coupons/templates — 模板 CRUD
+  - POST /api/v1/merchant/coupons/templates/{id}/issue — 发券
+  - GET /api/v1/merchant/coupons/codes — 券码列表
+  - GET /api/v1/merchant/coupons/stats — 统计数据
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建满减券：满200减30，有效期30天，每人限领1张 (full_reduction, min=20000, value=3000)
+  ✓ 创建折扣券：全场9折，指定适用商品分类[1,2] (discount, value=90, max_discount=5000)
+  ✓ 设置发放方式：手动发放给会员54 成功生成券码 MJxxx/ZKxxx；自动发放(新人/生日)模板可配置
+  ✓ 收银端输入优惠券码 MJ26F02063，返回券类型/面值/最低消费/状态；无效码返回 NOT_FOUND
+  ✓ 查看优惠券统计数据：5个模板的 total_issued/total_used/usage_rate
+- 额外验证: 5 种券类型全部创建成功，模板开关(Toggle)功能正常
