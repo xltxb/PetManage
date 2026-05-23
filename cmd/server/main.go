@@ -737,6 +737,13 @@ func main() {
 			mux.Handle("DELETE /api/open/v1/bookings/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBookingCancelHandler(appointmentService))))
 			mux.Handle("GET /api/open/v1/technicians/{id}/availability", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenTechnicianAvailabilityHandler(employeeService, scheduleService, appointmentService))))
 
+			// Open platform — F073: order & payment API.
+			mux.Handle("POST /api/open/v1/orders", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenOrderCreateHandler(checkoutService, ordersService))))
+			mux.Handle("GET /api/open/v1/orders", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenOrderListHandler(ordersService))))
+			mux.Handle("GET /api/open/v1/orders/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenOrderDetailHandler(ordersService))))
+			mux.Handle("POST /api/open/v1/orders/{id}/pay-callback", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPayCallbackHandler(ordersService))))
+			mux.Handle("POST /api/open/v1/orders/{id}/refund", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenOrderRefundHandler(ordersService))))
+
 		// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
 		middleware.Auth(jwtManager)(

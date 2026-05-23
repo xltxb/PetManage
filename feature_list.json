@@ -1030,7 +1030,7 @@
         "POST /api/open/v1/orders/:id/refund 发起退款申请",
         "GET /api/open/v1/orders?member_id=X&page=1 查询会员订单列表"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F074",

@@ -356,7 +356,7 @@ func (s *Service) RefundOrder(ctx context.Context, merchantID, orderID, userID i
 		return nil, apperrors.NewInternalError("failed to query order", err)
 	}
 
-	if currentStatus != "completed" && currentStatus != "partially_refunded" {
+	if currentStatus != "completed" && currentStatus != "partially_refunded" && currentStatus != "paid" {
 		return nil, apperrors.NewValidationError("order status '" + currentStatus + "' cannot be refunded")
 	}
 
