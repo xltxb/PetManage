@@ -2101,3 +2101,45 @@ SESSION 64 — F060 财务报表导出 [2026-05-23 21:19 CST]
   ✓ 收银员角色 (无 report:view) 访问返回 403 FORBIDDEN
 - 额外验证: 无 auth→401, 无时间参数→400, Content-Type/Content-Disposition 头正确
 - 提交: 0deb1e5 feat(F060): financial statement export
+
+================================================================================
+SESSION 65 — F061 日结对账 [2026-05-23 21:23 CST]
+================================================================================
+
+- 创建迁移 048: shift_records 表（merchant_id, employee_id, shift_date,
+  expected/actual total + breakdown JSONB, difference, status pending/confirmed,
+  confirmed_by, confirmed_at）+ employees.shift_locked 列
+- 创建 internal/shift/service.go: 日结对账服务
+  - CreateShiftReport: 聚合当日完成订单和支付记录，生成交班报表
+    (expected = orders.total_cents, actual = payments.amount_cents by method)
+    事务内插入记录 + 锁定员工 (shift_locked=true)
+  - GetShiftReport / ListShiftReports: 查询/列表含 JOIN 员工名称
+  - ConfirmShiftReport: 店长审核确认 (pending→confirmed)
+  - GetTodayShiftStatus: 查询当日是否已交班
+  - UnlockEmployee / IsEmployeeShiftLocked: 解锁/检查员工交班锁
+- 创建 cmd/server/handlers_shift.go: 5 个 API 处理器
+  - POST /api/v1/merchant/shift — 创建交班报表
+  - GET /api/v1/merchant/shift — 列表（支持 status/date 筛选+分页）
+  - GET /api/v1/merchant/shift/{id} — 详情
+  - POST /api/v1/merchant/shift/{id}/confirm — 店长确认
+  - GET /api/v1/merchant/shift/today — 今日状态
+- 更新 internal/auth/jwt.go: Claims 新增 EmployeeID 字段,
+  GenerateTokenPair 支持 employeeID 参数
+- 更新 internal/auth/service.go: MerchantLogin 查询 u.employee_id 注入 JWT,
+  登录成功自动清除 shift_locked 解锁员工
+- 更新 cmd/server/main.go:
+  - Checkout handler 新增 shift_locked 检查，交班后拒绝 POS 操作
+  - 注册 5 个 shift API 路由 (auth-protected, merchant-only)
+- 前端:
+  - MerchantShift.vue: 日结对账页面（今日状态/创建交班/历史记录/分页）
+  - router/index.ts: 新增 /merchant/shift 路由
+  - api/client.ts: 新增 5 个 shift API 方法
+- 端到端验证全部 5 个步骤通过:
+  ✓ 收银员交班 → POST /shift 生成报表（应收¥1,346/实收¥1,346/差异¥0）
+  ✓ 报表按支付方式拆分 (cash: ¥1,346)，4 笔订单
+  ✓ 店长审核确认 → status:confirmed, confirmed_by_name
+  ✓ 交班后 shift_locked=true，POS 收银返回 FORBIDDEN，
+    重新登录后自动解锁 checkpoint
+  ✓ 交班历史查询支持 status 筛选和分页
+- 额外验证: 重复交班→409 CONFLICT, 无auth→401, 无employee_id→403
+- 提交: fb349cd feat(F061): daily shift reconciliation
