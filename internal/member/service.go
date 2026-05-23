@@ -30,8 +30,10 @@ type Member struct {
 	Birthday     *string    `json:"birthday,omitempty"`
 	Address      string     `json:"address"`
 	Remark       string     `json:"remark"`
-	BalanceCents int64      `json:"balance_cents"`
-	Points       int        `json:"points"`
+	BalanceCents         int64      `json:"balance_cents"`
+	PrincipalBalanceCents int64     `json:"principal_balance_cents"`
+	BonusBalanceCents    int64     `json:"bonus_balance_cents"`
+	Points               int        `json:"points"`
 	Status       string     `json:"status"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
@@ -117,7 +119,7 @@ func NewService(db *sql.DB) *Service {
 	return &Service{db: db}
 }
 
-const memberColumns = `id, merchant_id, card_no, name, phone, wechat, gender, birthday, address, remark, balance_cents, points, status, created_at, updated_at`
+const memberColumns = `id, merchant_id, card_no, name, phone, wechat, gender, birthday, address, remark, balance_cents, COALESCE(principal_balance_cents,0), COALESCE(bonus_balance_cents,0), points, status, created_at, updated_at`
 
 // phoneHash returns a SHA-256 hex hash for deterministic phone lookup.
 func phoneHash(phone string) string {
@@ -145,6 +147,7 @@ func scanMemberRow(row *sql.Row) (*Member, error) {
 	err := row.Scan(
 		&m.ID, &m.MerchantID, &m.CardNo, &m.Name, &m.Phone, &m.Wechat,
 		&m.Gender, &m.Birthday, &m.Address, &m.Remark, &m.BalanceCents,
+		&m.PrincipalBalanceCents, &m.BonusBalanceCents,
 		&m.Points, &m.Status, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if err == nil {
@@ -158,6 +161,7 @@ func scanMemberRows(rows *sql.Rows) (*Member, error) {
 	err := rows.Scan(
 		&m.ID, &m.MerchantID, &m.CardNo, &m.Name, &m.Phone, &m.Wechat,
 		&m.Gender, &m.Birthday, &m.Address, &m.Remark, &m.BalanceCents,
+		&m.PrincipalBalanceCents, &m.BonusBalanceCents,
 		&m.Points, &m.Status, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if err == nil {

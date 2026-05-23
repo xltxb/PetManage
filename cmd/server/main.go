@@ -16,6 +16,7 @@ import (
 
 	"github.com/xltxb/PetManage/internal/announcement"
 	"github.com/xltxb/PetManage/internal/auth"
+	"github.com/xltxb/PetManage/internal/balance"
 	"github.com/xltxb/PetManage/internal/category"
 	"github.com/xltxb/PetManage/internal/checkout"
 	"github.com/xltxb/PetManage/internal/complaint"
@@ -168,6 +169,9 @@ func main() {
 
 	// Initialize merchant role service.
 	merchantRoleService := merchantrole.NewService(db)
+
+	// Initialize balance (stored value) service.
+	balanceService := balance.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -348,6 +352,17 @@ func main() {
 		mux.Handle("GET /api/v1/merchant/members/{id}/level", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelInfoHandler(memberLevelService))))
 		mux.Handle("GET /api/v1/merchant/members/{id}/level-logs", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelLogsHandler(memberLevelService))))
 		mux.Handle("POST /api/v1/merchant/members/{id}/check-upgrade", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelCheckUpgradeHandler(memberLevelService))))
+
+		// Stored value management (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/balance/packages", middleware.Auth(jwtManager)(http.HandlerFunc(makeBalancePackageCreateHandler(balanceService))))
+		mux.Handle("GET /api/v1/merchant/balance/packages", middleware.Auth(jwtManager)(http.HandlerFunc(makeBalancePackageListHandler(balanceService))))
+		mux.Handle("GET /api/v1/merchant/balance/packages/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeBalancePackageGetHandler(balanceService))))
+		mux.Handle("PUT /api/v1/merchant/balance/packages/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeBalancePackageUpdateHandler(balanceService))))
+		mux.Handle("DELETE /api/v1/merchant/balance/packages/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeBalancePackageDeleteHandler(balanceService))))
+		mux.Handle("POST /api/v1/merchant/balance/packages/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makeBalancePackageToggleHandler(balanceService))))
+		mux.Handle("POST /api/v1/merchant/members/{id}/recharge", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberRechargeHandler(balanceService))))
+		mux.Handle("GET /api/v1/merchant/members/{id}/balance", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberBalanceHandler(balanceService))))
+		mux.Handle("GET /api/v1/merchant/members/{id}/balance-transactions", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberBalanceTransactionsHandler(balanceService))))
 
 	// Pet management (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/members/{id}/pets", middleware.Auth(jwtManager)(http.HandlerFunc(makePetCreateHandler(petService))))

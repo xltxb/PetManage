@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xltxb/PetManage/internal/balance"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
 )
@@ -580,24 +581,12 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 			if req.MemberID == nil || *req.MemberID <= 0 {
 				return nil, apperrors.NewValidationError("member is required for balance payment")
 			}
-			// Check member balance.
-			var balance int
-			err := tx.QueryRowContext(ctx,
-				`SELECT COALESCE(balance_cents, 0) FROM members WHERE id = $1 FOR UPDATE`,
-				*req.MemberID,
-			).Scan(&balance)
+			// Deduct from bonus first, then principal (via balance package).
+			_, err := balance.DeductBalance(ctx, tx, *req.MemberID, merchantID, int64(p.AmountCents), 0)
 			if err != nil {
-				return nil, apperrors.NewInternalError("failed to check member balance", err)
-			}
-			if balance < p.AmountCents {
-				return nil, apperrors.NewValidationError("insufficient balance: have " + strconv.Itoa(balance) + ", need " + strconv.Itoa(p.AmountCents))
-			}
-			// Deduct balance.
-			_, err = tx.ExecContext(ctx,
-				`UPDATE members SET balance_cents = balance_cents - $1, updated_at = NOW() WHERE id = $2`,
-				p.AmountCents, *req.MemberID,
-			)
-			if err != nil {
+				if appErr, ok := err.(*apperrors.AppError); ok {
+					return nil, appErr
+				}
 				return nil, apperrors.NewInternalError("failed to deduct balance", err)
 			}
 			detail = PaymentDetail{
