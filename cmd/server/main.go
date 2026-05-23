@@ -521,6 +521,19 @@ func main() {
 			mux.Handle("GET /api/v1/merchant/statements/product-sales", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductSalesHandler(statementService))))
 			mux.Handle("GET /api/v1/merchant/statements/service-performance", middleware.Auth(jwtManager)(http.HandlerFunc(makeServicePerformanceHandler(statementService))))
 
+			// Financial statement exports (auth + report:view permission, merchant-only).
+			stmtExport := middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("report:view")(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})))
+			_ = stmtExport
+			mux.Handle("GET /api/v1/merchant/statements/profit-loss/excel", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("report:view")(http.HandlerFunc(makeProfitLossExcelHandler(statementService)))))
+			mux.Handle("GET /api/v1/merchant/statements/profit-loss/pdf", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("report:view")(http.HandlerFunc(makeProfitLossPDFHandler(statementService)))))
+			mux.Handle("GET /api/v1/merchant/statements/revenue-detail/excel", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("report:view")(http.HandlerFunc(makeRevenueDetailExcelHandler(statementService)))))
+			mux.Handle("GET /api/v1/merchant/statements/revenue-detail/pdf", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("report:view")(http.HandlerFunc(makeRevenueDetailPDFHandler(statementService)))))
+			mux.Handle("GET /api/v1/merchant/statements/product-sales/excel", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("report:view")(http.HandlerFunc(makeProductSalesExcelHandler(statementService)))))
+			mux.Handle("GET /api/v1/merchant/statements/product-sales/pdf", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("report:view")(http.HandlerFunc(makeProductSalesPDFHandler(statementService)))))
+			mux.Handle("GET /api/v1/merchant/statements/service-performance/excel", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("report:view")(http.HandlerFunc(makeServicePerformanceExcelHandler(statementService)))))
+			mux.Handle("GET /api/v1/merchant/statements/service-performance/pdf", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("report:view")(http.HandlerFunc(makeServicePerformancePDFHandler(statementService)))))
+
 		// Appointment management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/appointments", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCreateHandler(appointmentService))))
 		mux.Handle("GET /api/v1/merchant/appointments", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentListHandler(appointmentService))))

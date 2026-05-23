@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -124,6 +126,72 @@ func makeServicePerformanceHandler(svc *statement.Service) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
 	}
+}
+
+// --- Statement export handlers ---
+
+func makeExportHandler(svc *statement.Service, exportFn func(ctx context.Context, merchantID int64, startTime, endTime string) ([]byte, string, error), contentType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil || claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+
+		startTime := r.URL.Query().Get("start_time")
+		endTime := r.URL.Query().Get("end_time")
+
+		data, filename, err := exportFn(r.Context(), *claims.MerchantID, startTime, endTime)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to export", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+		w.Write(data)
+	}
+}
+
+func makeProfitLossExcelHandler(svc *statement.Service) http.HandlerFunc {
+	return makeExportHandler(svc, svc.ExportProfitLossExcel,
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+}
+
+func makeProfitLossPDFHandler(svc *statement.Service) http.HandlerFunc {
+	return makeExportHandler(svc, svc.ExportProfitLossPDF, "application/pdf")
+}
+
+func makeRevenueDetailExcelHandler(svc *statement.Service) http.HandlerFunc {
+	return makeExportHandler(svc, svc.ExportRevenueDetailExcel,
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+}
+
+func makeRevenueDetailPDFHandler(svc *statement.Service) http.HandlerFunc {
+	return makeExportHandler(svc, svc.ExportRevenueDetailPDF, "application/pdf")
+}
+
+func makeProductSalesExcelHandler(svc *statement.Service) http.HandlerFunc {
+	return makeExportHandler(svc, svc.ExportProductSalesExcel,
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+}
+
+func makeProductSalesPDFHandler(svc *statement.Service) http.HandlerFunc {
+	return makeExportHandler(svc, svc.ExportProductSalesPDF, "application/pdf")
+}
+
+func makeServicePerformanceExcelHandler(svc *statement.Service) http.HandlerFunc {
+	return makeExportHandler(svc, svc.ExportServicePerformanceExcel,
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+}
+
+func makeServicePerformancePDFHandler(svc *statement.Service) http.HandlerFunc {
+	return makeExportHandler(svc, svc.ExportServicePerformancePDF, "application/pdf")
 }
 
 func parseYearMonth(r *http.Request) (int, int, *apperrors.AppError) {
