@@ -83,6 +83,7 @@ type UpdateMemberRequest struct {
 type ListParams struct {
 	Status   string
 	Keyword  string
+	TagID    int64
 	Page     int
 	PageSize int
 }
@@ -328,6 +329,11 @@ func (s *Service) List(ctx context.Context, merchantID int64, params ListParams)
 		args = append(args, "%"+params.Keyword+"%", phash)
 		argIdx += 2
 	}
+		if params.TagID > 0 {
+			where += " AND id IN (SELECT member_id FROM member_tag_relations WHERE tag_id = $" + strconv.Itoa(argIdx) + ")"
+			args = append(args, params.TagID)
+			argIdx++
+		}
 
 	var total int
 	err := s.db.QueryRowContext(ctx,

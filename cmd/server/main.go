@@ -31,6 +31,7 @@ import (
 	"github.com/xltxb/PetManage/internal/merchantrole"
 	"github.com/xltxb/PetManage/internal/member"
 	"github.com/xltxb/PetManage/internal/memberlevel"
+	"github.com/xltxb/PetManage/internal/membertag"
 	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/pet"
@@ -176,6 +177,9 @@ func main() {
 
 	// Initialize points service.
 	pointsService := points.NewService(db)
+
+	// Initialize member tag service.
+	memberTagService := membertag.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -346,6 +350,28 @@ func main() {
 	mux.Handle("GET /api/v1/merchant/members/{id}/qrcode", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberQRCodeHandler(memberService))))
 	mux.Handle("GET /api/v1/merchant/members/qrcode/scan", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberQRCodeScanHandler(memberService))))
 
+	// Member tag management (auth-protected, merchant-only).
+	mux.Handle("POST /api/v1/merchant/tags", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagCreateHandler(memberTagService))))
+	mux.Handle("GET /api/v1/merchant/tags", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagListHandler(memberTagService))))
+	mux.Handle("GET /api/v1/merchant/tags/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagGetHandler(memberTagService))))
+	mux.Handle("PUT /api/v1/merchant/tags/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagUpdateHandler(memberTagService))))
+	mux.Handle("DELETE /api/v1/merchant/tags/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagDeleteHandler(memberTagService))))
+	mux.Handle("POST /api/v1/merchant/tags/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagToggleHandler(memberTagService))))
+
+	// Member tag relations.
+	mux.Handle("POST /api/v1/merchant/members/{id}/tags", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberAddTagsHandler(memberTagService))))
+	mux.Handle("DELETE /api/v1/merchant/members/{id}/tags/{tagId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberRemoveTagHandler(memberTagService))))
+	mux.Handle("GET /api/v1/merchant/members/{id}/tags", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberTagsHandler(memberTagService))))
+
+	// Auto-tag rules.
+	mux.Handle("POST /api/v1/merchant/tags/rules", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagRuleCreateHandler(memberTagService))))
+	mux.Handle("GET /api/v1/merchant/tags/rules", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagRuleListHandler(memberTagService))))
+	mux.Handle("GET /api/v1/merchant/tags/rules/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagRuleGetHandler(memberTagService))))
+	mux.Handle("PUT /api/v1/merchant/tags/rules/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagRuleUpdateHandler(memberTagService))))
+	mux.Handle("DELETE /api/v1/merchant/tags/rules/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagRuleDeleteHandler(memberTagService))))
+	mux.Handle("POST /api/v1/merchant/tags/rules/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagRuleToggleHandler(memberTagService))))
+	mux.Handle("POST /api/v1/merchant/members/{id}/check-tags", middleware.Auth(jwtManager)(http.HandlerFunc(makeTagCheckApplyHandler(memberTagService))))
+
 		// Member level management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/member-levels", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelCreateHandler(memberLevelService))))
 		mux.Handle("GET /api/v1/merchant/member-levels", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelListHandler(memberLevelService))))
@@ -408,7 +434,7 @@ func main() {
 		mux.Handle("DELETE /api/v1/merchant/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleDeleteHandler(merchantRoleService))))
 
 	// Checkout (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService, memberLevelService, pointsService))))
+	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService, memberLevelService, pointsService, memberTagService))))
 
 	// POS cash register (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/pos/cart/calculate", middleware.Auth(jwtManager)(http.HandlerFunc(makePosCartCalculateHandler(checkoutService))))
@@ -2935,7 +2961,7 @@ func makeSkuToggleStatusHandler(svc *product.Service) http.HandlerFunc {
 
 // --- Checkout handler ---
 
-func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service, levelSvc *memberlevel.Service, pointsSvc *points.Service) http.HandlerFunc {
+func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service, levelSvc *memberlevel.Service, pointsSvc *points.Service, tagSvc *membertag.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := middleware.UserClaimsFromContext(r.Context())
 		if claims == nil {
@@ -2977,6 +3003,8 @@ func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service, l
 			_, _ = riskSvc.CheckHighFrequency(r.Context(), *claims.MerchantID, *req.MemberID)
 			// Check member level upgrade.
 			_, _ = levelSvc.CheckAndUpgrade(r.Context(), *claims.MerchantID, *req.MemberID)
+			// Auto-tag member based on rules.
+			_, _ = tagSvc.CheckAndApplyRules(r.Context(), *claims.MerchantID, *req.MemberID)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -4108,10 +4136,12 @@ func makeMemberListHandler(svc *member.Service) http.HandlerFunc {
 
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+		tagID, _ := strconv.ParseInt(r.URL.Query().Get("tag_id"), 10, 64)
 
 		result, err := svc.List(r.Context(), *claims.MerchantID, member.ListParams{
 			Status:   r.URL.Query().Get("status"),
 			Keyword:  r.URL.Query().Get("keyword"),
+			TagID:    tagID,
 			Page:     page,
 			PageSize: pageSize,
 		})
