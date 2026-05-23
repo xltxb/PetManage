@@ -333,32 +333,58 @@
     </div>
 
     <!-- Print Receipt (hidden) -->
-    <div id="receipt-print" v-if="checkoutSuccess" class="receipt-template">
+    <div id="receipt-print" v-if="checkoutSuccess" class="receipt-template" :style="{ maxWidth: receiptTemplate?.paper_width === '58mm' ? '220px' : '300px' }">
       <div class="receipt-header">
-        <h2>{{ shopName || '宠物店' }}</h2>
+        <img v-if="receiptTemplate?.logo_url" :src="receiptTemplate.logo_url" class="r-logo" alt="Logo" />
+        <h2>{{ receiptTemplate?.store_name || shopName || '宠物店' }}</h2>
+        <p v-if="receiptTemplate?.contact_phone" class="r-contact">{{ receiptTemplate.contact_phone }}</p>
+        <p v-if="receiptTemplate?.contact_address" class="r-contact">{{ receiptTemplate.contact_address }}</p>
         <p>订单号: {{ checkoutSuccess.order_id }}</p>
         <p>{{ new Date().toLocaleString('zh-CN') }}</p>
       </div>
       <hr />
+      <div v-if="currentMember" class="receipt-member">
+        <p>会员: {{ currentMember.name }} · {{ currentMember.card_no }}</p>
+        <p>手机: {{ currentMember.phone }}</p>
+      </div>
+      <hr />
       <div class="receipt-items">
         <div v-for="(item, idx) in cartItems" :key="idx" class="receipt-item">
-          <span>{{ item.name }} x{{ item.quantity }}</span>
+          <span class="r-item-name">{{ item.name }}</span>
+          <span>x{{ item.quantity }}</span>
           <span>¥{{ (item.lineTotalCents / 100).toFixed(2) }}</span>
         </div>
       </div>
       <hr />
       <div class="receipt-total">
-        <div>合计: ¥{{ (cartTotal.payableCents / 100).toFixed(2) }}</div>
-        <div v-if="checkoutSuccess.payments">
+        <div class="r-total-row">
+          <span>折扣前</span>
+          <span>¥{{ (cartTotal.originalCents / 100).toFixed(2) }}</span>
+        </div>
+        <div class="r-total-row" v-if="cartTotal.discountCents > 0">
+          <span>优惠</span>
+          <span>-¥{{ (cartTotal.discountCents / 100).toFixed(2) }}</span>
+        </div>
+        <div class="r-total-row total">
+          <span>合计</span>
+          <strong>¥{{ (cartTotal.payableCents / 100).toFixed(2) }}</strong>
+        </div>
+        <div class="r-total-row" v-if="checkoutSuccess.payments">
           <template v-for="(p, i) in checkoutSuccess.payments" :key="i">
-            <div>{{ methodLabel(p.method) }}: ¥{{ (p.amount_cents / 100).toFixed(2) }}</div>
+            <div class="r-payment-item">
+              <span>{{ methodLabel(p.method) }}</span>
+              <span>¥{{ (p.amount_cents / 100).toFixed(2) }}</span>
+            </div>
           </template>
         </div>
-        <div v-if="checkoutSuccess.change_cents > 0">找零: ¥{{ (checkoutSuccess.change_cents / 100).toFixed(2) }}</div>
+        <div class="r-total-row change" v-if="checkoutSuccess.change_cents > 0">
+          <span>找零</span>
+          <span>¥{{ (checkoutSuccess.change_cents / 100).toFixed(2) }}</span>
+        </div>
       </div>
       <hr />
       <div class="receipt-footer">
-        <p>感谢惠顾，欢迎再次光临！</p>
+        <p>{{ receiptTemplate?.footer_note || '感谢惠顾，欢迎再次光临！' }}</p>
         <p v-if="orderNotes">备注: {{ orderNotes }}</p>
       </div>
     </div>
@@ -387,6 +413,7 @@ const calculating = ref(false)
 const checkoutError = ref('')
 const checkoutSuccess = ref<any>(null)
 const shopName = ref('')
+const receiptTemplate = ref<any>(null)
 let searchTimer: any = null
 
 // Payment panel state
@@ -691,6 +718,8 @@ async function submitPayment() {
       order_notes: orderNotes.value || undefined,
     })
     checkoutSuccess.value = result
+    // Auto-print receipt after checkout
+    nextTick(() => { setTimeout(() => printReceipt(), 500) })
   } catch (e: any) {
     checkoutError.value = e.message || '收银失败'
   }
@@ -699,26 +728,36 @@ async function submitPayment() {
 function printReceipt() {
   const el = document.getElementById('receipt-print')
   if (!el) return
-  const win = window.open('', '_blank', 'width=300,height=500')
+  const paperWidth = receiptTemplate.value?.paper_width === '58mm' ? 58 : 80
+  const win = window.open('', '_blank', `width=${paperWidth * 4},height=600`)
   if (!win) return
   win.document.write(`
     <html><head><title>小票</title>
     <style>
-      body { font-family: monospace; font-size: 12px; width: 260px; margin: 10px auto; }
+      @page { margin: 0; size: ${paperWidth}mm auto; }
+      body { font-family: monospace; font-size: 12px; width: ${paperWidth - 10}mm; margin: 5mm auto; padding: 0; }
       h2 { text-align: center; margin: 0 0 4px 0; font-size: 16px; }
       p { margin: 2px 0; text-align: center; }
-      hr { border: none; border-top: 1px dashed #999; }
+      hr { border: none; border-top: 1px dashed #999; margin: 8px 0; }
+      .r-logo { display: block; max-width: 60px; max-height: 60px; margin: 0 auto 6px; }
+      .r-contact { font-size: 11px; color: #666; }
       .receipt-items { margin: 8px 0; }
-      .receipt-item { display: flex; justify-content: space-between; margin: 2px 0; }
+      .receipt-item { display: flex; justify-content: space-between; margin: 3px 0; gap: 6px; }
+      .r-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .receipt-member { text-align: center; font-size: 11px; }
       .receipt-total { margin: 8px 0; }
-      .receipt-total div { display: flex; justify-content: space-between; font-weight: bold; }
+      .r-total-row { display: flex; justify-content: space-between; margin: 2px 0; }
+      .r-total-row.total { font-size: 14px; }
+      .r-total-row.change { color: #4caf50; }
+      .r-payment-item { display: flex; justify-content: space-between; width: 100%; }
       .receipt-footer { margin-top: 8px; text-align: center; }
     </style></head><body>
     ${el.innerHTML}
     </body></html>
   `)
   win.document.close()
-  setTimeout(() => win.print(), 300)
+  win.focus()
+  setTimeout(() => { win.print(); win.close() }, 300)
 }
 
 function newOrder() {
@@ -748,6 +787,9 @@ onMounted(async () => {
   try {
     const settings = await api.getShopSettings()
     shopName.value = settings.name || ''
+  } catch (e) { /* ignore */ }
+  try {
+    receiptTemplate.value = await api.getReceiptTemplate()
   } catch (e) { /* ignore */ }
 })
 </script>

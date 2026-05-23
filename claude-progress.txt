@@ -1798,3 +1798,39 @@ SESSION 55 — F050 订单管理与退款 [2026-05-23 11:42 CST]
   ✓ 退款金额超过500元需店长审批(needs_approval=true, status=pending_approval, 订单状态不变)
 - 提交: 9126081 feat(F050): order management and refund
 
+
+================================================================================
+SESSION 56 — F051 优惠券核销与服务预约核销 [2026-05-23 12:03 CST]
+================================================================================
+
+- 创建迁移 042: service_cards 表（服务次卡，支持多用途次数扣减）、third_party_vouchers 表（第三方团购券，来源/金额/核销状态）、verification_records 表（统一核销日志）
+- 创建 internal/verification/service.go: 核销核心服务
+  - VerifyCoupon: 验证并核销优惠券，已用/过期/禁用状态拦截
+  - VerifyThirdPartyVoucher: 验证第三方团购券码（美团等），记录来源和核销时间
+  - VerifyServiceCard: 验证服务次卡，每次扣减1次使用次数，剩余为0时自动标记 used
+  - ListRecords: 核销记录查询，支持按类型/券码筛选，分页
+  - 所有核销操作在事务中执行，同时插入 verification_records 日志
+  - 重复核销防护：已核销/已用完/已过期的券返回明确错误
+- 注册 4 个 API 端点 (auth-protected, merchant-only):
+  - POST /api/v1/merchant/verification/coupon — 优惠券核销
+  - POST /api/v1/merchant/verification/third-party — 团购券核销
+  - POST /api/v1/merchant/verification/service-card — 服务次卡核销
+  - GET /api/v1/merchant/verification/records — 核销记录查询
+- 前端 Verification.vue:
+  - 券码输入框（支持扫码枪）
+  - Tab 切换：优惠券 / 团购券 / 服务次卡
+  - 核销结果展示（成功/失败 + 详细信息）
+  - 核销记录列表（表格展示，按类型筛选，分页）
+  - 详情展示：优惠券展示抵用金额/类型，团购券展示来源/面值，次卡展示已用/剩余次数
+- API 客户端新增: verifyCoupon, verifyThirdPartyVoucher, verifyServiceCard, getVerificationRecords
+- 路由: /merchant/verification
+- 导航: 商户后台快捷链接新增「券码核销」入口
+- 端到端验证全部 5 个步骤通过:
+  ✓ 扫描/输入优惠券码，验证有效性，自动抵扣金额（COUPON-TEST 核销成功，¥50 fixed）
+  ✓ 核销第三方团购券码（MT-TEST-001，meituan，¥50，状态→verified）
+  ✓ 核销服务次卡，扣减可用次数（SC-TEST-001 从 5→4→3→2→1→0，最终状态 used）
+  ✓ 已核销的券不可重复核销（coupon: "already used", service card: "already fully used"）
+  ✓ 核销记录可查询（9 条记录，含类型/券码/结果/详情/时间）
+- 提交: 3859cab feat(F051): coupon and service appointment verification
+
+下一步: 继续实现 F052 小票模板自定义与打印

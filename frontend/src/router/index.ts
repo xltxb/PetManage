@@ -94,6 +94,11 @@ const router = createRouter({
       component: () => import('@/views/MerchantSettings.vue'),
     },
     {
+      path: '/merchant/receipt-template',
+      name: 'merchant-receipt-template',
+      component: () => import('@/views/ReceiptTemplate.vue'),
+    },
+    {
       path: '/merchant/verification',
       name: 'merchant-verification',
       component: () => import('@/views/Verification.vue'),

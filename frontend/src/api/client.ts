@@ -798,6 +798,80 @@ class ApiClient {
 	    }>(`/api/v1/merchant/verification/records${qs ? '?' + qs : ''}`)
 	  }
 
+  // --- Receipt Template APIs ---
+
+  getReceiptTemplate() {
+    return this.request<{
+      merchant_id: number
+      logo_url: string
+      store_name: string
+      contact_phone: string
+      contact_address: string
+      footer_note: string
+      paper_width: string
+      show_qrcode: boolean
+      created_at: string
+      updated_at: string
+    }>('/api/v1/merchant/receipt-template')
+  }
+
+  updateReceiptTemplate(data: {
+    logo_url?: string
+    store_name?: string
+    contact_phone?: string
+    contact_address?: string
+    footer_note?: string
+    paper_width?: string
+    show_qrcode?: boolean
+  }) {
+    return this.request<any>('/api/v1/merchant/receipt-template', {
+      method: 'PUT',
+      body: data,
+    })
+  }
+
+  async uploadReceiptLogo(file: File) {
+    const formData = new FormData()
+    formData.append('logo', file)
+    const headers: Record<string, string> = {}
+    const token = this.getToken()
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+    const res = await fetch(`${API_BASE}/api/v1/merchant/receipt-template/logo`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.message || `HTTP ${res.status}`)
+    }
+    return data as any
+  }
+
+  getOrderReceipt(orderId: number) {
+    return this.request<{
+      order_id: number
+      store_name: string
+      store_logo: string
+      contact_phone: string
+      contact_address: string
+      footer_note: string
+      member_name: string
+      member_phone: string
+      items: Array<{ name: string; quantity: number; price_cents: number; total_cents: number }>
+      payments: Array<{ method: string; amount_cents: number }>
+      subtotal_cents: number
+      discount_cents: number
+      total_cents: number
+      paid_cents: number
+      change_cents: number
+      notes: string
+      created_at: string
+    }>(`/api/v1/merchant/orders/${orderId}/receipt`)
+  }
+
 }
 
 export const api = new ApiClient()

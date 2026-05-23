@@ -49,6 +49,7 @@ import (
 	"github.com/xltxb/PetManage/internal/servicemgmt"
 	"github.com/xltxb/PetManage/internal/servicerecord"
 	"github.com/xltxb/PetManage/internal/supplier"
+	"github.com/xltxb/PetManage/internal/receipttemplate"
 	"github.com/xltxb/PetManage/internal/verification"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
@@ -208,6 +209,9 @@ func main() {
 
 	// Initialize verification service.
 	verificationService := verification.NewService(db)
+
+	// Initialize receipt template service.
+	receiptTemplateService := receipttemplate.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -518,6 +522,12 @@ func main() {
 		mux.Handle("POST /api/v1/merchant/verification/third-party", middleware.Auth(jwtManager)(http.HandlerFunc(makeVerifyThirdPartyHandler(verificationService))))
 		mux.Handle("POST /api/v1/merchant/verification/service-card", middleware.Auth(jwtManager)(http.HandlerFunc(makeVerifyServiceCardHandler(verificationService))))
 		mux.Handle("GET /api/v1/merchant/verification/records", middleware.Auth(jwtManager)(http.HandlerFunc(makeVerificationRecordsHandler(verificationService))))
+
+		// Receipt template (auth-protected, merchant-only).
+		mux.Handle("GET /api/v1/merchant/receipt-template", middleware.Auth(jwtManager)(http.HandlerFunc(makeReceiptTemplateGetHandler(receiptTemplateService))))
+		mux.Handle("PUT /api/v1/merchant/receipt-template", middleware.Auth(jwtManager)(http.HandlerFunc(makeReceiptTemplateUpdateHandler(receiptTemplateService))))
+		mux.Handle("POST /api/v1/merchant/receipt-template/logo", middleware.Auth(jwtManager)(http.HandlerFunc(makeReceiptTemplateLogoHandler(receiptTemplateService))))
+		mux.Handle("GET /api/v1/merchant/orders/{id}/receipt", middleware.Auth(jwtManager)(http.HandlerFunc(makeOrderReceiptHandler(receiptTemplateService))))
 
 	// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
@@ -5604,5 +5614,148 @@ func makeVerificationRecordsHandler(svc *verification.Service) http.HandlerFunc 
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
+	}
+}
+
+// --- Receipt template handlers ---
+
+func makeReceiptTemplateGetHandler(svc *receipttemplate.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil || claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("merchant authentication required"))
+			return
+		}
+
+		tmpl, err := svc.GetTemplate(r.Context(), *claims.MerchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get template", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(tmpl)
+	}
+}
+
+func makeReceiptTemplateUpdateHandler(svc *receipttemplate.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil || claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("merchant authentication required"))
+			return
+		}
+
+		var req receipttemplate.UpdateTemplateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		tmpl, err := svc.SaveTemplate(r.Context(), *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to save template", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(tmpl)
+	}
+}
+
+func makeReceiptTemplateLogoHandler(svc *receipttemplate.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil || claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("merchant authentication required"))
+			return
+		}
+
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("failed to parse form: "+err.Error()))
+			return
+		}
+
+		file, header, err := r.FormFile("logo")
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("logo file is required"))
+			return
+		}
+		defer file.Close()
+
+		os.MkdirAll("uploads/receipts", 0755)
+		filename := fmt.Sprintf("%d_%d_%s", *claims.MerchantID, time.Now().Unix(), header.Filename)
+		dstPath := filepath.Join("uploads", "receipts", filename)
+		dst, err := os.Create(dstPath)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to save logo", err))
+			return
+		}
+		defer dst.Close()
+		io.Copy(dst, file)
+
+		logoURL := "/uploads/receipts/" + filename
+
+		current, _ := svc.GetTemplate(r.Context(), *claims.MerchantID)
+		req := receipttemplate.UpdateTemplateRequest{
+			LogoURL:        logoURL,
+			StoreName:      current.StoreName,
+			ContactPhone:   current.ContactPhone,
+			ContactAddress: current.ContactAddress,
+			FooterNote:     current.FooterNote,
+			PaperWidth:     current.PaperWidth,
+			ShowQRCode:     current.ShowQRCode,
+		}
+
+		tmpl, err := svc.SaveTemplate(r.Context(), *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update logo", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(tmpl)
+	}
+}
+
+func makeOrderReceiptHandler(svc *receipttemplate.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil || claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("merchant authentication required"))
+			return
+		}
+
+		idStr := r.PathValue("id")
+		orderID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || orderID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid order id"))
+			return
+		}
+
+		receipt, err := svc.GetOrderReceipt(r.Context(), *claims.MerchantID, orderID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get receipt", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(receipt)
 	}
 }

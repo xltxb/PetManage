@@ -135,6 +135,12 @@ onMounted(loadDashboard)
           >
             店铺设置
           </button>
+          <button
+            @click="router.push('/merchant/receipt-template')"
+            class="text-sm text-blue-600 hover:text-blue-800 cursor-pointer"
+          >
+            小票模板
+          </button>
           <span class="text-sm text-gray-500">
             {{ auth.user?.display_name || auth.user?.username }}
           </span>

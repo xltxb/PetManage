@@ -113,6 +113,73 @@ async function submitRefund() {
   }
 }
 
+async function reprintReceipt(orderId: number) {
+  try {
+    const receipt = await api.getOrderReceipt(orderId)
+    const paymentsHtml = receipt.payments.map((p: any) =>
+      `<div class="r-payment-item"><span>${methodLabel(p.method)}</span><span>¥${(p.amount_cents / 100).toFixed(2)}</span></div>`
+    ).join('')
+    const itemsHtml = receipt.items.map((item: any) =>
+      `<div class="receipt-item"><span class="r-item-name">${item.name}</span><span>x${item.quantity}</span><span>¥${(item.total_cents / 100).toFixed(2)}</span></div>`
+    ).join('')
+    const win = window.open('', '_blank', 'width=320,height=600')
+    if (!win) return
+    win.document.write(`
+      <html><head><title>小票</title>
+      <style>
+        @page { margin: 0; size: 80mm auto; }
+        body { font-family: monospace; font-size: 12px; width: 70mm; margin: 5mm auto; padding: 0; }
+        h2 { text-align: center; margin: 0 0 4px 0; font-size: 16px; }
+        p { margin: 2px 0; text-align: center; }
+        hr { border: none; border-top: 1px dashed #999; margin: 8px 0; }
+        .r-logo { display: block; max-width: 60px; max-height: 60px; margin: 0 auto 6px; }
+        .r-contact { font-size: 11px; color: #666; }
+        .receipt-items { margin: 8px 0; }
+        .receipt-item { display: flex; justify-content: space-between; margin: 3px 0; gap: 6px; }
+        .r-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .receipt-member { text-align: center; font-size: 11px; }
+        .r-total-row { display: flex; justify-content: space-between; margin: 2px 0; }
+        .r-total-row.total { font-size: 14px; }
+        .r-total-row.change { color: #4caf50; }
+        .r-payment-item { display: flex; justify-content: space-between; width: 100%; }
+        .receipt-footer { margin-top: 8px; text-align: center; }
+      </style></head><body>
+        <div>
+          <div class="receipt-header">
+            ${receipt.store_logo ? `<img src="${receipt.store_logo}" class="r-logo" alt="Logo" />` : ''}
+            <h2>${receipt.store_name || '宠物店'}</h2>
+            ${receipt.contact_phone ? `<p class="r-contact">${receipt.contact_phone}</p>` : ''}
+            ${receipt.contact_address ? `<p class="r-contact">${receipt.contact_address}</p>` : ''}
+            <p>订单号: ${receipt.order_id}</p>
+            <p>${new Date(receipt.created_at).toLocaleString('zh-CN')}</p>
+          </div>
+          ${receipt.member_name ? `<hr /><div class="receipt-member"><p>会员: ${receipt.member_name}</p>${receipt.member_phone ? `<p>手机: ${receipt.member_phone}</p>` : ''}</div>` : ''}
+          <hr />
+          <div class="receipt-items">${itemsHtml}</div>
+          <hr />
+          <div class="receipt-total">
+            <div class="r-total-row total"><span>合计</span><strong>¥${(receipt.total_cents / 100).toFixed(2)}</strong></div>
+            ${paymentsHtml}
+            ${receipt.change_cents > 0 ? `<div class="r-total-row change"><span>找零</span><span>¥${(receipt.change_cents / 100).toFixed(2)}</span></div>` : ''}
+          </div>
+          ${receipt.footer_note || receipt.notes ? `<hr /><div class="receipt-footer"><p>${receipt.footer_note || ''}</p>${receipt.notes ? `<p>备注: ${receipt.notes}</p>` : ''}</div>` : ''}
+          <hr /><div class="receipt-footer"><p>*** 重打小票 ***</p></div>
+        </div>
+      </body></html>
+    `)
+    win.document.close()
+    win.focus()
+    setTimeout(() => { win.print(); win.close() }, 300)
+  } catch (e: any) {
+    alert('获取小票数据失败: ' + e.message)
+  }
+}
+
+function methodLabel(m: string): string {
+  const map: Record<string, string> = { cash: '现金', wechat: '微信', alipay: '支付宝', balance: '储值', points: '积分', coupon: '优惠券' }
+  return map[m] || m
+}
+
 function closeDetail() {
   showDetail.value = false
   selectedOrder.value = null
@@ -210,9 +277,15 @@ onMounted(() => {
               <td class="px-4 py-2 text-center">
                 <button
                   @click="viewDetail(o)"
-                  class="text-blue-600 hover:text-blue-800 cursor-pointer mr-3 text-xs"
+                  class="text-blue-600 hover:text-blue-800 cursor-pointer mr-2 text-xs"
                 >
                   详情
+                </button>
+                <button
+                  @click="reprintReceipt(o.id)"
+                  class="text-green-600 hover:text-green-800 cursor-pointer mr-2 text-xs"
+                >
+                  打印
                 </button>
                 <button
                   v-if="o.status === 'completed'"
@@ -390,18 +463,26 @@ onMounted(() => {
             </div>
 
             <!-- Action buttons for non-refund mode -->
-            <div v-if="!showRefund && (selectedOrder.status === 'completed' || selectedOrder.status === 'partially_refunded')" class="border-t pt-4 flex gap-2">
+            <div v-if="!showRefund" class="border-t pt-4 flex gap-2">
               <button
+                v-if="selectedOrder.status === 'completed' || selectedOrder.status === 'partially_refunded'"
                 @click="openRefund('full')"
                 class="bg-red-600 text-white px-4 py-1.5 rounded text-sm hover:bg-red-700 cursor-pointer"
               >
                 全额退款
               </button>
               <button
+                v-if="selectedOrder.status === 'completed' || selectedOrder.status === 'partially_refunded'"
                 @click="openRefund('partial')"
                 class="bg-orange-600 text-white px-4 py-1.5 rounded text-sm hover:bg-orange-700 cursor-pointer"
               >
                 部分退款
+              </button>
+              <button
+                @click="reprintReceipt(selectedOrder.id)"
+                class="bg-green-600 text-white px-4 py-1.5 rounded text-sm hover:bg-green-700 cursor-pointer"
+              >
+                打印小票
               </button>
             </div>
           </div>
