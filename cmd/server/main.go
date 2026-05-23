@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/xltxb/PetManage/internal/announcement"
+	"github.com/xltxb/PetManage/internal/appointment"
 	"github.com/xltxb/PetManage/internal/auth"
 	"github.com/xltxb/PetManage/internal/balance"
 	"github.com/xltxb/PetManage/internal/category"
@@ -184,6 +185,9 @@ func main() {
 
 	// Initialize member tag service.
 	memberTagService := membertag.NewService(db)
+
+	// Initialize appointment service.
+	appointmentService := appointment.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -436,6 +440,11 @@ func main() {
 		mux.Handle("POST /api/v1/merchant/employees/{id}/create-account", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeCreateAccountHandler(merchantRoleService))))
 		mux.Handle("POST /api/v1/merchant/employees/{id}/assign-role", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeAssignRoleHandler(merchantRoleService))))
 		mux.Handle("POST /api/v1/merchant/employees/{id}/disable-account", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeDisableAccountHandler(merchantRoleService))))
+
+		// Appointment management (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/appointments", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCreateHandler(appointmentService))))
+		mux.Handle("GET /api/v1/merchant/appointments", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentListHandler(appointmentService))))
+		mux.Handle("GET /api/v1/merchant/appointments/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentGetHandler(appointmentService))))
 
 		// Merchant role management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/roles", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleCreateHandler(merchantRoleService))))

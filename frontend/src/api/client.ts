@@ -507,6 +507,63 @@ class ApiClient {
     }>(`/api/v1/merchant/pos/coupons/verify?code=${encodeURIComponent(code)}`)
   }
 
+  // --- Appointment APIs ---
+
+  getAppointments(params?: { status?: string; page?: number; page_size?: number }) {
+    const search = new URLSearchParams()
+    if (params?.status) search.set('status', params.status)
+    if (params?.page) search.set('page', String(params.page))
+    if (params?.page_size) search.set('page_size', String(params.page_size))
+    const qs = search.toString()
+    return this.request<{
+      appointments: Array<{
+        id: number
+        merchant_id: number
+        member_id: number
+        pet_id: number
+        service_item_id: number
+        employee_id: number
+        appointment_time: string
+        status: string
+        remark: string
+        created_at: string
+        updated_at: string
+        member_name: string
+        member_phone: string
+        pet_name: string
+        service_item_name: string
+        employee_name: string
+      }>
+      total: number
+      page: number
+      page_size: number
+    }>(`/api/v1/merchant/appointments${qs ? '?' + qs : ''}`)
+  }
+
+  getAppointment(id: number) {
+    return this.request<any>(`/api/v1/merchant/appointments/${id}`)
+  }
+
+  createAppointment(data: {
+    member_id: number
+    pet_id: number
+    service_item_id: number
+    employee_id: number
+    appointment_time: string
+    remark?: string
+  }) {
+    return this.request<any>('/api/v1/merchant/appointments', { method: 'POST', body: data })
+  }
+
+  getEmployees(params?: { status?: string; page?: number; page_size?: number }) {
+    const search = new URLSearchParams()
+    if (params?.status) search.set('status', params.status)
+    if (params?.page) search.set('page', String(params.page))
+    if (params?.page_size) search.set('page_size', String(params.page_size))
+    const qs = search.toString()
+    return this.request<any>(`/api/v1/merchant/employees${qs ? '?' + qs : ''}`)
+  }
+
   // --- Service APIs ---
 
   getServiceCategories() {

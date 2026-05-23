@@ -36,7 +36,7 @@ const router = createRouter({
     {
       path: '/merchant/appointments',
       name: 'merchant-appointments',
-      component: () => import('@/views/Placeholder.vue'),
+      component: () => import('@/views/AppointmentList.vue'),
     },
     {
       path: '/merchant/members',
