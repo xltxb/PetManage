@@ -2444,3 +2444,26 @@ SESSION 10 — F084: API接口自动化测试 [2026-05-24 CST]
 - 测试自动运行并生成格式化摘要报告 (Pass/Fail计数和通过率)
 - 使用 TestMain 自动设置: 管理员登录 → 创建开发者 → 审核通过 → 获取OpenPlatform Token
 - 提交: 2ddc3d6 feat(F084): automated API integration tests for all open platform endpoints
+
+
+================================================================================
+SESSION 11 — F071 会员与宠物API (开放平台) [2026-05-24 00:19 CST]
+================================================================================
+
+- 新增 OpenAPI handlers in cmd/server/handlers_openapi_v1.go:
+  - POST /api/open/v1/members/register: 注册新会员，自动生成卡号，返回会员ID和信息
+  - GET /api/open/v1/members/{id}: 查询会员信息，包含会员等级(level_id→规则名称/折扣/积分倍率)、储值余额(balance_cents)、积分(points)
+  - PUT /api/open/v1/members/{id}: 更新会员信息（支持部分字段更新）
+  - POST /api/open/v1/members/{id}/pets: 添加宠物档案，含品种/性别/年龄/体重/疫苗/驱虫记录
+  - GET /api/open/v1/members/{id}/pets: 查询会员的宠物列表
+- 扩展 OpenAPIService 结构体: 新增 Member、MemberLevel、Pet 服务引用
+- 修复 CSRF 中间件: 添加 /api/open/v1/ 到跳过列表，避免 OpenAPI POST/PUT 请求被拦截
+- 路由注册使用 OpenAPIAuth 中间件 (Bearer token + HMAC-SHA256 签名)
+- 创建 cmd/server/f071_test.go: 6 个集成测试，100% 通过率
+  ✓ POST /api/open/v1/members/register → 201, memberID=59
+  ✓ GET /api/open/v1/members/{id} → 200, 包含 member + level + balance + points
+  ✓ PUT /api/open/v1/members/{id} → 200, 地址已更新
+  ✓ POST /api/open/v1/members/{id}/pets → 201, petID=16
+  ✓ GET /api/open/v1/members/{id}/pets → 200, 1 个宠物
+  ✓ 无认证请求 → 401 UNAUTHORIZED
+- 提交: 3693e7e feat(F071): member & pet open platform API
