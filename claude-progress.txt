@@ -1232,3 +1232,69 @@ SESSION 40 — F029 库存操作管理 [2026-05-23 07:59 CST]
   ✓ 报损: 狗粮15kg大包装 stock 80→78, 流水含 reason=运输破损
   ✓ 库存流水查询: 9 条记录含 type, product_name, quantity_change, operator_name, notes, created_at
 - 提交: 11eb264 feat(F029): inventory operations
+
+================================================================================
+SESSION 41 — F030 库存盘点 [2026-05-23 08:13 CST]
+================================================================================
+
+- 创建迁移 030: inventory_checks + inventory_check_items 表
+  - inventory_checks: 盘点单主表（check_no IC+YYYYMMDD+4位流水号, check_type full/category/product, status draft/counting/review/pending_approve/completed, scope_data JSONB, threshold_percent）
+  - inventory_check_items: 盘点明细（product_id, system_stock, actual_stock, diff_quantity, cost_cents, diff_amount_cents）
+- 实现 internal/inventory/service.go: 盘点服务
+  - CreateCheck: 创建盘点单（支持全盘/按分类/按商品三种范围），自动填充商品列表和系统库存，生成盘点编号
+  - GetCheck: 查询盘点单详情含所有盘点项
+  - UpdateCheckItem: 录入实盘数量，自动计算 diff_quantity 和 diff_amount_cents
+  - SubmitCheck: 提交盘点，校验所有项已录入实盘数量，状态→review
+  - ConfirmCheck: 确认盘点结果
+    - 差异百分比=abs(diff_quantity)/system_stock×100
+    - 全部项≤阈值 → 自动调整库存+生成stock_flows+状态→completed
+    - 任意项>阈值 → 状态→pending_approve（需店长审核）
+  - ApproveCheck: 店长审核确认（仅pending_approve状态），应用库存调整
+  - ListChecks: 分页+筛选（status/check_type）查询盘点单列表
+- 注册 7 个 API 端点 (auth-protected, merchant-only):
+  - POST   /api/v1/merchant/inventory/checks — 创建盘点单
+  - GET    /api/v1/merchant/inventory/checks — 盘点单列表
+  - GET    /api/v1/merchant/inventory/checks/{id} — 盘点单详情
+  - PUT    /api/v1/merchant/inventory/checks/{id}/items/{itemId} — 录入实盘数量
+  - POST   /api/v1/merchant/inventory/checks/{id}/submit — 提交盘点
+  - POST   /api/v1/merchant/inventory/checks/{id}/confirm — 确认盘点
+  - POST   /api/v1/merchant/inventory/checks/{id}/approve — 店长审核
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建盘点单：按商品选择范围 → 3 个商品入列，status=counting
+  ✓ 盘点单显示商品列表和系统库存数：系统库存 80/110/140 正确
+  ✓ 录入实盘数量后自动计算盘盈盘亏：diff=0(准确)/5(盘盈45000分)/-10(盘亏-110000分)
+  ✓ 确认盘点后库存自动调整：测试商品2 110→115, 测试商品3 140→130, stock_flows 含 surplus(5)+loss(-10) 记录
+  ✓ 差异超出 5% 阈值需审核：item3 diff=10/140=7.14%→status=pending_approve, 审核后→completed
+  ✓ 额外验证：差异在阈值内(1.25%<10%)→自动完成，无需审核
+- 提交: 971e675 feat(F030): inventory count checks
+
+================================================================================
+SESSION 42 — F031 库存预警提醒 [2026-05-23 08:14 CST]
+================================================================================
+
+- 更新 DashboardResponse 结构体，新增 NearExpiryCount 和 ExpiredCount 字段
+- 在 GetDashboard 中增加 3 条 SQL 查询：低库存、临期（30天内）、已过期
+- 按优先级避免重复计数：过期 > 临期 > 低库存
+- 创建 inventory/alert.go：AlertItem 结构体 + GetAlerts 方法
+  - 支持按 alert_type 筛选（low_stock / near_expiry / expired / all）
+  - CASE WHEN 优先级：expired > near_expiry > low_stock
+  - 带分页的列表查询
+- 注册路由 GET /api/v1/merchant/inventory/alerts
+- 创建 InventoryAlerts.vue：预警详细列表页
+  - 4 个筛选标签：全部/低库存/临期/已过期
+  - 点击预警数字跳转到过滤后的预警列表
+  - 表格显示：商品名称、条码、库存、预警阈值、有效期、剩余天数、预警类型
+- 更新 MerchantDashboard.vue：5 列预警区域
+  - 低库存预警（红色边框，可点击跳转）
+  - 商品临期（橙色边框，可点击跳转）
+  - 已过期（灰色边框，可点击跳转）
+  - 待确认预约 + 会员生日提醒
+- 更新 MerchantProducts.vue：过期商品显示红色「已过期」标签 + 红色背景行
+- 端到端测试全部 5 个步骤通过：
+  ✓ 低库存商品正确显示（stock=5 < alert=10）
+  ✓ 临期商品正确显示（15天后到期）
+  ✓ 过期商品正确标记为「已过期」并在列表中红色标注
+  ✓ 预警卡片可点击跳转至详细列表
+  ✓ 预警列表支持按类型筛选
+- 提交: 65e563c feat(F031): inventory alert reminders
+
