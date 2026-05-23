@@ -15,6 +15,7 @@ import (
 
 	"github.com/xltxb/PetManage/internal/announcement"
 	"github.com/xltxb/PetManage/internal/appointment"
+	"github.com/xltxb/PetManage/internal/attendance"
 	"github.com/xltxb/PetManage/internal/auth"
 	"github.com/xltxb/PetManage/internal/balance"
 	"github.com/xltxb/PetManage/internal/category"
@@ -178,6 +179,9 @@ func main() {
 
 	// Initialize employee service.
 	employeeService := employee.NewService(db)
+
+	// Initialize attendance service.
+	attendanceService := attendance.NewService(db)
 
 	// Initialize merchant role service.
 	merchantRoleService := merchantrole.NewService(db)
@@ -464,6 +468,18 @@ func main() {
 		mux.Handle("POST /api/v1/merchant/employees/{id}/create-account", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeCreateAccountHandler(merchantRoleService))))
 		mux.Handle("POST /api/v1/merchant/employees/{id}/assign-role", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeAssignRoleHandler(merchantRoleService))))
 		mux.Handle("POST /api/v1/merchant/employees/{id}/disable-account", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeDisableAccountHandler(merchantRoleService))))
+
+		// Attendance management (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/attendance/check-in", middleware.Auth(jwtManager)(http.HandlerFunc(makeAttendanceCheckInHandler(attendanceService))))
+		mux.Handle("POST /api/v1/merchant/attendance/check-out", middleware.Auth(jwtManager)(http.HandlerFunc(makeAttendanceCheckOutHandler(attendanceService))))
+		mux.Handle("GET /api/v1/merchant/attendance/today", middleware.Auth(jwtManager)(http.HandlerFunc(makeAttendanceTodayHandler(attendanceService))))
+		mux.Handle("POST /api/v1/merchant/attendance/leave", middleware.Auth(jwtManager)(http.HandlerFunc(makeLeaveApplyHandler(attendanceService))))
+		mux.Handle("GET /api/v1/merchant/attendance/leaves", middleware.Auth(jwtManager)(http.HandlerFunc(makeLeaveListHandler(attendanceService))))
+		mux.Handle("PUT /api/v1/merchant/attendance/leaves/{id}/review", middleware.Auth(jwtManager)(http.HandlerFunc(makeLeaveReviewHandler(attendanceService))))
+		mux.Handle("POST /api/v1/merchant/attendance/overtime", middleware.Auth(jwtManager)(http.HandlerFunc(makeOvertimeApplyHandler(attendanceService))))
+		mux.Handle("GET /api/v1/merchant/attendance/overtime", middleware.Auth(jwtManager)(http.HandlerFunc(makeOvertimeListHandler(attendanceService))))
+		mux.Handle("PUT /api/v1/merchant/attendance/overtime/{id}/review", middleware.Auth(jwtManager)(http.HandlerFunc(makeOvertimeReviewHandler(attendanceService))))
+		mux.Handle("GET /api/v1/merchant/attendance/stats", middleware.Auth(jwtManager)(http.HandlerFunc(makeAttendanceStatsHandler(attendanceService))))
 
 		// Appointment management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/appointments", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCreateHandler(appointmentService))))
