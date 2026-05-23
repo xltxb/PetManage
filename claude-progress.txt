@@ -1689,3 +1689,42 @@ SESSION 52 — F045 技师排班管理 [2026-05-23 10:51 CST]
 
 下一步: 继续实现 F046 服务进度全流程管控
 
+================================================================================
+SESSION 53 — F046 服务进度全流程管控 [2026-05-23 11:09 CST]
+================================================================================
+
+- 新增 4 个预约状态: arrived (已到店), in_progress (服务中), completed (待取宠), picked_up (已完成)
+- 完整状态流转: pending → confirmed → arrived → in_progress → completed → picked_up
+- 后端新增 4 个 Service 方法 (internal/appointment/service.go):
+  - Arrive: confirmed → arrived, 通知技师宠物已到店
+  - Start: arrived → in_progress, 开始服务
+  - Complete: in_progress → completed, 通知会员取宠
+  - Pickup: completed → picked_up, 确认取宠完成
+- 每个状态转换均有严格的前置状态校验（状态机守卫）
+- 所有转换自动记录 change_log（含操作时间戳）
+- 新增 4 个 HTTP 端点:
+  - POST /api/v1/merchant/appointments/{id}/arrive
+  - POST /api/v1/merchant/appointments/{id}/start
+  - POST /api/v1/merchant/appointments/{id}/complete
+  - POST /api/v1/merchant/appointments/{id}/pickup
+- 通知系统新增 arrived/completed 动作类型
+- Reschedule/Cancel 守卫更新：terminal 状态 (cancelled, picked_up) 不可操作
+- 前端 AppointmentList.vue 更新:
+  - 状态标签和颜色扩展到 7 种状态
+  - 状态筛选 Tab 新增 arrived/in_progress/completed/picked_up
+  - 操作按钮按当前状态动态显示（接单/到店/开始服务/完成服务/确认取宠）
+  - 变更记录弹窗内新增进度步骤条（Stepper）可视化
+  - 新增 4 个操作确认弹窗（到店/开始/完成/取宠）
+- 前端 API Client 新增 4 个方法
+- 端到端验证全部 6 个步骤通过:
+  ✓ 技师接单后状态变为「已接单」(pending → confirmed)
+  ✓ 宠物到店确认后状态变为「已到店」(confirmed → arrived)
+  ✓ 开始服务后状态变为「服务中」(arrived → in_progress)
+  ✓ 服务完成后状态变为「待取宠」，会员收到通知 (in_progress → completed)
+  ✓ 客户确认取宠后状态变为「已完成」(completed → picked_up)
+  ✓ 每个节点更新时间自动记录 (5 条 change_log, 均有 created_at)
+  ✓ 状态机守卫: picked_up 不可再 pickup/confirm
+- 提交: 3840ed2 feat(F046): service progress full-process control
+
+下一步: 继续实现 F047 技师服务绩效统计
+
