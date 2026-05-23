@@ -130,9 +130,46 @@ class ApiClient {
       expired_count: number
       pending_appointments: number
       birthday_reminders: number
+      vaccine_reminder_count: number
+      deworming_reminder_count: number
       revenue_trend: number[]
       merchant_id: number
     }>('/api/v1/merchant/dashboard')
+  }
+
+  getHealthReminders(params?: { type?: string; days?: number; page?: number; page_size?: number }) {
+    const search = new URLSearchParams()
+    if (params?.type) search.set('type', params.type)
+    if (params?.days) search.set('days', String(params.days))
+    if (params?.page) search.set('page', String(params.page))
+    if (params?.page_size) search.set('page_size', String(params.page_size))
+    const qs = search.toString()
+    return this.request<{
+      reminders: Array<{
+        pet_id: number
+        pet_name: string
+        member_id: number
+        member_name: string
+        card_no: string
+        reminder_type: string
+        item_name: string
+        last_date: string
+        next_date: string
+        days_left: number
+        notes: string
+      }>
+      total: number
+      page: number
+      page_size: number
+    }>(`/api/v1/merchant/pets/health-reminders${qs ? '?' + qs : ''}`)
+  }
+
+  getHealthReminderCounts(days?: number) {
+    const qs = days ? `?days=${days}` : ''
+    return this.request<{
+      vaccine_count: number
+      deworming_count: number
+    }>(`/api/v1/merchant/pets/health-reminders/count${qs}`)
   }
 
   getInventoryAlerts(params?: { alert_type?: string; page?: number; page_size?: number }) {

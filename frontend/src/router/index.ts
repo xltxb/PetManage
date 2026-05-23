@@ -49,6 +49,11 @@ const router = createRouter({
       component: () => import('@/views/MemberDetail.vue'),
     },
     {
+      path: '/merchant/health-reminders',
+      name: 'merchant-health-reminders',
+      component: () => import('@/views/HealthReminders.vue'),
+    },
+    {
       path: '/merchant/inventory',
       name: 'merchant-inventory',
       component: () => import('@/views/Placeholder.vue'),

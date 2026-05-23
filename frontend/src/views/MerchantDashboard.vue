@@ -18,6 +18,8 @@ interface DashboardData {
   expired_count: number
   pending_appointments: number
   birthday_reminders: number
+  vaccine_reminder_count: number
+  deworming_reminder_count: number
   revenue_trend: number[]
   merchant_id: number
 }
@@ -192,7 +194,7 @@ onMounted(loadDashboard)
         </div>
 
         <!-- Alert Area -->
-        <div class="grid grid-cols-5 gap-4 mb-6">
+        <div class="grid sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4 mb-6">
           <!-- Low Stock Alert -->
           <div
             class="bg-white rounded-lg shadow-sm p-4 flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow"
@@ -241,6 +243,40 @@ onMounted(loadDashboard)
               <p class="text-xs text-gray-500">已过期</p>
               <p class="text-lg font-semibold" :class="data.expired_count > 0 ? 'text-gray-600' : 'text-gray-400'">
                 {{ data.expired_count }} 项
+              </p>
+            </div>
+          </div>
+          <!-- Vaccine Reminders -->
+          <div
+            class="bg-white rounded-lg shadow-sm p-4 flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow"
+            :class="data.vaccine_reminder_count > 0 ? 'border-2 border-cyan-300' : ''"
+            @click="router.push('/merchant/health-reminders?type=vaccine')"
+          >
+            <div class="w-10 h-10 rounded-full flex items-center justify-center text-lg"
+              :class="data.vaccine_reminder_count > 0 ? 'bg-cyan-100' : 'bg-gray-100'">
+              💉
+            </div>
+            <div>
+              <p class="text-xs text-gray-500">疫苗到期提醒</p>
+              <p class="text-lg font-semibold" :class="data.vaccine_reminder_count > 0 ? 'text-cyan-600' : 'text-gray-400'">
+                {{ data.vaccine_reminder_count }} 项
+              </p>
+            </div>
+          </div>
+          <!-- Deworming Reminders -->
+          <div
+            class="bg-white rounded-lg shadow-sm p-4 flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow"
+            :class="data.deworming_reminder_count > 0 ? 'border-2 border-emerald-300' : ''"
+            @click="router.push('/merchant/health-reminders?type=deworming')"
+          >
+            <div class="w-10 h-10 rounded-full flex items-center justify-center text-lg"
+              :class="data.deworming_reminder_count > 0 ? 'bg-emerald-100' : 'bg-gray-100'">
+              💊
+            </div>
+            <div>
+              <p class="text-xs text-gray-500">驱虫到期提醒</p>
+              <p class="text-lg font-semibold" :class="data.deworming_reminder_count > 0 ? 'text-emerald-600' : 'text-gray-400'">
+                {{ data.deworming_reminder_count }} 项
               </p>
             </div>
           </div>

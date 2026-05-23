@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/xltxb/PetManage/internal/pet"
 )
 
 // DashboardResponse is the merchant dashboard response.
@@ -17,13 +19,15 @@ type DashboardResponse struct {
 	NearExpiryCount      int64   `json:"near_expiry_count"`
 	ExpiredCount         int64   `json:"expired_count"`
 	PendingAppointments  int64   `json:"pending_appointments"`
-	BirthdayReminders    int64   `json:"birthday_reminders"`
-	RevenueTrend         []int64 `json:"revenue_trend"`
+	BirthdayReminders       int64   `json:"birthday_reminders"`
+	VaccineReminderCount    int64   `json:"vaccine_reminder_count"`
+	DewormingReminderCount  int64   `json:"deworming_reminder_count"`
+	RevenueTrend            []int64 `json:"revenue_trend"`
 	MerchantID           int64   `json:"merchant_id"`
 }
 
 // GetDashboard returns the merchant dashboard data.
-func (s *Service) GetDashboard(ctx context.Context, merchantID int64) (*DashboardResponse, error) {
+func (s *Service) GetDashboard(ctx context.Context, merchantID int64, petSvc *pet.Service) (*DashboardResponse, error) {
 	now := time.Now()
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 
@@ -79,6 +83,15 @@ func (s *Service) GetDashboard(ctx context.Context, merchantID int64) (*Dashboar
 		).Scan(&dayRevenue)
 		if dayRevenue.Valid {
 			resp.RevenueTrend[6-i] = dayRevenue.Int64
+		}
+	}
+
+	// Health reminder counts (vaccine + deworming pending).
+	if petSvc != nil {
+		counts, err := petSvc.GetHealthReminderCounts(ctx, merchantID, 7)
+		if err == nil {
+			resp.VaccineReminderCount = int64(counts.VaccineCount)
+			resp.DewormingReminderCount = int64(counts.DewormingCount)
 		}
 	}
 

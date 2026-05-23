@@ -207,7 +207,7 @@ func main() {
 	mux.Handle("GET /api/v1/dashboard/merchants/ranking", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeMerchantsRankingHandler(dashboardService)))))
 
 	// Merchant dashboard routes (auth-protected).
-	mux.Handle("GET /api/v1/merchant/dashboard", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantDashboardHandler(merchantService))))
+	mux.Handle("GET /api/v1/merchant/dashboard", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantDashboardHandler(merchantService, petService))))
 
 	// Merchant shop settings (auth-protected, merchant-only).
 	mux.Handle("GET /api/v1/merchant/shop-settings", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantShopSettingsGetHandler(merchantService))))
@@ -384,6 +384,9 @@ func main() {
 	mux.Handle("GET /api/v1/merchant/members/{id}/pets/{petId}", middleware.Auth(jwtManager)(http.HandlerFunc(makePetGetHandler(petService))))
 	mux.Handle("PUT /api/v1/merchant/members/{id}/pets/{petId}", middleware.Auth(jwtManager)(http.HandlerFunc(makePetUpdateHandler(petService))))
 	mux.Handle("DELETE /api/v1/merchant/members/{id}/pets/{petId}", middleware.Auth(jwtManager)(http.HandlerFunc(makePetDeleteHandler(petService))))
+	// Pet health reminders (auth-protected, merchant-only).
+	mux.Handle("GET /api/v1/merchant/pets/health-reminders", middleware.Auth(jwtManager)(http.HandlerFunc(makeHealthRemindersHandler(petService))))
+	mux.Handle("GET /api/v1/merchant/pets/health-reminders/count", middleware.Auth(jwtManager)(http.HandlerFunc(makeHealthReminderCountHandler(petService))))
 
 	// Employee management (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/employees", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeCreateHandler(employeeService))))
@@ -2326,7 +2329,7 @@ func makeUserAssignRoleHandler(svc *role.Service) http.HandlerFunc {
 
 // --- Merchant dashboard handler ---
 
-func makeMerchantDashboardHandler(svc *merchant.Service) http.HandlerFunc {
+func makeMerchantDashboardHandler(svc *merchant.Service, petSvc *pet.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := middleware.UserClaimsFromContext(r.Context())
 		if claims == nil {
@@ -2338,7 +2341,7 @@ func makeMerchantDashboardHandler(svc *merchant.Service) http.HandlerFunc {
 			return
 		}
 
-		resp, err := svc.GetDashboard(r.Context(), *claims.MerchantID)
+		resp, err := svc.GetDashboard(r.Context(), *claims.MerchantID, petSvc)
 		if err != nil {
 			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get merchant dashboard", err))
 			return
@@ -4624,6 +4627,84 @@ func makePetDeleteHandler(svc *pet.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"message": "pet deleted"})
+	}
+}
+
+// --- Pet health reminder handlers ---
+
+func makeHealthRemindersHandler(svc *pet.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		q := r.URL.Query()
+		params := pet.HealthReminderParams{
+			Type: q.Get("type"),
+		}
+		if d, err := strconv.Atoi(q.Get("days")); err == nil && d > 0 {
+			params.Days = d
+		} else if params.Days <= 0 {
+			params.Days = 7
+		}
+		if p, err := strconv.Atoi(q.Get("page")); err == nil && p > 0 {
+			params.Page = p
+		} else {
+			params.Page = 1
+		}
+		if ps, err := strconv.Atoi(q.Get("page_size")); err == nil && ps > 0 {
+			params.PageSize = ps
+		} else {
+			params.PageSize = 20
+		}
+
+		reminders, total, err := svc.GetHealthReminders(r.Context(), *claims.MerchantID, params)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get health reminders", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"reminders": reminders,
+			"total":     total,
+			"page":      params.Page,
+			"page_size": params.PageSize,
+		})
+	}
+}
+
+func makeHealthReminderCountHandler(svc *pet.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+			return
+		}
+		if claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+			return
+		}
+
+		days := 7
+		if d, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && d > 0 {
+			days = d
+		}
+
+		counts, err := svc.GetHealthReminderCounts(r.Context(), *claims.MerchantID, days)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get health reminder counts", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(counts)
 	}
 }
 

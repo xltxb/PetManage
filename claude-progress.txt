@@ -1374,3 +1374,39 @@ SESSION 44 — F035 储值管理 [2026-05-23 09:02 CST]
 - 提交: feat(F035): stored value management
 
 下一步: 继续实现 F036 积分管理
+================================================================================
+SESSION 45 — F036 积分管理 [2026-05-23 09:03 CST]
+================================================================================
+
+- 数据库迁移 (033_points_management):
+  - points_rules 表: 自定义积分规则（消费/签到/储值/裂变类型，固定/百分比 earn_type，抵扣比例，有效期天数）
+  - point_transactions 表: 积分变动审计日志（earn/deduct/expire/adjust 类型，变动前后记录，关联订单/规则/操作人）
+  - members 表新增 points_expire_at 字段: 跟踪积分到期时间
+- 实现 internal/points/service.go: 积分管理核心服务
+  - PointsRule CRUD: 创建/列表/获取/更新/删除/切换状态
+  - EarnPointsAfterCheckout: 收银完成自动根据消费规则赠送积分
+  - RecordPointsDeduction: 积分抵扣交易记录
+  - DeductPoints: 事务内积分扣减
+  - ListTransactions: 会员积分流水查询（按类型/时间筛序，分页）
+  - GetExpiryAlerts: 到期提醒查询（可配置天数范围）
+  - GetActiveConsumeRule / GetEffectiveConfig: 获取当前生效规则配置
+- 实现 cmd/server/handlers_points.go: 8个积分管理API端点
+  - POST /merchant/points/rules → 创建规则
+  - GET /merchant/points/rules → 列表规则
+  - GET /merchant/points/rules/:id → 获取规则
+  - PUT /merchant/points/rules/:id → 更新规则
+  - DELETE /merchant/points/rules/:id → 删除规则
+  - POST /merchant/points/rules/:id/toggle → 切换启用状态
+  - GET /merchant/members/:id/points/transactions → 积分流水
+  - GET /merchant/points/expiry-alerts → 到期提醒
+- 集成到收银流程: makeCheckoutHandler 在收银完成后自动赠送积分 + 记录抵扣交易
+- 端到端验证全部 5 个步骤通过:
+  ✓ 设置积分规则：消费1元=1分（earn_value=100, percent），100分=1元抵扣，50%最大抵扣，365天有效期
+  ✓ 收银完成后会员积分自动增加（¥100 消费 → +100 积分）
+  ✓ 收银时选择积分抵扣，自动计算可抵扣金额（cart/calculate 显示 max_points_deduct_cents）
+  ✓ 设置积分有效期（1年），到期前N天发送提醒（expiry-alerts API）
+  ✓ 积分变动明细全记录，会员可查看积分流水（point_transactions 表 + API）
+- 额外验证: 规则更新/切换状态，会员详细积分流水（earn/deduct 类型、变动前后值、关联订单ID）
+- 提交: 68fe419 feat(F036): points management
+
+下一步: 继续实现 F038 宠物疫苗/驱虫到期提醒

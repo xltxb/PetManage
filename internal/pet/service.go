@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,15 +49,44 @@ type Pet struct {
 
 // CreatePetRequest is the request body for creating a pet.
 type CreatePetRequest struct {
-	Name           string           `json:"name"`
-	Breed          string           `json:"breed"`
-	Gender         string           `json:"gender"`
-	Age            int              `json:"age"`
-	Weight         string           `json:"weight"`
-	VaccineRecords   []VaccineRecord  `json:"vaccine_records"`
-	DewormingRecords []DewormingRecord `json:"deworming_records"`
-	AllergyHistory string           `json:"allergy_history"`
-	Notes          string           `json:"notes"`
+	Name             string             `json:"name"`
+	Breed            string             `json:"breed"`
+	Gender           string             `json:"gender"`
+	Age              int                `json:"age"`
+	Weight           string             `json:"weight"`
+	VaccineRecords   []VaccineRecord    `json:"vaccine_records"`
+	DewormingRecords []DewormingRecord  `json:"deworming_records"`
+	AllergyHistory   string             `json:"allergy_history"`
+	Notes            string             `json:"notes"`
+}
+
+// HealthReminder represents a vaccine or deworming due reminder.
+type HealthReminder struct {
+	PetID        int64  `json:"pet_id"`
+	PetName      string `json:"pet_name"`
+	MemberID     int64  `json:"member_id"`
+	MemberName   string `json:"member_name"`
+	CardNo       string `json:"card_no"`
+	ReminderType string `json:"reminder_type"`
+	ItemName     string `json:"item_name"`
+	LastDate     string `json:"last_date"`
+	NextDate     string `json:"next_date"`
+	DaysLeft     int    `json:"days_left"`
+	Notes        string `json:"notes,omitempty"`
+}
+
+// HealthReminderCounts holds counts for different reminder types.
+type HealthReminderCounts struct {
+	VaccineCount   int `json:"vaccine_count"`
+	DewormingCount int `json:"deworming_count"`
+}
+
+// HealthReminderParams holds query parameters.
+type HealthReminderParams struct {
+	Type       string
+	Days       int
+	Page       int
+	PageSize   int
 }
 
 // UpdatePetRequest is the request body for updating a pet (partial).
@@ -118,8 +149,8 @@ func (s *Service) Create(ctx context.Context, merchantID, memberID int64, req Cr
 		return nil, apperrors.NewValidationError("gender must be M or F")
 	}
 
-	vJSON, _ := json.Marshal(coalesceVaccineRecords(req.VaccineRecords))
-	dJSON, _ := json.Marshal(coalesceDewormingRecords(req.DewormingRecords))
+	vJSON, _ := json.Marshal(normalizeVaccineRecords(req.VaccineRecords))
+	dJSON, _ := json.Marshal(normalizeDewormingRecords(req.DewormingRecords))
 
 	p, err := scanPet(s.db.QueryRowContext(ctx,
 		`INSERT INTO pets (merchant_id, member_id, name, breed, gender, age, weight, vaccine_records, deworming_records, allergy_history, notes)
@@ -206,10 +237,10 @@ func (s *Service) Update(ctx context.Context, petID, memberID, merchantID int64,
 		existing.Weight = *req.Weight
 	}
 	if req.VaccineRecords != nil {
-		existing.VaccineRecords = coalesceVaccineRecords(*req.VaccineRecords)
+		existing.VaccineRecords = normalizeVaccineRecords(*req.VaccineRecords)
 	}
 	if req.DewormingRecords != nil {
-		existing.DewormingRecords = coalesceDewormingRecords(*req.DewormingRecords)
+		existing.DewormingRecords = normalizeDewormingRecords(*req.DewormingRecords)
 	}
 	if req.AllergyHistory != nil {
 		existing.AllergyHistory = *req.AllergyHistory
@@ -251,16 +282,188 @@ func (s *Service) Delete(ctx context.Context, petID, memberID, merchantID int64)
 	return nil
 }
 
-func coalesceVaccineRecords(records []VaccineRecord) []VaccineRecord {
+const dateLayout = "2006-01-02"
+
+// normalizeVaccineRecords ensures each record has a next_date.
+// If next_date is empty, defaults to date + 1 year.
+func normalizeVaccineRecords(records []VaccineRecord) []VaccineRecord {
 	if records == nil {
 		return make([]VaccineRecord, 0)
+	}
+	for i := range records {
+		if records[i].NextDate == "" && records[i].Date != "" {
+			if t, err := time.Parse(dateLayout, records[i].Date); err == nil {
+				records[i].NextDate = t.AddDate(1, 0, 0).Format(dateLayout)
+			}
+		}
 	}
 	return records
 }
 
-func coalesceDewormingRecords(records []DewormingRecord) []DewormingRecord {
+
+// normalizeDewormingRecords ensures each record has a next_date.
+// If next_date is empty, defaults to date + 3 months.
+func normalizeDewormingRecords(records []DewormingRecord) []DewormingRecord {
 	if records == nil {
 		return make([]DewormingRecord, 0)
 	}
+	for i := range records {
+		if records[i].NextDate == "" && records[i].Date != "" {
+			if t, err := time.Parse(dateLayout, records[i].Date); err == nil {
+				records[i].NextDate = t.AddDate(0, 3, 0).Format(dateLayout)
+			}
+		}
+	}
 	return records
+}
+
+// GetHealthReminders returns vaccine and/or deworming reminders for a merchant.
+func (s *Service) GetHealthReminders(ctx context.Context, merchantID int64, params HealthReminderParams) ([]HealthReminder, int, error) {
+	if params.Days <= 0 {
+		params.Days = 7
+	}
+	if params.Page <= 0 {
+		params.Page = 1
+	}
+	if params.PageSize <= 0 {
+		params.PageSize = 20
+	}
+
+	const baseQuery = `
+		SELECT p.id AS pet_id, p.name AS pet_name, p.member_id,
+		       m.name AS member_name, m.card_no,
+		       '%s' AS reminder_type,
+		       %s AS item_name,
+		       %s AS last_date,
+		       %s AS next_date,
+		       (%s)::date - CURRENT_DATE AS days_left,
+		       COALESCE(%s, '') AS notes
+		FROM pets p
+		JOIN members m ON p.member_id = m.id AND m.deleted_at IS NULL
+		CROSS JOIN LATERAL jsonb_array_elements(%s) AS rec(record)
+		WHERE p.merchant_id = $1 AND p.deleted_at IS NULL AND m.status = 'active'
+		  AND %s IS NOT NULL AND %s != ''
+		  AND (%s)::date BETWEEN CURRENT_DATE AND (CURRENT_DATE + ($2 || ' days')::interval)`
+
+	var allReminders []HealthReminder
+
+	if params.Type == "" || params.Type == "all" || params.Type == "vaccine" {
+		r, err := s.queryReminders(ctx, baseQuery, "vaccine",
+			"rec.record->>'vaccine_name'",
+			"rec.record->>'date'",
+			"rec.record->>'next_date'",
+			"rec.record->>'next_date'",
+			"rec.record->>'notes'",
+			"p.vaccine_records",
+			"rec.record->>'next_date'",
+			"rec.record->>'next_date'",
+			"rec.record->>'next_date'",
+			merchantID, params.Days)
+		if err != nil {
+			return nil, 0, err
+		}
+		allReminders = append(allReminders, r...)
+	}
+
+	if params.Type == "" || params.Type == "all" || params.Type == "deworming" {
+		r, err := s.queryReminders(ctx, baseQuery, "deworming",
+			"rec.record->>'medicine_name'",
+			"rec.record->>'date'",
+			"rec.record->>'next_date'",
+			"rec.record->>'next_date'",
+			"rec.record->>'notes'",
+			"p.deworming_records",
+			"rec.record->>'next_date'",
+			"rec.record->>'next_date'",
+			"rec.record->>'next_date'",
+			merchantID, params.Days)
+		if err != nil {
+			return nil, 0, err
+		}
+		allReminders = append(allReminders, r...)
+	}
+
+	sort.Slice(allReminders, func(i, j int) bool {
+		if allReminders[i].DaysLeft != allReminders[j].DaysLeft {
+			return allReminders[i].DaysLeft < allReminders[j].DaysLeft
+		}
+		return allReminders[i].PetName < allReminders[j].PetName
+	})
+
+	total := len(allReminders)
+	offset := (params.Page - 1) * params.PageSize
+	if offset >= total {
+		return []HealthReminder{}, total, nil
+	}
+	end := offset + params.PageSize
+	if end > total {
+		end = total
+	}
+	return allReminders[offset:end], total, nil
+}
+
+func (s *Service) queryReminders(ctx context.Context, queryFmt string, rtype string,
+	itemCol, lastCol, nextCol, nextCol2, notesCol, jsonCol, cond1, cond2, cond3 string,
+	merchantID int64, days int) ([]HealthReminder, error) {
+
+	q := fmt.Sprintf(queryFmt, rtype, itemCol, lastCol, nextCol, nextCol2, notesCol, jsonCol, cond1, cond2, cond3)
+	rows, err := s.db.QueryContext(ctx, q, merchantID, days)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to query health reminders", err)
+	}
+	defer rows.Close()
+
+	var reminders []HealthReminder
+	for rows.Next() {
+		var r HealthReminder
+		if err := rows.Scan(&r.PetID, &r.PetName, &r.MemberID, &r.MemberName, &r.CardNo,
+			&r.ReminderType, &r.ItemName, &r.LastDate, &r.NextDate, &r.DaysLeft, &r.Notes); err != nil {
+			return nil, apperrors.NewInternalError("failed to scan health reminder", err)
+		}
+		reminders = append(reminders, r)
+	}
+	if reminders == nil {
+		reminders = make([]HealthReminder, 0)
+	}
+	return reminders, nil
+}
+
+// GetHealthReminderCounts returns vaccine and deworming reminder counts for a merchant.
+func (s *Service) GetHealthReminderCounts(ctx context.Context, merchantID int64, withinDays int) (*HealthReminderCounts, error) {
+	if withinDays <= 0 {
+		withinDays = 7
+	}
+	counts := &HealthReminderCounts{}
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM (
+			SELECT 1 FROM pets p
+			JOIN members m ON p.member_id = m.id AND m.deleted_at IS NULL
+			CROSS JOIN LATERAL jsonb_array_elements(p.vaccine_records) AS v(record)
+			WHERE p.merchant_id = $1 AND p.deleted_at IS NULL AND m.status = 'active'
+			  AND v.record->>'next_date' IS NOT NULL AND v.record->>'next_date' != ''
+			  AND (v.record->>'next_date')::date BETWEEN CURRENT_DATE AND (CURRENT_DATE + ($2 || ' days')::interval)
+		) sub`,
+		merchantID, withinDays,
+	).Scan(&counts.VaccineCount)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to count vaccine reminders", err)
+	}
+
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM (
+			SELECT 1 FROM pets p
+			JOIN members m ON p.member_id = m.id AND m.deleted_at IS NULL
+			CROSS JOIN LATERAL jsonb_array_elements(p.deworming_records) AS d(record)
+			WHERE p.merchant_id = $1 AND p.deleted_at IS NULL AND m.status = 'active'
+			  AND d.record->>'next_date' IS NOT NULL AND d.record->>'next_date' != ''
+			  AND (d.record->>'next_date')::date BETWEEN CURRENT_DATE AND (CURRENT_DATE + ($2 || ' days')::interval)
+		) sub`,
+		merchantID, withinDays,
+	).Scan(&counts.DewormingCount)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to count deworming reminders", err)
+	}
+
+	return counts, nil
 }
