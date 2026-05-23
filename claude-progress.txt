@@ -2242,3 +2242,43 @@ SESSION 68 — F064 服务次卡/周期卡管理 [2026-05-23 22:41 CST]
   ✓ 次卡使用记录可查询 (usage-logs 返回按时间倒序的核销记录，含 detail: "service card used: 2/10 (8 remaining)")
 - 额外验证: 模板开关(Toggle active↔inactive), 模板编辑(名称/价格/次数), 字段校验(空名称/零价格拒绝), 无效码返回404
 - 提交: ab9536e feat(F064): service card/cycle card management
+
+================================================================================
+SESSION 39 — F065 促销活动管理 [2026-05-23 22:43 CST]
+================================================================================
+
+- 创建迁移 052: promotion_activities 表 (name, type, rules JSONB, start_time, end_time, total_order_count, total_discount_cents, status)
+  - type CHECK: full_reduction / discount / flash_sale / group_buy
+  - ALTER orders 添加 promotion_activity_id 列
+- 创建 internal/promotion/service.go: 促销活动服务
+  - CreateActivity: 4种活动类型 + rules 校验 (ValidateRules)
+  - FullReductionRules: threshold_cents + reduce_cents
+  - DiscountRules: discount_percent (e.g. 85 = 85折)
+  - FlashSaleRules: product_id + flash_price_cents + flash_stock + remaining_stock
+  - GroupBuyRules: product_id + group_price_cents + required_count
+  - ListActivities: 支持 type/status 筛选 + 分页
+  - GetActivity / UpdateActivity (部分更新) / DeleteActivity (软删除) / ToggleActivity
+  - GetActivePromotions: 按时间窗口 NOW() BETWEEN start_time AND end_time 查询有效活动
+  - GetStats: 活动数、参与订单数、优惠总额统计
+- 创建 cmd/server/handlers_promotion.go: 8 个 HTTP 处理器
+  - POST /api/v1/merchant/promotions — 创建活动
+  - GET /api/v1/merchant/promotions — 列表 (支持 type/status/page)
+  - GET /api/v1/merchant/promotions/active — 当前有效活动
+  - GET /api/v1/merchant/promotions/stats — 统计数据
+  - GET/PUT/DELETE /api/v1/merchant/promotions/{id} — 详情/编辑/删除
+  - POST /api/v1/merchant/promotions/{id}/toggle — 启用/禁用
+- POS 收银集成 (internal/checkout/service.go):
+  - CartCalculateRequest 新增 promotion_activity_id 字段
+  - CartCalculateResponse 新增 promotion_discount_cents / promotion_name / promotion_type
+  - 秒杀活动: 匹配 product_id → 替换商品价格为 flash_price，自动计算折扣
+  - 满减活动: total >= threshold → 减 reduce_cents
+  - 打折活动: total * discount_percent / 100
+  - Checkout 流程: promotion_deducted 扣减 effectiveTotal，秒杀扣减 remaining_stock
+  - 订单记录 promotion_activity_id，活动统计自动更新
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建满减活动「全场满300减50」：threshold=30000, reduce=5000, 时间段 2026-05~2026-12
+  ✓ 活动生效后收银端自动计算满减优惠：3×¥158=¥474→满¥300减¥50→应付¥424 (promotion_discount=5000)
+  ✓ 创建秒杀活动：product_id=19, flash_price=¥99, stock=50, 购物车显示折扣¥118 (原价¥158×2→¥316→秒杀价¥198)
+  ✓ 活动到期后自动失效：过期活动不出现于 active 列表，CartCalculate 无优惠效果 (promotion_name=NONE)
+  ✓ 活动数据实时统计：total_orders=2, total_discount_cents=16800 (5000+11800), flash_sale remaining_stock=49 (50-1)
+- 提交: 105ccd7 feat(F065): promotion activity management
