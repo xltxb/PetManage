@@ -2606,3 +2606,33 @@ SESSION 40 — F076 API监控面板 [2026-05-24 01:40 CST]
   ✓ 接口异常率超过阈值时页面红色高亮提示（members/99999 error_rate=100%, anomaly卡片红框+行红色背景）
   ✓ 支持按接口名称搜索（keyword=breeds → 1 result）和排序（success_rate ASC, p95 DESC）
 - 提交: 24bd614 feat(F076): API monitoring dashboard
+
+================================================================================
+SESSION 40 — F077 在线API文档与调试工具 [2026-05-24 01:55 CST]
+================================================================================
+
+- 创建 cmd/server/api_docs.go: 结构化API文档数据源
+  - 38个模块组，151个端点完整文档
+  - 每个端点包含: method, path, summary, description, auth, params, request_body, responses
+  - 8个通用错误码文档（INVALID_PARAMS/UNAUTHORIZED/TOKEN_EXPIRED/INVALID_CREDENTIALS/FORBIDDEN/NOT_FOUND/CONFLICT/INTERNAL_ERROR）
+  - GET /api/v1/api-docs 端点（auth-protected, 平台用户）
+- 创建 frontend/src/views/ApiDocs.vue: 交互式API文档与调试页面
+  - 三栏布局: 左-模块导航(220px) | 中-接口详情(flex) | 右-在线调试(360px)
+  - 模块分组导航: 点击切换模块，展开端点列表（含method彩色标签）
+  - 端点详情: 方法+路径+认证标签、参数表格(名称/位置/类型/必填/说明)、请求示例JSON、响应状态码+说明+示例
+  - 在线调试面板:
+    - 认证上下文选择: 无认证/平台管理员Token/商户管理员Token
+    - 手动输入Token字段（留空自动使用当前登录Token）
+    - Method下拉(POST/GET/PUT/DELETE/PATCH)+URL输入
+    - Headers/Body JSON编辑框
+    - 发送按钮 → 展示响应状态码+格式化JSON结果
+- 更新 frontend/src/api/client.ts: 新增 getApiDocs() 方法
+- 更新 frontend/src/router/index.ts: 新增 /docs 路由
+- 更新 frontend/src/views/Dashboard.vue: 页面头部新增「API 文档」导航链接
+- 端到端验证全部 5 个步骤通过:
+  ✓ API文档页面展示所有可用接口列表，按模块分组（38 modules, 151 endpoints）
+  ✓ 每个接口展示请求方法、路径、参数说明、响应示例、错误码
+  ✓ 在线调试工具：填入参数后点击发送，展示请求和响应
+  ✓ 调试工具支持选择商户上下文进行测试
+  ✓ 文档版本与API版本同步（version: 1.0.0）
+- 提交: b531986 feat(F077): online API documentation & debugging tool
