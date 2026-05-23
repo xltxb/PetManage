@@ -300,6 +300,128 @@ function disableDateBeforeToday(dateStr: string) {
   return dateStr >= `${yyyy}-${mm}-${dd}`
 }
 
+// Confirm dialog state
+const confirmTarget = ref<Appointment | null>(null)
+const actionLoading = ref(false)
+
+// Reschedule modal state
+const rescheduleTarget = ref<Appointment | null>(null)
+const rsDate = ref('')
+const rsHour = ref('')
+const rsMinute = ref('00')
+const rsReason = ref('')
+
+// Cancel modal state
+const cancelTarget = ref<Appointment | null>(null)
+const cancelReason = ref('')
+const actionError = ref('')
+
+// Change log state
+const changeLogTarget = ref<Appointment | null>(null)
+const changeLogs = ref<any[]>([])
+const logsLoading = ref(false)
+
+const actionLabels: Record<string, string> = {
+  confirmed: '确认',
+  rescheduled: '改期',
+  cancelled: '取消',
+}
+
+const actionColors: Record<string, string> = {
+  confirmed: 'bg-green-100 text-green-700',
+  rescheduled: 'bg-blue-100 text-blue-700',
+  cancelled: 'bg-red-100 text-red-700',
+}
+
+function openConfirmDialog(apt: Appointment) {
+  confirmTarget.value = apt
+}
+
+async function doConfirm() {
+  if (!confirmTarget.value) return
+  actionLoading.value = true
+  try {
+    await api.confirmAppointment(confirmTarget.value.id)
+    confirmTarget.value = null
+    loadAppointments()
+  } catch (e: any) {
+    alert(e.message || '确认失败')
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+function openRescheduleModal(apt: Appointment) {
+  rescheduleTarget.value = apt
+  rsDate.value = ''
+  rsHour.value = ''
+  rsMinute.value = '00'
+  rsReason.value = ''
+  actionError.value = ''
+}
+
+async function doReschedule() {
+  if (!rescheduleTarget.value) return
+  if (!rsDate.value || !rsHour.value) {
+    actionError.value = '请选择新的预约时间'
+    return
+  }
+  const hour = rsHour.value.padStart(2, '0')
+  const minute = rsMinute.value || '00'
+  const timeStr = `${rsDate.value}T${hour}:${minute}:00+08:00`
+
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    await api.rescheduleAppointment(rescheduleTarget.value.id, {
+      new_time: timeStr,
+      reason: rsReason.value || undefined,
+    })
+    rescheduleTarget.value = null
+    loadAppointments()
+  } catch (e: any) {
+    actionError.value = e.message || '改期失败'
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+function openCancelModal(apt: Appointment) {
+  cancelTarget.value = apt
+  cancelReason.value = ''
+  actionError.value = ''
+}
+
+async function doCancel() {
+  if (!cancelTarget.value) return
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    await api.cancelAppointment(cancelTarget.value.id, {
+      reason: cancelReason.value || undefined,
+    })
+    cancelTarget.value = null
+    loadAppointments()
+  } catch (e: any) {
+    actionError.value = e.message || '取消失败'
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function openChangeLogs(apt: Appointment) {
+  changeLogTarget.value = apt
+  logsLoading.value = true
+  try {
+    const result = await api.getAppointmentChangeLogs(apt.id)
+    changeLogs.value = result.logs || []
+  } catch (e: any) {
+    changeLogs.value = []
+  } finally {
+    logsLoading.value = false
+  }
+}
+
 onMounted(loadAppointments)
 </script>
 
@@ -372,6 +494,7 @@ onMounted(loadAppointments)
               <th class="text-left px-4 py-3 font-medium">服务项目</th>
               <th class="text-left px-4 py-3 font-medium">技师</th>
               <th class="text-left px-4 py-3 font-medium">状态</th>
+              <th class="text-left px-4 py-3 font-medium">操作</th>
             </tr>
           </thead>
           <tbody class="divide-y">
@@ -393,6 +516,29 @@ onMounted(loadAppointments)
                 <span :class="['px-2 py-0.5 rounded-full text-xs', statusColors[apt.status] || 'bg-gray-100']">
                   {{ statusLabels[apt.status] || apt.status }}
                 </span>
+              </td>
+              <td class="px-4 py-3">
+                <div class="flex gap-1">
+                  <button
+                    v-if="apt.status === 'pending'"
+                    @click="openConfirmDialog(apt)"
+                    class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded hover:bg-green-200 cursor-pointer"
+                  >确认</button>
+                  <button
+                    v-if="apt.status === 'pending' || apt.status === 'confirmed'"
+                    @click="openRescheduleModal(apt)"
+                    class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded hover:bg-blue-200 cursor-pointer"
+                  >改期</button>
+                  <button
+                    v-if="apt.status === 'pending' || apt.status === 'confirmed'"
+                    @click="openCancelModal(apt)"
+                    class="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 cursor-pointer"
+                  >取消</button>
+                  <button
+                    @click="openChangeLogs(apt)"
+                    class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded hover:bg-gray-200 cursor-pointer"
+                  >记录</button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -670,6 +816,122 @@ onMounted(loadAppointments)
             >
               {{ createLoading ? '提交中...' : '提交预约' }}
             </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Confirm Dialog -->
+    <Teleport to="body">
+      <div v-if="confirmTarget" class="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center" @click.self="confirmTarget = null">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-sm mx-4">
+          <div class="px-6 py-4 border-b">
+            <h2 class="text-lg font-semibold">确认预约</h2>
+          </div>
+          <div class="px-6 py-4">
+            <p class="text-sm text-gray-600">确认预约后状态将变为「已确认」，会员将收到通知。</p>
+            <div class="bg-gray-50 rounded p-3 mt-3 text-sm text-gray-600">
+              <p>会员：{{ confirmTarget.member_name }}</p>
+              <p>时间：{{ formatTime(confirmTarget.appointment_time) }}</p>
+            </div>
+          </div>
+          <div class="px-6 py-4 border-t flex justify-end gap-2">
+            <button @click="confirmTarget = null" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded cursor-pointer">取消</button>
+            <button @click="doConfirm" :disabled="actionLoading" class="px-4 py-2 text-sm bg-green-600 text-white rounded hover:bg-green-700 cursor-pointer disabled:opacity-50">
+              {{ actionLoading ? '确认中...' : '确认预约' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Reschedule Modal -->
+    <Teleport to="body">
+      <div v-if="rescheduleTarget" class="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center" @click.self="rescheduleTarget = null">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+          <div class="px-6 py-4 border-b">
+            <h2 class="text-lg font-semibold">改期预约</h2>
+          </div>
+          <div class="px-6 py-4">
+            <div v-if="actionError" class="bg-red-50 text-red-600 text-sm p-3 rounded mb-3">{{ actionError }}</div>
+            <div class="bg-gray-50 rounded p-3 mb-3 text-sm text-gray-600">
+              <p>当前时间：{{ formatTime(rescheduleTarget.appointment_time) }}</p>
+              <p>技师：{{ rescheduleTarget.employee_name }}</p>
+            </div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">新预约时间</label>
+            <div class="flex gap-2 mb-3">
+              <input type="date" v-model="rsDate" :min="new Date().toISOString().split('T')[0]" class="flex-1 border rounded px-3 py-2 text-sm" />
+              <select v-model="rsHour" class="border rounded px-3 py-2 text-sm"><option value="">时</option><option v-for="h in 24" :key="h-1" :value="String(h-1).padStart(2,'0')">{{ String(h-1).padStart(2,'0') }}</option></select>
+              <span class="text-gray-400 self-center">:</span>
+              <select v-model="rsMinute" class="border rounded px-3 py-2 text-sm"><option value="00">00</option><option value="15">15</option><option value="30">30</option><option value="45">45</option></select>
+            </div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">改期原因</label>
+            <input v-model="rsReason" placeholder="可选，填写改期原因..." class="w-full border rounded px-3 py-2 text-sm mb-3" />
+          </div>
+          <div class="px-6 py-4 border-t flex justify-end gap-2">
+            <button @click="rescheduleTarget = null" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded cursor-pointer">取消</button>
+            <button @click="doReschedule" :disabled="actionLoading" class="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 cursor-pointer disabled:opacity-50">
+              {{ actionLoading ? '改期中...' : '确认改期' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Cancel Modal -->
+    <Teleport to="body">
+      <div v-if="cancelTarget" class="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center" @click.self="cancelTarget = null">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+          <div class="px-6 py-4 border-b">
+            <h2 class="text-lg font-semibold">取消预约</h2>
+          </div>
+          <div class="px-6 py-4">
+            <div v-if="actionError" class="bg-red-50 text-red-600 text-sm p-3 rounded mb-3">{{ actionError }}</div>
+            <div class="bg-gray-50 rounded p-3 mb-3 text-sm text-gray-600">
+              <p>会员：{{ cancelTarget.member_name }}</p>
+              <p>时间：{{ formatTime(cancelTarget.appointment_time) }}</p>
+              <p>技师：{{ cancelTarget.employee_name }}</p>
+            </div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">取消原因</label>
+            <textarea v-model="cancelReason" placeholder="请填写取消原因..." rows="2" class="w-full border rounded px-3 py-2 text-sm mb-3"></textarea>
+          </div>
+          <div class="px-6 py-4 border-t flex justify-end gap-2">
+            <button @click="cancelTarget = null" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded cursor-pointer">取消</button>
+            <button @click="doCancel" :disabled="actionLoading" class="px-4 py-2 text-sm bg-red-600 text-white rounded hover:bg-red-700 cursor-pointer disabled:opacity-50">
+              {{ actionLoading ? '取消中...' : '确认取消' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Change Logs Modal -->
+    <Teleport to="body">
+      <div v-if="changeLogTarget" class="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center" @click.self="changeLogTarget = null">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto">
+          <div class="px-6 py-4 border-b sticky top-0 bg-white z-10">
+            <h2 class="text-lg font-semibold">变更记录 - {{ changeLogTarget.member_name }}</h2>
+          </div>
+          <div class="px-6 py-4">
+            <div v-if="logsLoading" class="text-center py-4 text-gray-400 text-sm">加载中...</div>
+            <div v-else-if="!changeLogs.length" class="text-center py-4 text-gray-400 text-sm">暂无变更记录</div>
+            <div v-else class="space-y-3">
+              <div v-for="log in changeLogs" :key="log.id" class="border rounded p-3 text-sm">
+                <div class="flex items-center justify-between mb-1">
+                  <span :class="['px-2 py-0.5 rounded text-xs', actionColors[log.action] || 'bg-gray-100']">
+                    {{ actionLabels[log.action] || log.action }}
+                  </span>
+                  <span class="text-xs text-gray-400">{{ new Date(log.created_at).toLocaleString('zh-CN') }}</span>
+                </div>
+                <div class="text-gray-600" v-if="log.action === 'confirmed'">状态：{{ log.old_value?.status }} → {{ log.new_value?.status }}</div>
+                <div class="text-gray-600" v-if="log.action === 'rescheduled'">时间：{{ log.new_value?.appointment_time }}</div>
+                <div class="text-gray-600" v-if="log.action === 'cancelled'">状态：{{ log.old_value?.status }} → 已取消</div>
+                <div v-if="log.reason" class="text-gray-400 text-xs mt-1">原因：{{ log.reason }}</div>
+              </div>
+            </div>
+          </div>
+          <div class="px-6 py-4 border-t flex justify-end">
+            <button @click="changeLogTarget = null" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded cursor-pointer">关闭</button>
           </div>
         </div>
       </div>

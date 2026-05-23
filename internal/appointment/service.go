@@ -3,10 +3,12 @@ package appointment
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/xltxb/PetManage/internal/notification"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 )
 
@@ -62,12 +64,18 @@ type ListResult struct {
 
 // Service provides appointment management operations.
 type Service struct {
-	db *sql.DB
+	db       *sql.DB
+	notifSvc *notification.Service
 }
 
 // NewService creates a new appointment Service.
 func NewService(db *sql.DB) *Service {
 	return &Service{db: db}
+}
+
+// SetNotificationService sets the notification service for sending appointment notifications.
+func (s *Service) SetNotificationService(notifSvc *notification.Service) {
+	s.notifSvc = notifSvc
 }
 
 const appointmentColumns = `a.id, a.merchant_id, a.member_id, a.pet_id, a.service_item_id, a.employee_id, a.appointment_time, a.status, a.remark, a.created_at, a.updated_at`
@@ -314,4 +322,224 @@ func (s *Service) GetByID(ctx context.Context, merchantID, appointmentID int64) 
 		return nil, apperrors.NewInternalError("failed to get appointment", err)
 	}
 	return d, nil
+}
+
+// ChangeLog represents a single change history entry.
+type ChangeLog struct {
+	ID            int64           `json:"id"`
+	AppointmentID int64           `json:"appointment_id"`
+	Action        string          `json:"action"`
+	OldValue      json.RawMessage `json:"old_value"`
+	NewValue      json.RawMessage `json:"new_value"`
+	OperatorID    int64           `json:"operator_id"`
+	Reason        string          `json:"reason"`
+	CreatedAt     time.Time       `json:"created_at"`
+}
+
+// Confirm confirms a pending appointment, changing status to 'confirmed'.
+func (s *Service) Confirm(ctx context.Context, merchantID, appointmentID int64) (*AppointmentDetail, error) {
+	apt, err := s.GetByID(ctx, merchantID, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	if apt.Status != "pending" {
+		return nil, apperrors.NewValidationError("only pending appointments can be confirmed, current status: " + apt.Status)
+	}
+
+	oldStatus := apt.Status
+	newStatus := "confirmed"
+
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE appointments SET status = $1, updated_at = NOW()
+		 WHERE id = $2 AND merchant_id = $3 AND deleted_at IS NULL`,
+		newStatus, appointmentID, merchantID,
+	)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to confirm appointment", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, apperrors.NewNotFoundError("appointment not found")
+	}
+
+	s.logChange(ctx, merchantID, appointmentID, "confirmed",
+		map[string]string{"status": oldStatus},
+		map[string]string{"status": newStatus},
+		"")
+
+	if s.notifSvc != nil {
+		s.notifSvc.SendAppointmentNotification(ctx, merchantID, appointmentID,
+			apt.MemberID, "member", "confirmed",
+			map[string]string{"appointment_time": apt.AppointmentTime.Format("2006-01-02 15:04")})
+	}
+
+	return s.GetByID(ctx, merchantID, appointmentID)
+}
+
+// RescheduleRequest is the request body for rescheduling an appointment.
+type RescheduleRequest struct {
+	NewTime string `json:"new_time"`
+	Reason  string `json:"reason"`
+}
+
+// Reschedule changes the appointment time with conflict detection.
+func (s *Service) Reschedule(ctx context.Context, merchantID, appointmentID int64, req RescheduleRequest) (*AppointmentDetail, error) {
+	apt, err := s.GetByID(ctx, merchantID, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	if apt.Status == "cancelled" {
+		return nil, apperrors.NewValidationError("cancelled appointments cannot be rescheduled")
+	}
+	if apt.Status == "completed" {
+		return nil, apperrors.NewValidationError("completed appointments cannot be rescheduled")
+	}
+
+	if strings.TrimSpace(req.NewTime) == "" {
+		return nil, apperrors.NewValidationError("new_time is required")
+	}
+
+	newTime, err := time.Parse(time.RFC3339, req.NewTime)
+	if err != nil {
+		return nil, apperrors.NewValidationError("invalid new_time format, use RFC3339: " + err.Error())
+	}
+	if newTime.Before(time.Now()) {
+		return nil, apperrors.NewValidationError("new_time must be in the future")
+	}
+
+	var conflictCount int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM appointments
+		 WHERE employee_id = $1 AND merchant_id = $2 AND deleted_at IS NULL
+		 AND status NOT IN ('cancelled')
+		 AND appointment_time = $3 AND id != $4`,
+		apt.EmployeeID, merchantID, newTime, appointmentID,
+	).Scan(&conflictCount)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to check appointment conflict", err)
+	}
+	if conflictCount > 0 {
+		return nil, apperrors.NewConflictError("the technician already has an appointment at this time")
+	}
+
+	oldTime := apt.AppointmentTime.Format(time.RFC3339)
+
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE appointments SET appointment_time = $1, updated_at = NOW()
+		 WHERE id = $2 AND merchant_id = $3 AND deleted_at IS NULL`,
+		newTime, appointmentID, merchantID,
+	)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to reschedule appointment", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, apperrors.NewNotFoundError("appointment not found")
+	}
+
+	s.logChange(ctx, merchantID, appointmentID, "rescheduled",
+		map[string]string{"appointment_time": oldTime},
+		map[string]string{"appointment_time": req.NewTime, "reason": req.Reason},
+		req.Reason)
+
+	if s.notifSvc != nil {
+		timeStr := newTime.Format("2006-01-02 15:04")
+		s.notifSvc.SendAppointmentNotification(ctx, merchantID, appointmentID,
+			apt.MemberID, "member", "rescheduled",
+			map[string]string{"appointment_time": timeStr})
+		s.notifSvc.SendAppointmentNotification(ctx, merchantID, appointmentID,
+			apt.EmployeeID, "employee", "rescheduled",
+			map[string]string{"appointment_time": timeStr})
+	}
+
+	return s.GetByID(ctx, merchantID, appointmentID)
+}
+
+// CancelRequest is the request body for cancelling an appointment.
+type CancelRequest struct {
+	Reason string `json:"reason"`
+}
+
+// Cancel cancels an appointment, releasing the technician's time slot.
+func (s *Service) Cancel(ctx context.Context, merchantID, appointmentID int64, req CancelRequest) (*AppointmentDetail, error) {
+	apt, err := s.GetByID(ctx, merchantID, appointmentID)
+	if err != nil {
+		return nil, err
+	}
+	if apt.Status == "cancelled" {
+		return nil, apperrors.NewValidationError("appointment is already cancelled")
+	}
+	if apt.Status == "completed" {
+		return nil, apperrors.NewValidationError("completed appointments cannot be cancelled")
+	}
+
+	oldStatus := apt.Status
+
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE appointments SET status = 'cancelled', remark = CASE WHEN $1 = '' THEN remark ELSE $1 END, updated_at = NOW()
+		 WHERE id = $2 AND merchant_id = $3 AND deleted_at IS NULL`,
+		req.Reason, appointmentID, merchantID,
+	)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to cancel appointment", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, apperrors.NewNotFoundError("appointment not found")
+	}
+
+	s.logChange(ctx, merchantID, appointmentID, "cancelled",
+		map[string]string{"status": oldStatus},
+		map[string]string{"status": "cancelled", "reason": req.Reason},
+		req.Reason)
+
+	if s.notifSvc != nil {
+		s.notifSvc.SendAppointmentNotification(ctx, merchantID, appointmentID,
+			apt.MemberID, "member", "cancelled",
+			map[string]string{"reason": req.Reason})
+		s.notifSvc.SendAppointmentNotification(ctx, merchantID, appointmentID,
+			apt.EmployeeID, "employee", "cancelled",
+			map[string]string{"reason": req.Reason})
+	}
+
+	return s.GetByID(ctx, merchantID, appointmentID)
+}
+
+// GetChangeLogs returns the change history for an appointment.
+func (s *Service) GetChangeLogs(ctx context.Context, merchantID, appointmentID int64) ([]ChangeLog, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, appointment_id, action, COALESCE(old_value::text, 'null')::jsonb, COALESCE(new_value::text, 'null')::jsonb, COALESCE(operator_id, 0), reason, created_at
+		 FROM appointment_change_logs
+		 WHERE appointment_id = $1 AND merchant_id = $2
+		 ORDER BY created_at ASC`,
+		appointmentID, merchantID,
+	)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to get change logs", err)
+	}
+	defer rows.Close()
+
+	var logs []ChangeLog
+	for rows.Next() {
+		l := ChangeLog{}
+		if err := rows.Scan(&l.ID, &l.AppointmentID, &l.Action, &l.OldValue, &l.NewValue, &l.OperatorID, &l.Reason, &l.CreatedAt); err != nil {
+			return nil, apperrors.NewInternalError("failed to scan change log", err)
+		}
+		logs = append(logs, l)
+	}
+	if logs == nil {
+		logs = []ChangeLog{}
+	}
+	return logs, rows.Err()
+}
+
+// logChange records a change in the appointment_change_logs table.
+func (s *Service) logChange(ctx context.Context, merchantID, appointmentID int64, action string, oldVal, newVal map[string]string, reason string) {
+	oldJSON, _ := json.Marshal(oldVal)
+	newJSON, _ := json.Marshal(newVal)
+	s.db.ExecContext(ctx,
+		`INSERT INTO appointment_change_logs (merchant_id, appointment_id, action, old_value, new_value, reason)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		merchantID, appointmentID, action, oldJSON, newJSON, reason,
+	)
 }

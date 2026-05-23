@@ -580,6 +580,32 @@ class ApiClient {
     const qs = search.toString()
     return this.request<any>(`/api/v1/merchant/service-items${qs ? '?' + qs : ''}`)
   }
+
+	  confirmAppointment(id: number) {
+	    return this.request<any>(`/api/v1/merchant/appointments/${id}/confirm`, { method: "POST" })
+	  }
+
+	  rescheduleAppointment(id: number, data: { new_time: string; reason?: string }) {
+	    return this.request<any>(`/api/v1/merchant/appointments/${id}/reschedule`, { method: "POST", body: data })
+	  }
+
+	  cancelAppointment(id: number, data: { reason?: string }) {
+	    return this.request<any>(`/api/v1/merchant/appointments/${id}/cancel`, { method: "POST", body: data })
+	  }
+
+	  getAppointmentChangeLogs(id: number) {
+	    return this.request<{ logs: Array<{
+	      id: number
+	      appointment_id: number
+	      action: string
+	      old_value: any
+	      new_value: any
+	      operator_id: number
+	      reason: string
+	      created_at: string
+	    }> }>(`/api/v1/merchant/appointments/${id}/change-logs`)
+	  }
+
 }
 
 export const api = new ApiClient()

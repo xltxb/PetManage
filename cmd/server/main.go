@@ -34,6 +34,7 @@ import (
 	"github.com/xltxb/PetManage/internal/memberlevel"
 	"github.com/xltxb/PetManage/internal/membertag"
 	"github.com/xltxb/PetManage/internal/middleware"
+	"github.com/xltxb/PetManage/internal/notification"
 	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/internal/points"
@@ -188,6 +189,8 @@ func main() {
 
 	// Initialize appointment service.
 	appointmentService := appointment.NewService(db)
+	notifService := notification.NewService(db)
+	appointmentService.SetNotificationService(notifService)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -445,6 +448,10 @@ func main() {
 		mux.Handle("POST /api/v1/merchant/appointments", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCreateHandler(appointmentService))))
 		mux.Handle("GET /api/v1/merchant/appointments", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentListHandler(appointmentService))))
 		mux.Handle("GET /api/v1/merchant/appointments/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentGetHandler(appointmentService))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/confirm", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentConfirmHandler(appointmentService))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/reschedule", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentRescheduleHandler(appointmentService))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/cancel", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCancelHandler(appointmentService))))
+		mux.Handle("GET /api/v1/merchant/appointments/{id}/change-logs", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentChangeLogsHandler(appointmentService))))
 
 		// Merchant role management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/roles", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleCreateHandler(merchantRoleService))))
