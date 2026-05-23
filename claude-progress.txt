@@ -2346,3 +2346,32 @@ SESSION 80 — F068 开放平台开发者入驻 [2026-05-23 23:26 CST]
 - 额外验证: 必填字段缺失 → INVALID_PARAMS (含缺失字段列表), 已通过申请不可再次通过 → INVALID_PARAMS "only pending applications can be approved"
 - 提交: --见下一条--
 
+
+================================================================================
+SESSION 7 — F069 API鉴权机制 [2026-05-23 23:29 CST]
+================================================================================
+
+- 新增 pkg/apperrors 错误码: SIGNATURE_INVALID, SIGNATURE_MISSING, APPKEY_INVALID
+- 创建 internal/openplatform/auth.go: TokenService 负责令牌生成/验证/刷新
+  - OpenPlatformClaims: DeveloperID + AppKey + Permissions 的 JWT claims
+  - GenerateTokenPair: 验证 AppKey+AppSecret 后签发 access_token(2h) + refresh_token(7d)
+  - ValidateAccessToken: 解析并验证开放平台 JWT (issuer: pet-manage-open)
+  - RefreshAccessToken: 使用 refresh_token 换发新令牌对
+  - ComputeSignature / VerifySignature: HMAC-SHA256 请求签名工具
+- 创建 internal/middleware/openapi_auth.go: OpenAPI 鉴权中间件
+  - Bearer token 验证 → UNAUTHORIZED / TOKEN_EXPIRED
+  - X-Timestamp / X-Nonce / X-Signature 请求头 → SIGNATURE_MISSING
+  - 签名校验 + 时间戳±5分钟窗口 → SIGNATURE_INVALID
+- 新增路由:
+  - POST /api/v1/open/token        — 获取令牌 (AppKey+AppSecret)
+  - POST /api/v1/open/token/refresh — 刷新令牌
+  - GET  /api/v1/open/ping          — 鉴权测试端点 (需 OpenAPIAuth)
+- 端到端验证全部 6 个步骤通过:
+  ✓ AppKey+AppSecret → access_token (expires_in=7200)
+  ✓ 有效 token + 签名 → 200 pong
+  ✓ 错误签名 → 401 SIGNATURE_INVALID
+  ✓ 过期 token → 401 TOKEN_EXPIRED
+  ✓ 缺少签名头 → 400 SIGNATURE_MISSING
+  ✓ refresh_token → 新令牌对
+- 提交: d9f5448
+

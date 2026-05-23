@@ -716,6 +716,13 @@ func main() {
 		// Open platform — API test endpoint (open platform auth required).
 		mux.Handle("GET /api/v1/open/ping", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPingHandler())))
 
+		// Open platform — v1 API endpoints (F070: basic info APIs).
+		mux.Handle("GET /api/open/v1/shop/info", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenShopInfoHandler(merchantService))))
+		mux.Handle("GET /api/open/v1/products", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenProductListHandler(productService))))
+		mux.Handle("GET /api/open/v1/products/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenProductDetailHandler(productService))))
+		mux.Handle("GET /api/open/v1/services", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenServiceListHandler(serviceMgmtService))))
+		mux.Handle("GET /api/open/v1/breeds", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBreedsHandler(dictService))))
+
 		// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
 		middleware.Auth(jwtManager)(

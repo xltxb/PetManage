@@ -149,7 +149,15 @@ func makeDevApproveHandler(svc *openplatform.Service) http.HandlerFunc {
 			return
 		}
 
-		result, err := svc.Approve(r.Context(), id, claims.UserID)
+		// Optional merchant_id for linking a developer to a specific merchant.
+		var merchantID int64
+		if midStr := r.URL.Query().Get("merchant_id"); midStr != "" {
+			if v, err := strconv.ParseInt(midStr, 10, 64); err == nil && v > 0 {
+				merchantID = v
+			}
+		}
+
+		result, err := svc.Approve(r.Context(), id, claims.UserID, merchantID)
 		if err != nil {
 			if appErr, ok := err.(*apperrors.AppError); ok {
 				apperrors.WriteError(w, r, appErr)

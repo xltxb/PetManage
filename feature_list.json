@@ -988,7 +988,7 @@
         "GET /api/open/v1/services 返回服务项目列表含价格和时长",
         "GET /api/open/v1/breeds?type=dog 返回狗狗品种列表"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F071",

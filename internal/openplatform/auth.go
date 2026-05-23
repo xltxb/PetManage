@@ -19,6 +19,7 @@ type OpenPlatformClaims struct {
 	jwt.RegisteredClaims
 	DeveloperID int64           `json:"developer_id"`
 	AppKey      string          `json:"app_key"`
+	MerchantID  int64           `json:"merchant_id"`
 	Permissions json.RawMessage `json:"permissions"`
 }
 
@@ -68,14 +69,15 @@ func (s *TokenService) GenerateTokenPair(ctx context.Context, req TokenRequest) 
 	// Look up the developer by AppKey.
 	var app Application
 	var appKey, appSecret sql.NullString
+	var merchantID sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, company_name, contact_person, contact_phone, contact_email,
 		 usage_purpose, callback_url, status, app_key, app_secret, permissions,
-		 review_remark, created_at, updated_at
+		 merchant_id, review_remark, created_at, updated_at
 		 FROM open_developers WHERE app_key = $1 AND deleted_at IS NULL`, req.AppKey,
 	).Scan(&app.ID, &app.CompanyName, &app.ContactPerson, &app.ContactPhone,
 		&app.ContactEmail, &app.UsagePurpose, &app.CallbackURL, &app.Status,
-		&appKey, &appSecret, &app.Permissions, &app.ReviewRemark,
+		&appKey, &appSecret, &app.Permissions, &merchantID, &app.ReviewRemark,
 		&app.CreatedAt, &app.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil, apperrors.NewAppKeyInvalidError("invalid app_key or app_secret")
@@ -89,6 +91,9 @@ func (s *TokenService) GenerateTokenPair(ctx context.Context, req TokenRequest) 
 	if appSecret.Valid {
 		app.AppSecret = appSecret.String
 	}
+	if merchantID.Valid {
+		app.MerchantID = &merchantID.Int64
+	}
 
 	if app.Status != "approved" {
 		return nil, nil, apperrors.NewAppKeyInvalidError("developer application is not approved")
@@ -100,11 +105,15 @@ func (s *TokenService) GenerateTokenPair(ctx context.Context, req TokenRequest) 
 	}
 
 	// Generate tokens.
-	accessToken, err := s.generateToken(app.ID, app.AppKey, app.Permissions, s.accessTokenTTL)
+	var mid int64
+	if app.MerchantID != nil {
+		mid = *app.MerchantID
+	}
+	accessToken, err := s.generateToken(app.ID, app.AppKey, mid, app.Permissions, s.accessTokenTTL)
 	if err != nil {
 		return nil, nil, apperrors.NewInternalError("failed to generate access token", err)
 	}
-	refreshToken, err := s.generateToken(app.ID, app.AppKey, app.Permissions, s.refreshTokenTTL)
+	refreshToken, err := s.generateToken(app.ID, app.AppKey, mid, app.Permissions, s.refreshTokenTTL)
 	if err != nil {
 		return nil, nil, apperrors.NewInternalError("failed to generate refresh token", err)
 	}
@@ -117,7 +126,7 @@ func (s *TokenService) GenerateTokenPair(ctx context.Context, req TokenRequest) 
 	}, &app, nil
 }
 
-func (s *TokenService) generateToken(developerID int64, appKey string, permissions json.RawMessage, ttl time.Duration) (string, error) {
+func (s *TokenService) generateToken(developerID int64, appKey string, merchantID int64, permissions json.RawMessage, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := &OpenPlatformClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -127,6 +136,7 @@ func (s *TokenService) generateToken(developerID int64, appKey string, permissio
 		},
 		DeveloperID: developerID,
 		AppKey:      appKey,
+		MerchantID:  merchantID,
 		Permissions: permissions,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -175,9 +185,10 @@ func (s *TokenService) RefreshAccessToken(ctx context.Context, tokenString strin
 
 	// Verify the developer still exists and is approved.
 	var status string
+	var merchantID sql.NullInt64
 	err = s.db.QueryRowContext(ctx,
-		`SELECT status FROM open_developers WHERE id = $1 AND deleted_at IS NULL`, claims.DeveloperID,
-	).Scan(&status)
+		`SELECT status, merchant_id FROM open_developers WHERE id = $1 AND deleted_at IS NULL`, claims.DeveloperID,
+	).Scan(&status, &merchantID)
 	if err == sql.ErrNoRows {
 		return nil, apperrors.NewUnauthorizedError("developer no longer exists")
 	}
@@ -188,11 +199,16 @@ func (s *TokenService) RefreshAccessToken(ctx context.Context, tokenString strin
 		return nil, apperrors.NewAppKeyInvalidError("developer application is not approved")
 	}
 
-	accessToken, err := s.generateToken(claims.DeveloperID, claims.AppKey, claims.Permissions, s.accessTokenTTL)
+	var mid int64
+	if merchantID.Valid {
+		mid = merchantID.Int64
+	}
+
+	accessToken, err := s.generateToken(claims.DeveloperID, claims.AppKey, mid, claims.Permissions, s.accessTokenTTL)
 	if err != nil {
 		return nil, apperrors.NewInternalError("failed to generate access token", err)
 	}
-	refreshToken, err := s.generateToken(claims.DeveloperID, claims.AppKey, claims.Permissions, s.refreshTokenTTL)
+	refreshToken, err := s.generateToken(claims.DeveloperID, claims.AppKey, mid, claims.Permissions, s.refreshTokenTTL)
 	if err != nil {
 		return nil, apperrors.NewInternalError("failed to generate refresh token", err)
 	}

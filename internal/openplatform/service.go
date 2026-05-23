@@ -52,6 +52,7 @@ type Application struct {
 	Status        string          `json:"status"`
 	AppKey        string          `json:"app_key,omitempty"`
 	AppSecret     string          `json:"app_secret,omitempty"`
+	MerchantID    *int64          `json:"merchant_id,omitempty"`
 	Permissions   json.RawMessage `json:"permissions"`
 	ReviewRemark  string          `json:"review_remark,omitempty"`
 	ReviewedBy    *int64          `json:"reviewed_by,omitempty"`
@@ -167,15 +168,15 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (*Application, er
 func (s *Service) GetByID(ctx context.Context, id int64) (*Application, error) {
 	var app Application
 	var appKey, appSecret sql.NullString
-	var reviewedBy sql.NullInt64
+	var reviewedBy, merchantID sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, company_name, contact_person, contact_phone, contact_email,
 		 usage_purpose, callback_url, status, app_key, app_secret, permissions,
-		 review_remark, reviewed_by, reviewed_at, created_at, updated_at
+		 merchant_id, review_remark, reviewed_by, reviewed_at, created_at, updated_at
 		 FROM open_developers WHERE id = $1 AND deleted_at IS NULL`, id,
 	).Scan(&app.ID, &app.CompanyName, &app.ContactPerson, &app.ContactPhone,
 		&app.ContactEmail, &app.UsagePurpose, &app.CallbackURL, &app.Status,
-		&appKey, &appSecret, &app.Permissions, &app.ReviewRemark,
+		&appKey, &appSecret, &app.Permissions, &merchantID, &app.ReviewRemark,
 		&reviewedBy, &app.ReviewedAt, &app.CreatedAt, &app.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, apperrors.NewNotFoundError("developer application not found")
@@ -191,6 +192,9 @@ func (s *Service) GetByID(ctx context.Context, id int64) (*Application, error) {
 	}
 	if reviewedBy.Valid {
 		app.ReviewedBy = &reviewedBy.Int64
+	}
+	if merchantID.Valid {
+		app.MerchantID = &merchantID.Int64
 	}
 	return &app, nil
 }
@@ -237,7 +241,8 @@ func (s *Service) ListPending(ctx context.Context, page, pageSize int) (*ListRes
 }
 
 // Approve approves a developer application, generating AppKey and AppSecret.
-func (s *Service) Approve(ctx context.Context, id int64, reviewerID int64) (*ApproveResponse, error) {
+// If merchantID is non-zero, it associates the developer with the given merchant.
+func (s *Service) Approve(ctx context.Context, id int64, reviewerID int64, merchantID int64) (*ApproveResponse, error) {
 	app, err := s.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -259,25 +264,34 @@ func (s *Service) Approve(ctx context.Context, id int64, reviewerID int64) (*App
 	now := time.Now()
 
 	var result Application
-	var reviewedBy sql.NullInt64
+	var reviewedBy, scannedMerchantID sql.NullInt64
+	var midParam interface{}
+	if merchantID > 0 {
+		midParam = merchantID
+	} else {
+		midParam = nil
+	}
 	err = s.db.QueryRowContext(ctx,
 		`UPDATE open_developers SET status = 'approved', app_key = $1, app_secret = $2,
 		 permissions = $3, reviewed_by = $4, reviewed_at = $5, review_remark = '',
-		 updated_at = $5
+		 merchant_id = $7, updated_at = $5
 		 WHERE id = $6 AND deleted_at IS NULL
 		 RETURNING id, company_name, contact_person, contact_phone, contact_email,
 		 usage_purpose, callback_url, status, app_key, app_secret, permissions,
-		 review_remark, reviewed_by, reviewed_at, created_at, updated_at`,
-		appKey, appSecret, defaultPerms, reviewerID, now, id,
+		 merchant_id, review_remark, reviewed_by, reviewed_at, created_at, updated_at`,
+		appKey, appSecret, defaultPerms, reviewerID, now, id, midParam,
 	).Scan(&result.ID, &result.CompanyName, &result.ContactPerson, &result.ContactPhone,
 		&result.ContactEmail, &result.UsagePurpose, &result.CallbackURL, &result.Status,
-		&result.AppKey, &result.AppSecret, &result.Permissions, &result.ReviewRemark,
+		&result.AppKey, &result.AppSecret, &result.Permissions, &scannedMerchantID, &result.ReviewRemark,
 		&reviewedBy, &result.ReviewedAt, &result.CreatedAt, &result.UpdatedAt)
 	if err != nil {
 		return nil, apperrors.NewInternalError("failed to approve application", err)
 	}
 	if reviewedBy.Valid {
 		result.ReviewedBy = &reviewedBy.Int64
+	}
+	if scannedMerchantID.Valid {
+		result.MerchantID = &scannedMerchantID.Int64
 	}
 	return &ApproveResponse{
 		Application: result,
