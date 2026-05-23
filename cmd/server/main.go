@@ -20,6 +20,7 @@ import (
 	"github.com/xltxb/PetManage/internal/balance"
 	"github.com/xltxb/PetManage/internal/category"
 	"github.com/xltxb/PetManage/internal/checkout"
+	"github.com/xltxb/PetManage/internal/commission"
 	"github.com/xltxb/PetManage/internal/complaint"
 	"github.com/xltxb/PetManage/internal/config"
 	"github.com/xltxb/PetManage/internal/contract"
@@ -182,6 +183,9 @@ func main() {
 
 	// Initialize attendance service.
 	attendanceService := attendance.NewService(db)
+
+	// Initialize commission service.
+	commissionService := commission.NewService(db)
 
 	// Initialize merchant role service.
 	merchantRoleService := merchantrole.NewService(db)
@@ -480,6 +484,13 @@ func main() {
 		mux.Handle("GET /api/v1/merchant/attendance/overtime", middleware.Auth(jwtManager)(http.HandlerFunc(makeOvertimeListHandler(attendanceService))))
 		mux.Handle("PUT /api/v1/merchant/attendance/overtime/{id}/review", middleware.Auth(jwtManager)(http.HandlerFunc(makeOvertimeReviewHandler(attendanceService))))
 		mux.Handle("GET /api/v1/merchant/attendance/stats", middleware.Auth(jwtManager)(http.HandlerFunc(makeAttendanceStatsHandler(attendanceService))))
+			// Commission management (auth-protected, merchant-only).
+			mux.Handle("GET /api/v1/merchant/commission/rules", middleware.Auth(jwtManager)(http.HandlerFunc(makeCommissionRulesGetHandler(commissionService))))
+			mux.Handle("PUT /api/v1/merchant/commission/rules", middleware.Auth(jwtManager)(http.HandlerFunc(makeCommissionRulesUpdateHandler(commissionService))))
+			mux.Handle("POST /api/v1/merchant/commission/assign", middleware.Auth(jwtManager)(http.HandlerFunc(makeCommissionAssignHandler(commissionService))))
+			mux.Handle("GET /api/v1/merchant/commission/records", middleware.Auth(jwtManager)(http.HandlerFunc(makeCommissionRecordsHandler(commissionService))))
+			mux.Handle("GET /api/v1/merchant/commission/summary", middleware.Auth(jwtManager)(http.HandlerFunc(makeCommissionSummaryHandler(commissionService))))
+			mux.Handle("POST /api/v1/merchant/commission/deduct", middleware.Auth(jwtManager)(http.HandlerFunc(makeCommissionDeductHandler(commissionService))))
 
 		// Appointment management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/appointments", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCreateHandler(appointmentService))))
