@@ -19,7 +19,10 @@ const (
 	CodeDuplicateLicense = "DUPLICATE_LICENSE"
 	CodeMerchantFrozen   = "MERCHANT_FROZEN"
 	CodeMerchantClosed   = "MERCHANT_CLOSED"
-	CodeAccountLocked    = "ACCOUNT_LOCKED"
+	CodeAccountLocked     = "ACCOUNT_LOCKED"
+	CodeSignatureInvalid  = "SIGNATURE_INVALID"
+	CodeSignatureMissing  = "SIGNATURE_MISSING"
+	CodeAppKeyInvalid     = "APPKEY_INVALID"
 )
 
 var codeToStatus = map[string]int{
@@ -34,7 +37,10 @@ var codeToStatus = map[string]int{
 	CodeDuplicateLicense: http.StatusConflict,
 	CodeMerchantFrozen:   http.StatusForbidden,
 	CodeMerchantClosed:   http.StatusForbidden,
-	CodeAccountLocked:    http.StatusTooManyRequests,
+	CodeAccountLocked:     http.StatusTooManyRequests,
+	CodeSignatureInvalid:  http.StatusUnauthorized,
+	CodeSignatureMissing:  http.StatusBadRequest,
+	CodeAppKeyInvalid:     http.StatusUnauthorized,
 }
 
 // AppError is a structured application error.
@@ -114,6 +120,23 @@ func NewDuplicateLicenseError(msg string) *AppError {
 
 func NewInternalError(msg string, err error) *AppError {
 	return &AppError{Code: CodeInternalError, Message: msg, Err: err}
+}
+
+func NewSignatureInvalidError(msg string) *AppError {
+	return &AppError{Code: CodeSignatureInvalid, Message: msg}
+}
+
+func NewSignatureMissingError(msg string) *AppError {
+	return &AppError{Code: CodeSignatureMissing, Message: msg}
+}
+
+func NewAppKeyInvalidError(msg string) *AppError {
+	return &AppError{Code: CodeAppKeyInvalid, Message: msg}
+}
+
+// NewAppError creates an AppError with an explicit code.
+func NewAppError(code, message string, err error) *AppError {
+	return &AppError{Code: code, Message: message, Err: err}
 }
 
 // Context helpers for request ID.

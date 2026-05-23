@@ -316,3 +316,69 @@ func makeDevPermissionsListHandler(svc *openplatform.Service) http.HandlerFunc {
 		})
 	}
 }
+
+// POST /api/v1/open/token — public, obtain access token with AppKey+AppSecret.
+func makeOpenTokenHandler(tokenService *openplatform.TokenService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req openplatform.TokenRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		pair, _, err := tokenService.GenerateTokenPair(r.Context(), req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to generate token", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(pair)
+	}
+}
+
+// POST /api/v1/open/token/refresh — public, refresh access token.
+func makeOpenRefreshHandler(tokenService *openplatform.TokenService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req openplatform.RefreshRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+
+		if req.RefreshToken == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("refresh_token is required"))
+			return
+		}
+
+		pair, err := tokenService.RefreshAccessToken(r.Context(), req.RefreshToken)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to refresh token", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(pair)
+	}
+}
+
+// GET /api/v1/open/ping — open platform auth required test endpoint.
+func makeOpenPingHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.OpenDevClaimsFromContext(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message":      "pong",
+			"developer_id": claims.DeveloperID,
+			"app_key":      claims.AppKey,
+		})
+	}
+}

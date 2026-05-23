@@ -259,6 +259,14 @@ func main() {
 	// Initialize open platform developer service.
 	openPlatformService := openplatform.NewService(db)
 
+	// Initialize open platform token service.
+	openTokenService := openplatform.NewTokenService(
+		db,
+		cfg.JWT.Secret,
+		cfg.JWT.AccessTokenTTL,
+		cfg.JWT.RefreshTokenTTL,
+	)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
@@ -700,6 +708,13 @@ func main() {
 		mux.Handle("POST /api/v1/open/developers/{id}/approve", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDevApproveHandler(openPlatformService)))))
 		mux.Handle("POST /api/v1/open/developers/{id}/reject", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDevRejectHandler(openPlatformService)))))
 		mux.Handle("PUT /api/v1/open/developers/{id}/permissions", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDevUpdatePermissionsHandler(openPlatformService)))))
+
+		// Open platform — API authentication (public).
+		mux.HandleFunc("POST /api/v1/open/token", makeOpenTokenHandler(openTokenService))
+		mux.HandleFunc("POST /api/v1/open/token/refresh", makeOpenRefreshHandler(openTokenService))
+
+		// Open platform — API test endpoint (open platform auth required).
+		mux.Handle("GET /api/v1/open/ping", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPingHandler())))
 
 		// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",

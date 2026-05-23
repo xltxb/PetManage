@@ -974,7 +974,7 @@
         "请求缺少必需签名参数，返回 SIGNATURE_MISSING 错误",
         "使用refresh_token续期"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F070",
