@@ -1334,3 +1334,43 @@ SESSION 43 — F034 会员等级体系 [2026-05-23 08:45 CST]
   ✓ POS 收银端自动应用等级折扣：黄金会员85折(原价10000→8500)，无会员无折扣(10000)
   ✓ 修改等级折扣规则(90%→85%)后，现有会员等级不变但折扣比例自动更新
 - 提交: 6ce6062 feat(F034): member level system
+
+================================================================================
+SESSION 44 — F035 储值管理 [2026-05-23 09:02 CST]
+================================================================================
+
+- 创建迁移 032: recharge_packages 表 (储值套餐) + balance_transactions 表 (余额变动日志)
+  + members 表新增 principal_balance_cents 和 bonus_balance_cents 列拆分本金/赠送余额
+- 创建 internal/balance/service.go: 储值管理核心服务
+  - 套餐 CRUD: CreatePackage/ListPackages/GetPackage/UpdatePackage/DeletePackage/TogglePackage
+  - Recharge: 支持按套餐充值 (本金+赠送) 和手动金额充值
+  - DeductBalance: 交易内余额扣减 (优先赠送→本金)，保证事务一致性
+  - RefundBalance: 退款回退到本金余额
+  - GetMemberBalance: 查询余额明细 (本金/赠送拆分)
+  - ListTransactions: 余额变动记录查询，支持类型筛选和时间范围分页
+- 更新 internal/member/service.go:
+  - Member 结构体新增 PrincipalBalanceCents/BonusBalanceCents 字段
+  - memberColumns 和 scan 函数同步更新
+- 更新 internal/checkout/service.go:
+  - 余额支付改用 balance.DeductBalance (优先扣减赠送金额，再扣本金)
+  - 每次扣款自动写入 balance_transactions 审计日志
+- 注册 9 个 API 端点 (auth-protected, merchant-only):
+  - POST   /api/v1/merchant/balance/packages — 创建套餐
+  - GET    /api/v1/merchant/balance/packages — 套餐列表
+  - GET    /api/v1/merchant/balance/packages/{id} — 套餐详情
+  - PUT    /api/v1/merchant/balance/packages/{id} — 编辑套餐
+  - DELETE /api/v1/merchant/balance/packages/{id} — 删除套餐
+  - POST   /api/v1/merchant/balance/packages/{id}/toggle — 切换状态
+  - POST   /api/v1/merchant/members/{id}/recharge — 会员充值
+  - GET    /api/v1/merchant/members/{id}/balance — 余额明细
+  - GET    /api/v1/merchant/members/{id}/balance-transactions — 变动记录
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建套餐「充500送100」(principal=50000, bonus=10000, status=active)
+  ✓ 会员充值后余额 60000 (本金50000+赠送10000)，返回 transaction_id 和前后余额
+  ✓ 消费 8000 优先扣减赠送 (bonus 10000→2000, principal 不变); 再消费 5000 扣完赠送+本金 (bonus→0, principal 50000→47000)
+  ✓ 余额变动实时记录: balance_transactions 含 type/reference/principal_before_after/bonus_before_after
+  ✓ 交易记录按类型 (recharge/payment) 和时间范围 (start_time/end_time) 筛选查询
+- 额外验证: 套餐状态切换 (active↔inactive)，禁用套餐充值被拒，手动充值 (无套餐) 正常工作
+- 提交: feat(F035): stored value management
+
+下一步: 继续实现 F036 积分管理
