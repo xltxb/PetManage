@@ -744,6 +744,12 @@ func main() {
 			mux.Handle("POST /api/open/v1/orders/{id}/pay-callback", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPayCallbackHandler(ordersService))))
 			mux.Handle("POST /api/open/v1/orders/{id}/refund", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenOrderRefundHandler(ordersService))))
 
+			// Open platform — F074: marketing & verification API.
+			mux.Handle("POST /api/open/v1/coupons/verify", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenCouponVerifyHandler(db))))
+			mux.Handle("POST /api/open/v1/coupons/{id}/claim", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenCouponClaimHandler(couponService))))
+			mux.Handle("GET /api/open/v1/activities", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenActivitiesHandler(promotionService))))
+			mux.Handle("POST /api/open/v1/groupon/verify", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenGrouponVerifyHandler(verificationService))))
+
 		// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
 		middleware.Auth(jwtManager)(

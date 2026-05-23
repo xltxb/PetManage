@@ -1043,7 +1043,7 @@
         "GET /api/open/v1/activities 查询进行中的活动列表",
         "POST /api/open/v1/groupon/verify 核销第三方团购券，验证券码有效性"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F075",
