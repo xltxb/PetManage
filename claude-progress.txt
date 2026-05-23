@@ -1196,3 +1196,39 @@ SESSION 39 — F028 智能补货建议 [2026-05-23 07:38 CST]
   ✓ 无销售的商品建议数量=预警值-库存（P27: 30-3=27）
   ✓ 按供应商分组（by_supplier 关联 "宠物食品批发公司"）
 - 提交: 9a1ca6b feat(F028): intelligent replenishment suggestions
+
+================================================================================
+SESSION 40 — F029 库存操作管理 [2026-05-23 07:59 CST]
+================================================================================
+
+- 创建 migration 029_inventory_operations:
+  - 新增 warehouses 表 (id, merchant_id, name, address, status)
+  - 新增 warehouse_stocks 表 (warehouse_id, product_id, product_sku_id, stock) 含 upsert 唯一索引
+  - 扩展 stock_flows: 新增 operator_id, operator_name, notes, warehouse_id, related_flow_id 列
+  - 扩展 stock_flows type CHECK: 从 (sale, inbound, adjustment) 扩展为 (sale, inbound, outbound, transfer_out, transfer_in, loss, surplus, adjustment)
+- 实现 internal/inventory/service.go:
+  - Warehouse 管理: CreateWarehouse, ListWarehouses
+  - Inbound (入库): 增加 product/sku stock 和 warehouse_stock，生成 stock_flow 记录
+  - Outbound (出库): 检查库存充足后减少 stock，生成负向 stock_flow
+  - Transfer (调拨): 两个仓库间转移，生成 transfer_out + transfer_in 关联流水
+  - Loss (报损): 减少库存，记录报损原因
+  - Surplus (报溢): 增加库存，记录盈余原因
+  - ListFlows: 分页+筛选（type, product_id, warehouse_id, time range）查询流水
+  - upsertWarehouseStock: 仓库级别库存 upsert (ON CONFLICT ... DO UPDATE)
+  - 全部操作在数据库事务中执行，保证数据一致性
+- 注册 API 路由 (全部 auth-protected, merchant-only):
+  - POST /api/v1/merchant/inventory/warehouses — 创建仓库
+  - GET /api/v1/merchant/inventory/warehouses — 仓库列表
+  - POST /api/v1/merchant/inventory/inbound — 手动入库
+  - POST /api/v1/merchant/inventory/outbound — 手动出库
+  - POST /api/v1/merchant/inventory/transfer — 仓库调拨
+  - POST /api/v1/merchant/inventory/loss — 报损
+  - POST /api/v1/merchant/inventory/surplus — 报溢
+  - GET /api/v1/merchant/inventory/flows — 库存流水查询
+- 端到端验证全部 5 个步骤通过:
+  ✓ 手动入库: 皇家猫粮1.5kg stock 1→21, 流水含 operator_name=f029test
+  ✓ 手动出库: 伟嘉猫罐头400g stock 3→1, 流水含 reason=店面销售领用
+  ✓ 调拨: 主仓库→分仓 transfer_out(-10) + transfer_in(+10), 关联流水
+  ✓ 报损: 狗粮15kg大包装 stock 80→78, 流水含 reason=运输破损
+  ✓ 库存流水查询: 9 条记录含 type, product_name, quantity_change, operator_name, notes, created_at
+- 提交: 11eb264 feat(F029): inventory operations
