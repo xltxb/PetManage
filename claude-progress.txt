@@ -2018,3 +2018,35 @@ SESSION 61 — F058 应付账款管理 [2026-05-23 13:24 CST]
 - 提交: f158ea1 feat(F058): accounts payable management
 
 下一步: 继续实现 F059 自动化财务报表
+
+================================================================================
+SESSION 62 — F067 通知设置 [2026-05-23 21:00 CST]
+================================================================================
+
+- 创建迁移 047: notification_settings 表（商户级场景开关：预约提醒/服务进度/消费通知/生日祝福/库存预警，支持 SMS/微信/系统三个渠道独立启用）
+  + notification_templates 表（SMS/微信模板 ID 和短信签名配置）
+  + notifications 表添加 channel 列（system/sms/wechat）
+- 扩展 internal/notification/settings.go: 通知设置与模板管理核心服务
+  - GetSettings/UpdateSettings: 5 种场景 × 3 渠道的启用/禁用开关批量管理
+  - GetTemplates/UpdateTemplates: SMS/微信模板 ID 和签名配置
+  - SendBirthdayNotifications: 自动扫描 birthday 为当天的活跃会员，推送生日祝福通知
+  - SendInventoryAlertNotifications: 查询库存预警/临期/过期商品，推送库存提醒，24 小时内去重
+  - GetSendRecords: 发送记录查询，支持 category/channel/scenario/user_type 多维度筛选和分页
+- 创建 cmd/server/handlers_notification_settings.go: 7 个 API 端点处理器
+  - GET /api/v1/merchant/notification/settings — 获取通知设置
+  - PUT /api/v1/merchant/notification/settings — 更新通知设置
+  - GET /api/v1/merchant/notification/templates — 获取模板配置
+  - PUT /api/v1/merchant/notification/templates — 更新模板配置
+  - POST /api/v1/merchant/notification/birthday — 触发生日祝福
+  - POST /api/v1/merchant/notification/inventory-alert — 触发库存预警通知
+  - GET /api/v1/merchant/notification/send-records — 发送记录查询
+- 更新 Notification 结构体添加 Channel 字段，同步更新所有扫描函数和 INSERT 语句
+- 端到端验证全部 5 个步骤通过:
+  ✓ 开启/关闭各项通知场景（appointment_reminder/birthday_greeting/inventory_alert 的 SMS/WeChat/system 开关独立可控，PUT 批量更新持久化）
+  ✓ 配置短信签名「贝贝宠物」和模板 ID（SMS_001/WX_APPT_REMIND/SMS_BDAY），PUT 批量更新模板持久化
+  ✓ 会员生日当天自动推送生日祝福（创建 birthday=05-23 的会员→触发 birthday API→sent_count=1，content="亲爱的生日测试会员，祝您生日快乐！"）
+  ✓ 库存预警推送给库管人员（创建 stock=3<alert_stock=20 的商品→触发 inventory-alert API→sent_count=1，content 含库存预警详情）
+  ✓ 通知发送记录可查询（GET send-records: total=2，支持 channel/system/category/birthday_greeting/user_type 筛选 + 分页，24h 去重验证 sent_count=0）
+- 提交: 3f4c5cd feat(F067): notification settings
+
+下一步: 继续实现 F059 自动化财务报表
