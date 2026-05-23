@@ -23,6 +23,8 @@ const (
 	CodeSignatureInvalid  = "SIGNATURE_INVALID"
 	CodeSignatureMissing  = "SIGNATURE_MISSING"
 	CodeAppKeyInvalid     = "APPKEY_INVALID"
+	CodeCSRFMissing       = "CSRF_MISSING"
+	CodeCSRFInvalid       = "CSRF_INVALID"
 )
 
 var codeToStatus = map[string]int{
@@ -41,6 +43,8 @@ var codeToStatus = map[string]int{
 	CodeSignatureInvalid:  http.StatusUnauthorized,
 	CodeSignatureMissing:  http.StatusBadRequest,
 	CodeAppKeyInvalid:     http.StatusUnauthorized,
+	CodeCSRFMissing:       http.StatusForbidden,
+	CodeCSRFInvalid:       http.StatusForbidden,
 }
 
 // AppError is a structured application error.

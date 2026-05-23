@@ -992,6 +992,7 @@ func main() {
 
 	inner := http.Handler(mux)
 	inner = notFoundWrapper(inner)
+	inner = middleware.CSRF()(inner)
 
 	// Serve uploaded files.
 	uploadsFS := http.FileServer(http.Dir("uploads"))
@@ -1003,7 +1004,8 @@ func main() {
 		inner.ServeHTTP(w, r)
 	})
 
-	h := loggingMiddleware(lgr)(chain)
+	h := middleware.SecurityHeaders()(chain)
+	h = loggingMiddleware(lgr)(h)
 	h = middleware.RequestID(h)
 	h = middleware.WithClientIP(h)
 	h = middleware.Recovery(lgr)(h)

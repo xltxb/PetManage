@@ -29,7 +29,9 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-// Login verifies credentials and returns a token pair.
+const maxLoginFailures = 5
+
+// Login verifies credentials and returns a token pair with brute-force lockout protection.
 func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenPair, error) {
 	var userID int64
 	var username string
@@ -38,15 +40,17 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenPair, erro
 	var mustChangePassword bool
 	var merchantStatus sql.NullString
 	var merchantID sql.NullInt64
+	var loginFailCount int
+	var lockedUntil sql.NullTime
 
 	err := s.db.QueryRowContext(ctx,
 		`SELECT u.id, u.username, u.password_hash, COALESCE(u.role_id, 0), COALESCE(u.must_change_password, false),
-			m.status, u.merchant_id
+			m.status, u.merchant_id, u.login_fail_count, u.locked_until
 		 FROM platform_users u
 		 LEFT JOIN merchants m ON u.merchant_id = m.id AND m.deleted_at IS NULL
 		 WHERE u.username = $1 AND u.deleted_at IS NULL AND u.status = 'active'`,
 		req.Username,
-	).Scan(&userID, &username, &passwordHash, &roleID, &mustChangePassword, &merchantStatus, &merchantID)
+	).Scan(&userID, &username, &passwordHash, &roleID, &mustChangePassword, &merchantStatus, &merchantID, &loginFailCount, &lockedUntil)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &apperrors.AppError{
@@ -59,6 +63,15 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenPair, erro
 			Code:    apperrors.CodeInternalError,
 			Message: "authentication failed",
 			Err:     err,
+		}
+	}
+
+	// Check if account is locked due to brute force protection.
+	if lockedUntil.Valid && lockedUntil.Time.After(time.Now()) {
+		remaining := int(time.Until(lockedUntil.Time).Minutes())
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeAccountLocked,
+			Message: "account is locked due to too many failed attempts, try again in " + formatMinutes(remaining),
 		}
 	}
 
@@ -79,15 +92,31 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenPair, erro
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
+		// Increment failed login count for brute force protection.
+		newCount := loginFailCount + 1
+		if newCount >= maxLoginFailures {
+			_, _ = s.db.ExecContext(ctx,
+				`UPDATE platform_users SET login_fail_count = $1, locked_until = NOW() + INTERVAL '15 minutes' WHERE id = $2`,
+				newCount, userID,
+			)
+			return nil, &apperrors.AppError{
+				Code:    apperrors.CodeAccountLocked,
+				Message: "account is locked due to too many failed attempts, try again in 15 minutes",
+			}
+		}
+		_, _ = s.db.ExecContext(ctx,
+			`UPDATE platform_users SET login_fail_count = $1 WHERE id = $2`,
+			newCount, userID,
+		)
 		return nil, &apperrors.AppError{
 			Code:    apperrors.CodeInvalidCredentials,
 			Message: "invalid username or password",
 		}
 	}
 
-	// Update last login time.
+	// Successful login — reset fail count and lock.
 	_, _ = s.db.ExecContext(ctx,
-		`UPDATE platform_users SET last_login_at = NOW() WHERE id = $1`,
+		`UPDATE platform_users SET last_login_at = NOW(), login_fail_count = 0, locked_until = NULL WHERE id = $1`,
 		userID,
 	)
 
@@ -247,7 +276,7 @@ func (s *Service) MerchantLogin(ctx context.Context, req LoginRequest) (*Merchan
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
 		// Increment failed login count.
 		newCount := loginFailCount + 1
-		if newCount >= 3 {
+		if newCount >= maxLoginFailures {
 			_, _ = s.db.ExecContext(ctx,
 				`UPDATE platform_users SET login_fail_count = $1, locked_until = NOW() + INTERVAL '15 minutes' WHERE id = $2`,
 				newCount, userID,
@@ -345,10 +374,27 @@ func (s *Service) ChangePassword(ctx context.Context, userID int64, req ChangePa
 		}
 	}
 
-	if len(req.NewPassword) < 6 {
+	if len(req.NewPassword) < 8 {
 		return nil, &apperrors.AppError{
 			Code:    apperrors.CodeInvalidParams,
-			Message: "new_password must be at least 6 characters",
+			Message: "new_password must be at least 8 characters",
+		}
+	}
+
+	hasLetter := false
+	hasDigit := false
+	for _, ch := range req.NewPassword {
+		switch {
+		case ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z':
+			hasLetter = true
+		case ch >= '0' && ch <= '9':
+			hasDigit = true
+		}
+	}
+	if !hasLetter || !hasDigit {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInvalidParams,
+			Message: "new_password must contain both letters and digits",
 		}
 	}
 
