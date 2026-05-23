@@ -723,6 +723,13 @@ func main() {
 		mux.Handle("GET /api/open/v1/services", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenServiceListHandler(serviceMgmtService))))
 		mux.Handle("GET /api/open/v1/breeds", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenBreedsHandler(dictService))))
 
+			// Open platform — F071: member & pet API.
+			mux.Handle("POST /api/open/v1/members/register", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenMemberRegisterHandler(memberService, memberLevelService))))
+			mux.Handle("GET /api/open/v1/members/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenMemberGetHandler(memberService, memberLevelService))))
+			mux.Handle("PUT /api/open/v1/members/{id}", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenMemberUpdateHandler(memberService))))
+			mux.Handle("POST /api/open/v1/members/{id}/pets", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPetCreateHandler(petService))))
+			mux.Handle("GET /api/open/v1/members/{id}/pets", middleware.OpenAPIAuth(openTokenService)(http.HandlerFunc(makeOpenPetListHandler(petService))))
+
 		// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
 		middleware.Auth(jwtManager)(

@@ -6,9 +6,12 @@ import (
 	"strconv"
 
 	"github.com/xltxb/PetManage/internal/dictionary"
+	"github.com/xltxb/PetManage/internal/member"
+	"github.com/xltxb/PetManage/internal/memberlevel"
 	"github.com/xltxb/PetManage/internal/merchant"
 	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/internal/openplatform"
+	"github.com/xltxb/PetManage/internal/pet"
 	"github.com/xltxb/PetManage/internal/product"
 	"github.com/xltxb/PetManage/internal/servicemgmt"
 	"github.com/xltxb/PetManage/pkg/apperrors"
@@ -226,9 +229,190 @@ func makeOpenBreedsHandler(ds *dictionary.Service) http.HandlerFunc {
 
 // OpenAPIService holds references needed by the open API handlers.
 type OpenAPIService struct {
-	Merchant  *merchant.Service
-	Product   *product.Service
-	ServiceMgmt *servicemgmt.Service
-	Dict      *dictionary.Service
-	Token     *openplatform.TokenService
+	Merchant     *merchant.Service
+	Product      *product.Service
+	ServiceMgmt  *servicemgmt.Service
+	Dict         *dictionary.Service
+	Token        *openplatform.TokenService
+	Member       *member.Service
+	MemberLevel  *memberlevel.Service
+	Pet          *pet.Service
+}
+
+// =============================================================================
+// F071: Member & Pet API handlers
+// =============================================================================
+
+// POST /api/open/v1/members/register — register a new member.
+func makeOpenMemberRegisterHandler(ms *member.Service, mls *memberlevel.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		merchantID := getOpenAPIMerchantID(r)
+		if merchantID == 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("no merchant associated with this developer"))
+			return
+		}
+
+		var req member.CreateMemberRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body: "+err.Error()))
+			return
+		}
+
+		m, err := ms.Create(r.Context(), merchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to register member", err))
+			return
+		}
+
+		// Assign default level if configured.
+		_ = mls.SetDefaultLevel(r.Context(), merchantID, m.ID)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(m)
+	}
+}
+
+// GET /api/open/v1/members/{id} — query member info including level, balance, points.
+func makeOpenMemberGetHandler(ms *member.Service, mls *memberlevel.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		merchantID := getOpenAPIMerchantID(r)
+		if merchantID == 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("no merchant associated with this developer"))
+			return
+		}
+
+		memberID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || memberID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		m, err := ms.GetByID(r.Context(), memberID, merchantID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get member", err))
+			return
+		}
+
+		levelInfo, _ := mls.GetMemberLevel(r.Context(), merchantID, memberID)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"member": m,
+			"level":  levelInfo,
+		})
+	}
+}
+
+// PUT /api/open/v1/members/{id} — update member information.
+func makeOpenMemberUpdateHandler(ms *member.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		merchantID := getOpenAPIMerchantID(r)
+		if merchantID == 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("no merchant associated with this developer"))
+			return
+		}
+
+		memberID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || memberID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		var req member.UpdateMemberRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body: "+err.Error()))
+			return
+		}
+
+		m, err := ms.Update(r.Context(), memberID, merchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to update member", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(m)
+	}
+}
+
+// POST /api/open/v1/members/{id}/pets — add a pet profile to a member.
+func makeOpenPetCreateHandler(ps *pet.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		merchantID := getOpenAPIMerchantID(r)
+		if merchantID == 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("no merchant associated with this developer"))
+			return
+		}
+
+		memberID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || memberID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		var req pet.CreatePetRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body: "+err.Error()))
+			return
+		}
+
+		p, err := ps.Create(r.Context(), merchantID, memberID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create pet", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(p)
+	}
+}
+
+// GET /api/open/v1/members/{id}/pets — list pets for a member.
+func makeOpenPetListHandler(ps *pet.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		merchantID := getOpenAPIMerchantID(r)
+		if merchantID == 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("no merchant associated with this developer"))
+			return
+		}
+
+		memberID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || memberID <= 0 {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid member id"))
+			return
+		}
+
+		pets, err := ps.ListByMember(r.Context(), merchantID, memberID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list pets", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"pets": pets,
+		})
+	}
 }

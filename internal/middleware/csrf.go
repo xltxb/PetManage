@@ -22,6 +22,7 @@ var csrfSkipPaths = []string{
 	"/api/v1/auth/change-password",
 	"/api/v1/merchant/auth/login",
 	"/api/v1/open/",
+	"/api/open/v1/",
 	"/health",
 }
 

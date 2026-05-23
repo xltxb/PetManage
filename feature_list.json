@@ -1002,7 +1002,7 @@
         "POST /api/open/v1/members/:id/pets 添加宠物档案",
         "GET /api/open/v1/members/:id/pets 查询会员的宠物列表"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F072",
