@@ -1534,3 +1534,38 @@ SESSION 48 — F041 服务套餐管理 [2026-05-23 10:05 CST]
 - 提交: be2b98f feat(F041): service package management
 
 下一步: 继续实现 F042 预约创建
+
+================================================================================
+SESSION 49 — F042 预约创建 [2026-05-23 10:10 CST]
+================================================================================
+
+- 数据库迁移 036: 创建 appointments 表
+  - 字段: id, merchant_id, member_id, pet_id, service_item_id, employee_id, appointment_time, status, remark
+  - 索引: merchant+deleted, employee+time, time, member
+  - status 默认值 'pending' (待确认)
+- Go 后端实现 (internal/appointment/service.go):
+  - Appointment/AppointmentDetail/CreateAppointmentRequest/ListParams/ListResult 模型
+  - Create: 验证 member/pet/service_item/employee 存在性，冲突检测（同技师同时段 → CONFLICT）
+  - List: 支持 status 筛选和分页，LEFT JOIN 返回 member_name/pet_name/service_item_name/employee_name，按 appointment_time ASC 排序
+  - GetByID: 单条预约详情查询
+- HTTP handlers (cmd/server/handlers_appointment.go):
+  - POST /api/v1/merchant/appointments — 创建预约 (201 Created)
+  - GET /api/v1/merchant/appointments — 列表（支持 status/page/page_size）
+  - GET /api/v1/merchant/appointments/{id} — 详情
+  - 所有端点需 merchant auth
+- 前端实现:
+  - API client: getAppointments, getAppointment, createAppointment, getEmployees 方法
+  - AppointmentList.vue: 预约列表表格 + 分页 + 状态筛选标签
+  - 创建预约模态窗口: 4步向导（选择会员 → 选择宠物 → 选择服务 → 时间+技师+备注）
+  - 会员搜索、宠物列表、服务项目列表、员工列表均通过 API 加载
+  - 自动填充会员/宠物信息预览
+  - 更新路由: /merchant/appointments → AppointmentList.vue (替换 Placeholder)
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建预约: 会员(52)→宠物(10)→服务(4)→时段(2026-05-24T09:00)→技师(10)，成功返回 status=pending
+  ✓ 同一技师同一时段重复预约 → CONFLICT "the technician already has an appointment at this time"
+  ✓ 预约创建成功后状态为 pending (待确认)
+  ✓ 预约列表 JOIN 返回 member_name/pet_name/service_item_name/employee_name，自动填充信息
+  ✓ 预约列表按 appointment_time ASC 排序 (09:00 在 14:00 前面)
+- 提交: adae2d4 feat(F042): appointment creation
+
+下一步: 继续实现 F043 预约管理
