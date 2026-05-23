@@ -49,6 +49,7 @@ import (
 	"github.com/xltxb/PetManage/internal/servicemgmt"
 	"github.com/xltxb/PetManage/internal/servicerecord"
 	"github.com/xltxb/PetManage/internal/supplier"
+	"github.com/xltxb/PetManage/internal/verification"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
 	"github.com/xltxb/PetManage/pkg/logger"
@@ -204,6 +205,9 @@ func main() {
 
 	// Initialize orders service.
 	ordersService := orders.NewService(db)
+
+	// Initialize verification service.
+	verificationService := verification.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -508,6 +512,12 @@ func main() {
 		mux.Handle("GET /api/v1/merchant/orders", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeOrderListHandler(ordersService)))))
 		mux.Handle("GET /api/v1/merchant/orders/{id}", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeOrderDetailHandler(ordersService)))))
 		mux.Handle("POST /api/v1/merchant/orders/{id}/refund", middleware.Auth(jwtManager)(middleware.RequireMerchantUser(http.HandlerFunc(makeRefundHandler(ordersService, riskService)))))
+
+		// Verification — coupon / service card / third-party voucher (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/verification/coupon", middleware.Auth(jwtManager)(http.HandlerFunc(makeVerifyCouponHandler(verificationService))))
+		mux.Handle("POST /api/v1/merchant/verification/third-party", middleware.Auth(jwtManager)(http.HandlerFunc(makeVerifyThirdPartyHandler(verificationService))))
+		mux.Handle("POST /api/v1/merchant/verification/service-card", middleware.Auth(jwtManager)(http.HandlerFunc(makeVerifyServiceCardHandler(verificationService))))
+		mux.Handle("GET /api/v1/merchant/verification/records", middleware.Auth(jwtManager)(http.HandlerFunc(makeVerificationRecordsHandler(verificationService))))
 
 	// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
@@ -5457,6 +5467,141 @@ func makeInventoryAlertsHandler(svc *inventory.Service) http.HandlerFunc {
 			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get alerts", err))
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+// --- Verification handlers ---
+
+func makeVerifyCouponHandler(svc *verification.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil || claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("merchant authentication required"))
+			return
+		}
+
+		var req verification.VerifyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		if strings.TrimSpace(req.Code) == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("code is required"))
+			return
+		}
+
+		result, err := svc.VerifyCoupon(r.Context(), *claims.MerchantID, claims.UserID, strings.TrimSpace(req.Code), req.OrderID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("coupon verification failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeVerifyThirdPartyHandler(svc *verification.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil || claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("merchant authentication required"))
+			return
+		}
+
+		var req verification.VerifyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		if strings.TrimSpace(req.Code) == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("code is required"))
+			return
+		}
+
+		result, err := svc.VerifyThirdPartyVoucher(r.Context(), *claims.MerchantID, claims.UserID, strings.TrimSpace(req.Code), req.OrderID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("voucher verification failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeVerifyServiceCardHandler(svc *verification.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil || claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("merchant authentication required"))
+			return
+		}
+
+		var req verification.VerifyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		if strings.TrimSpace(req.Code) == "" {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("code is required"))
+			return
+		}
+
+		result, err := svc.VerifyServiceCard(r.Context(), *claims.MerchantID, claims.UserID, strings.TrimSpace(req.Code), req.OrderID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("service card verification failed", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeVerificationRecordsHandler(svc *verification.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.UserClaimsFromContext(r.Context())
+		if claims == nil || claims.MerchantID == nil {
+			apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("merchant authentication required"))
+			return
+		}
+
+		q := r.URL.Query()
+		page, _ := strconv.Atoi(q.Get("page"))
+		pageSize, _ := strconv.Atoi(q.Get("page_size"))
+
+		params := verification.ListParams{
+			VerificationType: q.Get("type"),
+			Code:             q.Get("code"),
+			Page:             page,
+			PageSize:         pageSize,
+		}
+
+		result, err := svc.ListRecords(r.Context(), *claims.MerchantID, params)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list records", err))
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
 	}

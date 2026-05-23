@@ -748,6 +748,56 @@ class ApiClient {
 	    }>(`/api/v1/merchant/schedules/on-duty?appointment_time=${encodeURIComponent(appointmentTime)}`)
 	  }
 
+	  // --- Verification APIs ---
+
+	  verifyCoupon(code: string, orderId?: number) {
+	    return this.request<any>('/api/v1/merchant/verification/coupon', {
+	      method: 'POST',
+	      body: { code, order_id: orderId || null },
+	    })
+	  }
+
+	  verifyThirdPartyVoucher(code: string, orderId?: number) {
+	    return this.request<any>('/api/v1/merchant/verification/third-party', {
+	      method: 'POST',
+	      body: { code, order_id: orderId || null },
+	    })
+	  }
+
+	  verifyServiceCard(code: string, orderId?: number) {
+	    return this.request<any>('/api/v1/merchant/verification/service-card', {
+	      method: 'POST',
+	      body: { code, order_id: orderId || null },
+	    })
+	  }
+
+	  getVerificationRecords(params?: { type?: string; code?: string; page?: number; page_size?: number }) {
+	    const search = new URLSearchParams()
+	    if (params?.type) search.set('type', params.type)
+	    if (params?.code) search.set('code', params.code)
+	    if (params?.page) search.set('page', String(params.page))
+	    if (params?.page_size) search.set('page_size', String(params.page_size))
+	    const qs = search.toString()
+	    return this.request<{
+	      records: Array<{
+	        id: number
+	        merchant_id: number
+	        verification_type: string
+	        code: string
+	        reference_id: number
+	        result: string
+	        detail: string
+	        order_id: number | null
+	        verified_by: number
+	        verified_at: string
+	        created_at: string
+	      }>
+	      total: number
+	      page: number
+	      page_size: number
+	    }>(`/api/v1/merchant/verification/records${qs ? '?' + qs : ''}`)
+	  }
+
 }
 
 export const api = new ApiClient()

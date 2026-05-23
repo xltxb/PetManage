@@ -94,6 +94,11 @@ const router = createRouter({
       component: () => import('@/views/MerchantSettings.vue'),
     },
     {
+      path: '/merchant/verification',
+      name: 'merchant-verification',
+      component: () => import('@/views/Verification.vue'),
+    },
+    {
       path: '/merchants/:id/analysis',
       name: 'merchant-analysis',
       component: () => import('@/views/MerchantAnalysis.vue'),
