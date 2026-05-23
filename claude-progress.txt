@@ -1496,3 +1496,41 @@ SESSION 47 — F039 会员标签管理 [2026-05-23 09:42 CST]
 - 提交: 7f94a81 feat(F039): member tag management
 
 下一步: 继续实现 F041 服务套餐管理
+
+================================================================================
+SESSION 48 — F041 服务套餐管理 [2026-05-23 10:05 CST]
+================================================================================
+
+- 创建迁移 035: service_packages 表（名称、描述、套餐价、原价、有效期天数、使用次数限制）
+  + service_package_items 表（关联 service_items，支持排序）
+- 创建 internal/servicepackage/service.go: 服务套餐 CRUD 服务
+  - Create: 验证服务项有效性，自动计算 original_price（各项原价之和），事务内创建套餐+项目
+  - List: 支持 status/keyword 筛选和分页，自动加载展开项目
+  - GetDetail: 套餐详情+展开的服务项目列表
+  - Update: 支持部分更新，更换项目时自动重算 original_price
+  - Delete: 软删除
+  - ToggleStatus: active/inactive 状态切换
+  - GetPackageItems: 获取套餐展开的服务项目明细
+- 注册 7 个 API 端点:
+  - POST   /api/v1/merchant/service-packages — 创建套餐
+  - GET    /api/v1/merchant/service-packages — 列表（支持 status/keyword/page/page_size）
+  - GET    /api/v1/merchant/service-packages/{id} — 详情+展开项目
+  - PUT    /api/v1/merchant/service-packages/{id} — 编辑套餐
+  - DELETE /api/v1/merchant/service-packages/{id} — 删除
+  - POST   /api/v1/merchant/service-packages/{id}/toggle — 状态切换
+  - GET    /api/v1/merchant/service-packages/{id}/items — 展开项目列表
+- 集成结算系统:
+  - CartItemInput/CartCalculate 新增 package_id 支持，自动展开为子项目明细
+  - CheckoutItem/Checkout 新增 package_id 支持，结账时按比例分配价格到各子项目
+  - 每个子项目生成独立 order_items 记录（service_item_id 正确关联）
+  - 套餐折扣按各项目原价比例分配显示
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建套餐「洗美套餐」：标准洗澡(8000分)+基础美容(7000分)，套餐价12000分(120元)，原价15000分(150元)
+  ✓ POS 购物车选择套餐时自动展开为2个子项目：标准洗澡(6400)+基础美容(5600)，原价15000→应付12000
+  ✓ 套餐价格 12000 < 单独购买 15000，折扣3000按比例分配(1600+1400)
+  ✓ 套餐支持有效期(valid_days=90)和使用限制(usage_limit=10)
+  ✓ 结账执行时每个子项目生成独立 order_items：service_item_id=4(6400分)+service_item_id=5(5600分)
+  ✓ 额外验证: toggle active↔inactive, empty name→INVALID_PARAMS, no items→INVALID_PARAMS, invalid item→NOT_FOUND, unauthorized→401
+- 提交: be2b98f feat(F041): service package management
+
+下一步: 继续实现 F042 预约创建
