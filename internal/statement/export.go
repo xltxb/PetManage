@@ -102,13 +102,22 @@ func (s *Service) ExportProfitLossExcel(ctx context.Context, merchantID int64, s
 		return nil, "", apperrors.NewValidationError("invalid time range: " + err.Error())
 	}
 
-	revenue, cost, expense, err := s.queryProfitLossData(ctx, merchantID, start, end)
+	revenue, productCost, serviceCost, commissionExpense, fixedExpenses, err := s.queryProfitLossData(ctx, merchantID, start, end)
 	if err != nil {
 		return nil, "", err
 	}
 
-	grossProfit := revenue - cost
-	netProfit := grossProfit - expense
+	totalCost := productCost + serviceCost
+	totalExpense := commissionExpense + fixedExpenses
+	grossProfit := revenue - totalCost
+	netProfit := grossProfit - totalExpense
+
+	grossMargin := 0.0
+	netMargin := 0.0
+	if revenue > 0 {
+		grossMargin = float64(grossProfit) / float64(revenue) * 100
+		netMargin = float64(netProfit) / float64(revenue) * 100
+	}
 
 	f := excelize.NewFile()
 	sheet := "利润表"
@@ -131,10 +140,14 @@ func (s *Service) ExportProfitLossExcel(ctx context.Context, merchantID int64, s
 	// Data
 	data := [][]string{
 		{"营收", fmt.Sprintf("%.2f", centsToYuan(revenue))},
-		{"成本", fmt.Sprintf("%.2f", centsToYuan(cost))},
+		{"商品成本", fmt.Sprintf("%.2f", centsToYuan(productCost))},
+		{"服务耗材成本", fmt.Sprintf("%.2f", centsToYuan(serviceCost))},
 		{"毛利", fmt.Sprintf("%.2f", centsToYuan(grossProfit))},
-		{"费用", fmt.Sprintf("%.2f", centsToYuan(expense))},
+		{"毛利率", fmt.Sprintf("%.1f%%", grossMargin)},
+		{"员工提成", fmt.Sprintf("%.2f", centsToYuan(commissionExpense))},
+		{"固定费用", fmt.Sprintf("%.2f", centsToYuan(fixedExpenses))},
 		{"净利", fmt.Sprintf("%.2f", centsToYuan(netProfit))},
+		{"净利率", fmt.Sprintf("%.1f%%", netMargin)},
 	}
 	for i, row := range data {
 		for j, val := range row {
@@ -161,13 +174,22 @@ func (s *Service) ExportProfitLossPDF(ctx context.Context, merchantID int64, sta
 		return nil, "", apperrors.NewValidationError("invalid time range: " + err.Error())
 	}
 
-	revenue, cost, expense, err := s.queryProfitLossData(ctx, merchantID, start, end)
+	revenue, productCost, serviceCost, commissionExpense, fixedExpenses, err := s.queryProfitLossData(ctx, merchantID, start, end)
 	if err != nil {
 		return nil, "", err
 	}
 
-	grossProfit := revenue - cost
-	netProfit := grossProfit - expense
+	totalCost := productCost + serviceCost
+	totalExpense := commissionExpense + fixedExpenses
+	grossProfit := revenue - totalCost
+	netProfit := grossProfit - totalExpense
+
+	grossMargin := 0.0
+	netMargin := 0.0
+	if revenue > 0 {
+		grossMargin = float64(grossProfit) / float64(revenue) * 100
+		netMargin = float64(netProfit) / float64(revenue) * 100
+	}
 
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	pdf.SetAutoPageBreak(true, 15)
@@ -198,10 +220,14 @@ func (s *Service) ExportProfitLossPDF(ctx context.Context, merchantID int64, sta
 	pdf.SetFont("Helvetica", "", 11)
 	rows := [][]string{
 		{"Revenue / 营收", fmt.Sprintf("%.2f", centsToYuan(revenue))},
-		{"Cost / 成本", fmt.Sprintf("%.2f", centsToYuan(cost))},
+		{"Product Cost / 商品成本", fmt.Sprintf("%.2f", centsToYuan(productCost))},
+		{"Service Cost / 服务耗材成本", fmt.Sprintf("%.2f", centsToYuan(serviceCost))},
 		{"Gross Profit / 毛利", fmt.Sprintf("%.2f", centsToYuan(grossProfit))},
-		{"Expense / 费用", fmt.Sprintf("%.2f", centsToYuan(expense))},
+		{"Gross Margin / 毛利率", fmt.Sprintf("%.1f%%", grossMargin)},
+		{"Commission / 员工提成", fmt.Sprintf("%.2f", centsToYuan(commissionExpense))},
+		{"Fixed Expenses / 固定费用", fmt.Sprintf("%.2f", centsToYuan(fixedExpenses))},
 		{"Net Profit / 净利", fmt.Sprintf("%.2f", centsToYuan(netProfit))},
+		{"Net Margin / 净利率", fmt.Sprintf("%.1f%%", netMargin)},
 	}
 	for _, row := range rows {
 		for i, val := range row {
@@ -644,7 +670,7 @@ func (s *Service) ExportServicePerformancePDF(ctx context.Context, merchantID in
 // Data query helpers
 // ---------------------------------------------------------------------------
 
-func (s *Service) queryProfitLossData(ctx context.Context, merchantID int64, start, end time.Time) (revenue, cost, expense int64, err error) {
+func (s *Service) queryProfitLossData(ctx context.Context, merchantID int64, start, end time.Time) (revenue, productCost, serviceCost, commissionExpense, fixedExpenses int64, err error) {
 	err = s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(o.total_cents), 0) -
 		        COALESCE((SELECT SUM(r.amount_cents) FROM refunds r
@@ -656,35 +682,46 @@ func (s *Service) queryProfitLossData(ctx context.Context, merchantID int64, sta
 		   AND o.created_at >= $2 AND o.created_at <= $3`,
 		merchantID, start, end).Scan(&revenue)
 	if err != nil {
-		return 0, 0, 0, apperrors.NewInternalError("querying revenue", err)
+		return 0, 0, 0, 0, 0, apperrors.NewInternalError("querying revenue", err)
 	}
 
+	// Cost: frozen order item costs (product + service consumables)
 	err = s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(p.cost_cents * oi.quantity), 0)
+		`SELECT COALESCE(SUM(CASE WHEN oi.product_id IS NOT NULL THEN oi.cost_cents ELSE 0 END), 0),
+		        COALESCE(SUM(CASE WHEN oi.service_item_id IS NOT NULL THEN oi.cost_cents ELSE 0 END), 0)
 		 FROM order_items oi
 		 JOIN orders o ON o.id = oi.order_id
-		 JOIN products p ON p.id = oi.product_id
 		 WHERE o.merchant_id = $1
-		   AND oi.product_id IS NOT NULL
 		   AND o.status IN ('completed', 'partially_refunded', 'refunded')
 		   AND o.created_at >= $2 AND o.created_at <= $3`,
-		merchantID, start, end).Scan(&cost)
+		merchantID, start, end).Scan(&productCost, &serviceCost)
 	if err != nil {
-		return 0, 0, 0, apperrors.NewInternalError("querying cost", err)
+		return 0, 0, 0, 0, 0, apperrors.NewInternalError("querying cost", err)
 	}
 
+	// Commission expense
 	err = s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(total_cents), 0)
-		 FROM purchase_orders
+		`SELECT COALESCE(SUM(commission_cents), 0)
+		 FROM commission_records
 		 WHERE merchant_id = $1
-		   AND status = 'received'
-		   AND received_at >= $2 AND received_at <= $3`,
-		merchantID, start, end).Scan(&expense)
+		   AND status = 'confirmed'
+		   AND created_at >= $2 AND created_at <= $3`,
+		merchantID, start, end).Scan(&commissionExpense)
 	if err != nil {
-		return 0, 0, 0, apperrors.NewInternalError("querying expenses", err)
+		return 0, 0, 0, 0, 0, apperrors.NewInternalError("querying commission expenses", err)
 	}
 
-	return revenue, cost, expense, nil
+	// Fixed expenses
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(amount_cents), 0)
+		 FROM fixed_expenses
+		 WHERE merchant_id = $1 AND deleted_at IS NULL`,
+		merchantID).Scan(&fixedExpenses)
+	if err != nil {
+		return 0, 0, 0, 0, 0, apperrors.NewInternalError("querying fixed expenses", err)
+	}
+
+	return revenue, productCost, serviceCost, commissionExpense, fixedExpenses, nil
 }
 
 func (s *Service) queryRevenueDetailData(ctx context.Context, merchantID int64, start, end time.Time) ([]RevenueDetailItem, error) {
@@ -774,8 +811,8 @@ func (s *Service) queryProductSalesData(ctx context.Context, merchantID int64, s
 			COALESCE(pc.name, '未分类') AS category_name,
 			SUM(oi.quantity) AS sales_count,
 			SUM(oi.price_cents * oi.quantity) AS amount_cents,
-			SUM(p.cost_cents * oi.quantity) AS cost_cents,
-			SUM((oi.price_cents - COALESCE(p.cost_cents, 0)) * oi.quantity) AS profit_cents
+			SUM(oi.cost_cents) AS cost_cents,
+			SUM(oi.price_cents * oi.quantity) - SUM(oi.cost_cents) AS profit_cents
 		 FROM order_items oi
 		 JOIN orders o ON o.id = oi.order_id
 		 LEFT JOIN products p ON p.id = oi.product_id

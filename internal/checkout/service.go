@@ -64,6 +64,7 @@ type OrderItemDetail struct {
 	ServiceName   string            `json:"service_name,omitempty"`
 	PriceCents    int               `json:"price_cents"`
 	Quantity      int               `json:"quantity"`
+	CostCents     int               `json:"cost_cents"`
 }
 
 // PaymentDetail is a payment in the order response.
@@ -580,13 +581,13 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 
 		if item.ServiceItemID != nil && *item.ServiceItemID > 0 {
 			var name string
-			var regPrice, memberPrice int
+			var regPrice, memberPrice, costCents int
 			err := tx.QueryRowContext(ctx,
-				`SELECT name, price_cents, member_price_cents FROM service_items
+				`SELECT name, price_cents, member_price_cents, COALESCE(cost_cents, 0) FROM service_items
 				 WHERE id = $1 AND merchant_id = $2 AND status = 'active' AND deleted_at IS NULL
 				 FOR UPDATE`,
 				*item.ServiceItemID, merchantID,
-			).Scan(&name, &regPrice, &memberPrice)
+			).Scan(&name, &regPrice, &memberPrice, &costCents)
 			if err == sql.ErrNoRows {
 				return nil, apperrors.NewNotFoundError("service item not found or inactive: " + strconv.FormatInt(*item.ServiceItemID, 10))
 			}
@@ -605,21 +606,23 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 				ServiceName:   name,
 				PriceCents:    priceCents,
 				Quantity:      item.Quantity,
+				CostCents:     costCents * item.Quantity,
 			}
 		} else if item.SkuID != nil && *item.SkuID > 0 {
 			var name string
 			var stock int
 			var specJSON []byte
 			var skuSpecInfo map[string]string
+			var costCents int
 			err := tx.QueryRowContext(ctx,
-				`SELECT p.name, ps.price_cents, ps.stock, ps.spec_info
+				`SELECT p.name, ps.price_cents, ps.stock, ps.spec_info, COALESCE(ps.cost_cents, p.cost_cents, 0)
 				 FROM product_skus ps
 				 JOIN products p ON p.id = ps.product_id
 				 WHERE ps.id = $1 AND ps.status = 'active' AND ps.deleted_at IS NULL
 				   AND p.merchant_id = $2 AND p.status = 'active' AND p.deleted_at IS NULL
 				 FOR UPDATE OF ps`,
 				*item.SkuID, merchantID,
-			).Scan(&name, &priceCents, &stock, &specJSON)
+			).Scan(&name, &priceCents, &stock, &specJSON, &costCents)
 			if err == sql.ErrNoRows {
 				return nil, apperrors.NewNotFoundError("SKU not found or inactive: " + strconv.FormatInt(*item.SkuID, 10))
 			}
@@ -640,15 +643,17 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 				SkuSpecInfo: skuSpecInfo,
 				PriceCents:  priceCents,
 				Quantity:    item.Quantity,
+				CostCents:   costCents * item.Quantity,
 			}
 		} else if item.ProductID != nil && *item.ProductID > 0 {
 			var name string
 			var stock int
+			var costCents int
 			err := tx.QueryRowContext(ctx,
-				`SELECT name, price_cents, stock FROM products
+				`SELECT name, price_cents, stock, COALESCE(cost_cents, 0) FROM products
 				 WHERE id = $1 AND merchant_id = $2 AND status = 'active' AND deleted_at IS NULL
 				 FOR UPDATE`, *item.ProductID, merchantID,
-			).Scan(&name, &priceCents, &stock)
+			).Scan(&name, &priceCents, &stock, &costCents)
 			if err == sql.ErrNoRows {
 				return nil, apperrors.NewNotFoundError("product not found or inactive: " + strconv.FormatInt(*item.ProductID, 10))
 			}
@@ -664,6 +669,7 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 				ProductName: name,
 				PriceCents:  priceCents,
 				Quantity:    item.Quantity,
+				CostCents:   costCents * item.Quantity,
 			}
 		} else {
 			return nil, apperrors.NewValidationError("each item must have product_id, sku_id, service_item_id, or package_id")
@@ -939,9 +945,9 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 
 		if item.ServiceItemID != nil && *item.ServiceItemID > 0 {
 			_, err := tx.ExecContext(ctx,
-				`INSERT INTO order_items (order_id, product_id, product_name, price_cents, quantity, service_item_id)
-				 VALUES ($1, $2, $3, $4, $5, $6)`,
-				orderID, nil, detail.ProductName, detail.PriceCents, item.Quantity, *item.ServiceItemID,
+				`INSERT INTO order_items (order_id, product_id, product_name, price_cents, quantity, service_item_id, cost_cents)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+				orderID, nil, detail.ProductName, detail.PriceCents, item.Quantity, *item.ServiceItemID, detail.CostCents,
 			)
 			if err != nil {
 				return nil, apperrors.NewInternalError("failed to create order item", err)
@@ -956,9 +962,9 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 
 		if item.SkuID != nil && *item.SkuID > 0 {
 			_, err := tx.ExecContext(ctx,
-				`INSERT INTO order_items (order_id, product_id, product_name, price_cents, quantity, product_sku_id, sku_spec_info)
-				 SELECT $1, $2, name, $3, $4, $5, $6 FROM products WHERE id = $2`,
-				orderID, item.ProductID, detail.PriceCents, item.Quantity, *item.SkuID, skuSpecJSON,
+				`INSERT INTO order_items (order_id, product_id, product_name, price_cents, quantity, product_sku_id, sku_spec_info, cost_cents)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				orderID, item.ProductID, detail.ProductName, detail.PriceCents, item.Quantity, *item.SkuID, skuSpecJSON, detail.CostCents,
 			)
 			if err != nil {
 				return nil, apperrors.NewInternalError("failed to create order item", err)
@@ -983,9 +989,9 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 			}
 		} else if item.ProductID != nil && *item.ProductID > 0 {
 			_, err := tx.ExecContext(ctx,
-				`INSERT INTO order_items (order_id, product_id, product_name, price_cents, quantity)
-				 SELECT $1, $2, name, $3, $4 FROM products WHERE id = $2`,
-				orderID, *item.ProductID, detail.PriceCents, item.Quantity,
+				`INSERT INTO order_items (order_id, product_id, product_name, price_cents, quantity, cost_cents)
+				 VALUES ($1, $2, $3, $4, $5, $6)`,
+				orderID, *item.ProductID, detail.ProductName, detail.PriceCents, item.Quantity, detail.CostCents,
 			)
 			if err != nil {
 				return nil, apperrors.NewInternalError("failed to create order item", err)

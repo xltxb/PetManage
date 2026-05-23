@@ -21,6 +21,7 @@ import (
 	"github.com/xltxb/PetManage/internal/category"
 	"github.com/xltxb/PetManage/internal/checkout"
 	"github.com/xltxb/PetManage/internal/commission"
+	"github.com/xltxb/PetManage/internal/fixedexpense"
 	"github.com/xltxb/PetManage/internal/revenue"
 	"github.com/xltxb/PetManage/internal/statement"
 	"github.com/xltxb/PetManage/internal/complaint"
@@ -193,6 +194,9 @@ func main() {
 
 	// Initialize commission service.
 	commissionService := commission.NewService(db)
+		// Initialize fixed expense service.
+		fixedExpenseService := fixedexpense.NewService(db)
+
 
 	// Initialize revenue service.
 	revenueService := revenue.NewService(db)
@@ -508,6 +512,11 @@ func main() {
 		mux.Handle("PUT /api/v1/merchant/attendance/overtime/{id}/review", middleware.Auth(jwtManager)(http.HandlerFunc(makeOvertimeReviewHandler(attendanceService))))
 		mux.Handle("GET /api/v1/merchant/attendance/stats", middleware.Auth(jwtManager)(http.HandlerFunc(makeAttendanceStatsHandler(attendanceService))))
 			// Commission management (auth-protected, merchant-only).
+			mux.Handle("POST /api/v1/merchant/fixed-expenses", middleware.Auth(jwtManager)(http.HandlerFunc(makeCreateFixedExpenseHandler(fixedExpenseService))))
+			mux.Handle("GET /api/v1/merchant/fixed-expenses", middleware.Auth(jwtManager)(http.HandlerFunc(makeListFixedExpensesHandler(fixedExpenseService))))
+			mux.Handle("PUT /api/v1/merchant/fixed-expenses/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeUpdateFixedExpenseHandler(fixedExpenseService))))
+			mux.Handle("DELETE /api/v1/merchant/fixed-expenses/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeDeleteFixedExpenseHandler(fixedExpenseService))))
+
 			mux.Handle("GET /api/v1/merchant/commission/rules", middleware.Auth(jwtManager)(http.HandlerFunc(makeCommissionRulesGetHandler(commissionService))))
 			mux.Handle("PUT /api/v1/merchant/commission/rules", middleware.Auth(jwtManager)(http.HandlerFunc(makeCommissionRulesUpdateHandler(commissionService))))
 			mux.Handle("POST /api/v1/merchant/commission/assign", middleware.Auth(jwtManager)(http.HandlerFunc(makeCommissionAssignHandler(commissionService))))

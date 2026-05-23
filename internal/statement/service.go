@@ -58,44 +58,68 @@ func (s *Service) GetProfitLoss(ctx context.Context, merchantID int64, year, mon
 		return nil, apperrors.NewInternalError("querying revenue", err)
 	}
 
-	// Cost: cost of goods sold (product cost_cents × quantity)
-	var cost int64
+	// Cost: frozen order item costs (product + service consumables)
+	var productCost, serviceCost int64
 	err = s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(p.cost_cents * oi.quantity), 0)
+		`SELECT COALESCE(SUM(CASE WHEN oi.product_id IS NOT NULL THEN oi.cost_cents ELSE 0 END), 0),
+		        COALESCE(SUM(CASE WHEN oi.service_item_id IS NOT NULL THEN oi.cost_cents ELSE 0 END), 0)
 		 FROM order_items oi
 		 JOIN orders o ON o.id = oi.order_id
-		 JOIN products p ON p.id = oi.product_id
 		 WHERE o.merchant_id = $1
-		   AND oi.product_id IS NOT NULL
 		   AND o.status IN ('completed', 'partially_refunded', 'refunded')
 		   AND o.created_at >= $2 AND o.created_at <= $3`,
-		merchantID, start, end).Scan(&cost)
+		merchantID, start, end).Scan(&productCost, &serviceCost)
 	if err != nil {
 		return nil, apperrors.NewInternalError("querying cost", err)
 	}
+	totalCost := productCost + serviceCost
 
-	// Expense: purchase orders received (stocking cost)
-	var expense int64
+	// Commission expense: confirmed commission records
+	var commissionExpense int64
 	err = s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(total_cents), 0)
-		 FROM purchase_orders
+		`SELECT COALESCE(SUM(commission_cents), 0)
+		 FROM commission_records
 		 WHERE merchant_id = $1
-		   AND status = 'received'
-		   AND received_at >= $2 AND received_at <= $3`,
-		merchantID, start, end).Scan(&expense)
+		   AND status = 'confirmed'
+		   AND created_at >= $2 AND created_at <= $3`,
+		merchantID, start, end).Scan(&commissionExpense)
 	if err != nil {
-		return nil, apperrors.NewInternalError("querying expenses", err)
+		return nil, apperrors.NewInternalError("querying commission expenses", err)
 	}
 
-	grossProfit := revenue - cost
-	netProfit := grossProfit - expense
+	// Fixed expenses: rent, utilities, salary, other
+	var fixedExpenses int64
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(amount_cents), 0)
+		 FROM fixed_expenses
+		 WHERE merchant_id = $1 AND deleted_at IS NULL`,
+		merchantID).Scan(&fixedExpenses)
+	if err != nil {
+		return nil, apperrors.NewInternalError("querying fixed expenses", err)
+	}
+
+	totalExpense := commissionExpense + fixedExpenses
+	grossProfit := revenue - totalCost
+	netProfit := grossProfit - totalExpense
+
+	// Margin rates (percentage, avoid division by zero)
+	grossMargin := 0.0
+	netMargin := 0.0
+	if revenue > 0 {
+		grossMargin = float64(grossProfit) / float64(revenue) * 100
+		netMargin = float64(netProfit) / float64(revenue) * 100
+	}
 
 	items := []ProfitLossItem{
 		{Label: "营收", AmountCents: revenue},
-		{Label: "成本", AmountCents: cost},
+		{Label: "商品成本", AmountCents: productCost},
+		{Label: "服务耗材成本", AmountCents: serviceCost},
 		{Label: "毛利", AmountCents: grossProfit},
-		{Label: "费用", AmountCents: expense},
+		{Label: "毛利率", AmountCents: int64(grossMargin * 100)},
+		{Label: "员工提成", AmountCents: commissionExpense},
+		{Label: "固定费用", AmountCents: fixedExpenses},
 		{Label: "净利", AmountCents: netProfit},
+		{Label: "净利率", AmountCents: int64(netMargin * 100)},
 	}
 
 	return &ProfitLossResult{
@@ -265,8 +289,8 @@ func (s *Service) GetProductSales(ctx context.Context, merchantID int64, year, m
 			COALESCE(pc.name, '未分类') AS category_name,
 			SUM(oi.quantity) AS sales_count,
 			SUM(oi.price_cents * oi.quantity) AS amount_cents,
-			SUM(p.cost_cents * oi.quantity) AS cost_cents,
-			SUM((oi.price_cents - COALESCE(p.cost_cents, 0)) * oi.quantity) AS profit_cents
+			SUM(oi.cost_cents) AS cost_cents,
+			SUM(oi.price_cents * oi.quantity) - SUM(oi.cost_cents) AS profit_cents
 		 FROM order_items oi
 		 JOIN orders o ON o.id = oi.order_id
 		 LEFT JOIN products p ON p.id = oi.product_id

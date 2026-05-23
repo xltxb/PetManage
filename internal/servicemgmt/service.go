@@ -49,6 +49,7 @@ type ServiceItem struct {
 	MinWeightKg      float64 `json:"min_weight_kg"`
 	MaxWeightKg      float64 `json:"max_weight_kg"`
 	Materials        string  `json:"materials"`
+	CostCents        int     `json:"cost_cents"`
 	Status           string  `json:"status"`
 	CreatedAt        string  `json:"created_at"`
 	UpdatedAt        string  `json:"updated_at"`
@@ -65,6 +66,7 @@ type CreateServiceItemRequest struct {
 	MinWeightKg      float64 `json:"min_weight_kg"`
 	MaxWeightKg      float64 `json:"max_weight_kg"`
 	Materials        string  `json:"materials"`
+	CostCents        int     `json:"cost_cents"`
 }
 
 // UpdateServiceItemRequest is the request body for updating a service item.
@@ -77,6 +79,7 @@ type UpdateServiceItemRequest struct {
 	MinWeightKg      *float64 `json:"min_weight_kg"`
 	MaxWeightKg      *float64 `json:"max_weight_kg"`
 	Materials        *string  `json:"materials"`
+	CostCents        *int     `json:"cost_cents"`
 	CategoryID       *int64   `json:"category_id"`
 }
 
@@ -315,7 +318,7 @@ func buildCategoryTree(flat []*ServiceCategory) []*ServiceCategory {
 
 // --- Service Items ---
 
-const serviceItemColumns = `id, merchant_id, category_id, name, duration_minutes, price_cents, member_price_cents, pet_type, min_weight_kg, max_weight_kg, materials, status, created_at, updated_at`
+const serviceItemColumns = `id, merchant_id, category_id, name, duration_minutes, price_cents, member_price_cents, pet_type, min_weight_kg, max_weight_kg, materials, cost_cents, status, created_at, updated_at`
 
 func scanItemRow(row *sql.Row) (*ServiceItem, error) {
 	it := &ServiceItem{}
@@ -323,7 +326,7 @@ func scanItemRow(row *sql.Row) (*ServiceItem, error) {
 	err := row.Scan(
 		&it.ID, &it.MerchantID, &it.CategoryID, &it.Name, &it.DurationMinutes,
 		&it.PriceCents, &it.MemberPriceCents, &it.PetType,
-		&it.MinWeightKg, &it.MaxWeightKg, &it.Materials, &it.Status,
+		&it.MinWeightKg, &it.MaxWeightKg, &it.Materials, &it.CostCents, &it.Status,
 		&createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -340,7 +343,7 @@ func scanItemRows(rows *sql.Rows) (*ServiceItem, error) {
 	err := rows.Scan(
 		&it.ID, &it.MerchantID, &it.CategoryID, &it.Name, &it.DurationMinutes,
 		&it.PriceCents, &it.MemberPriceCents, &it.PetType,
-		&it.MinWeightKg, &it.MaxWeightKg, &it.Materials, &it.Status,
+		&it.MinWeightKg, &it.MaxWeightKg, &it.Materials, &it.CostCents, &it.Status,
 		&createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -383,11 +386,11 @@ func (s *Service) CreateItem(ctx context.Context, merchantID int64, req CreateSe
 	}
 
 	it, err := scanItemRow(s.db.QueryRowContext(ctx,
-		`INSERT INTO service_items (merchant_id, category_id, name, duration_minutes, price_cents, member_price_cents, pet_type, min_weight_kg, max_weight_kg, materials, status)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active')
+		`INSERT INTO service_items (merchant_id, category_id, name, duration_minutes, price_cents, member_price_cents, pet_type, min_weight_kg, max_weight_kg, materials, cost_cents, status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active')
 		 RETURNING `+serviceItemColumns,
 		merchantID, req.CategoryID, req.Name, req.DurationMinutes, req.PriceCents, req.MemberPriceCents,
-		req.PetType, req.MinWeightKg, req.MaxWeightKg, req.Materials,
+		req.PetType, req.MinWeightKg, req.MaxWeightKg, req.Materials, req.CostCents,
 	))
 	if err != nil {
 		return nil, apperrors.NewInternalError("failed to create service item", err)
@@ -457,6 +460,9 @@ func (s *Service) UpdateItem(ctx context.Context, itemID, merchantID int64, req 
 	if req.Materials != nil {
 		existing.Materials = *req.Materials
 	}
+	if req.CostCents != nil {
+		existing.CostCents = *req.CostCents
+	}
 	if req.CategoryID != nil {
 		var exists bool
 		err := s.db.QueryRowContext(ctx,
@@ -476,12 +482,12 @@ func (s *Service) UpdateItem(ctx context.Context, itemID, merchantID int64, req 
 		`UPDATE service_items SET
 		 name = $1, duration_minutes = $2, price_cents = $3, member_price_cents = $4,
 		 pet_type = $5, min_weight_kg = $6, max_weight_kg = $7, materials = $8,
-		 category_id = $9, updated_at = NOW()
-		 WHERE id = $10 AND merchant_id = $11 AND deleted_at IS NULL
+		 cost_cents = $9, category_id = $10, updated_at = NOW()
+		 WHERE id = $11 AND merchant_id = $12 AND deleted_at IS NULL
 		 RETURNING `+serviceItemColumns,
 		existing.Name, existing.DurationMinutes, existing.PriceCents, existing.MemberPriceCents,
 		existing.PetType, existing.MinWeightKg, existing.MaxWeightKg, existing.Materials,
-		existing.CategoryID, itemID, merchantID,
+		existing.CostCents, existing.CategoryID, itemID, merchantID,
 	))
 	if err != nil {
 		return nil, apperrors.NewInternalError("failed to update service item", err)
