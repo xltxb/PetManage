@@ -2282,3 +2282,67 @@ SESSION 39 — F065 促销活动管理 [2026-05-23 22:43 CST]
   ✓ 活动到期后自动失效：过期活动不出现于 active 列表，CartCalculate 无优惠效果 (promotion_name=NONE)
   ✓ 活动数据实时统计：total_orders=2, total_discount_cents=16800 (5000+11800), flash_sale remaining_stock=49 (50-1)
 - 提交: 105ccd7 feat(F065): promotion activity management
+
+================================================================================
+SESSION 5 — F066 服务与商品评价管理 [2026-05-23 23:03 CST]
+================================================================================
+
+- 迁移 053: 为 service_evaluations 添加 images、reply、replied_at 字段，创建 product_reviews 表
+- 新建 internal/review/service.go: 统一评价管理服务
+  - ListReviews: 合并 service_evaluations 和 product_reviews 的统一列表，支持好评/差评筛选(rating_min/rating_max)、回复状态筛选、时间范围、分页
+  - GetReview: 按类型(service/product)和ID查询单条评价详情
+  - SubmitReply: 商家回复评价，只能回复一次，记录回复时间
+  - GetStats: 好评率统计（总评价数、好评数/差评数/中性数、好评率、平均评分、已回复/未回复数），支持 today/week/month/year/all 时间维度
+  - GetEmployeeStats: 技师评分统计（按员工聚合的评价数、平均评分、好评数、差评数）
+- 更新 servicerecord.EvaluateRequest 支持 images 字段
+- 新增 API 端点:
+  - GET /api/v1/merchant/reviews — 评价列表（支持筛选和分页）
+  - GET /api/v1/merchant/reviews/{type}/{id} — 评价详情
+  - POST /api/v1/merchant/reviews/{type}/{id}/reply — 商家回复
+  - GET /api/v1/merchant/reviews/stats — 好评率统计
+  - GET /api/v1/merchant/reviews/employee-stats — 技师评分统计
+- 端到端验证全部 5 个步骤通过:
+  ✓ 服务完成后提交评价（5星+文字+"images":["url1","url2"]），图片正确存储
+  ✓ 评价列表统一返回 service+product 评价，好评筛选 rating_min=4 返回 2 条，差评筛选 rating_max=2 返回 1 条
+  ✓ 商家回复差评成功，回复内容和时间公开可见，重复回复被拒绝
+  ✓ 好评率统计正确: 总评价 3 条，好评率 66.7%，平均评分 3.7，已回复 1/未回复 2
+  ✓ 技师评分统计: 考勤测试员工 1 评 5.0 分，周八收银 1 评 2.0 分
+- 提交: 0ebd4ca feat(F066): service and product review management
+
+================================================================================
+SESSION 80 — F068 开放平台开发者入驻 [2026-05-23 23:26 CST]
+================================================================================
+
+- 创建迁移 054: open_developers 表 (company_name, contact_person, contact_phone, contact_email, usage_purpose, callback_url, status, app_key, app_secret, permissions JSONB, review_remark, reviewed_by, reviewed_at)
+- 创建 internal/openplatform/service.go: 开发者入驻管理服务
+  - Apply: 第三方开发者提交入驻申请，必填字段校验（company_name/contact_person/contact_phone/contact_email/usage_purpose）
+  - GetByID: 公开查询申请详情，approved 状态显示 AppKey/AppSecret 和接口权限
+  - ListPending: 平台管理员查看待审核开发者列表，支持分页
+  - List: 全量开发者列表，支持按 status 筛选和分页
+  - Approve: 审核通过 → 自动生成 AppKey (AK+16位hex) 和 AppSecret (AS+32位hex)，分配默认权限 (shop:read, products:read, services:read, breeds:read)
+  - Reject: 驳回申请，填写 review_remark，记录操作人和时间
+  - Resubmit: 被驳回的申请重新提交 → status 重置为 pending，清除审核信息
+  - UpdatePermissions: 平台管理员更新开发者 API 权限范围
+  - RequestPermissions: 开发者自己申请追加接口权限，合并去重
+  - GetAvailablePermissions: 返回 14 个可分配的 API 权限列表
+- 注册 10 个 API 端点:
+  - POST   /api/v1/open/developers/apply                      — 提交入驻申请 (public)
+  - GET    /api/v1/open/developers/{id}                         — 查询申请详情 (public)
+  - PUT    /api/v1/open/developers/{id}/apply                   — 重新提交 (public)
+  - GET    /api/v1/open/developers/permissions/available        — 可用权限列表 (public)
+  - POST   /api/v1/open/developers/{id}/request-permissions     — 开发者申请追加权限 (public)
+  - GET    /api/v1/open/developers/pending                      — 待审核列表 (platform auth)
+  - GET    /api/v1/open/developers                              — 全量列表 (platform auth)
+  - POST   /api/v1/open/developers/{id}/approve                 — 审核通过 (platform auth)
+  - POST   /api/v1/open/developers/{id}/reject                  — 审核驳回 (platform auth)
+  - PUT    /api/v1/open/developers/{id}/permissions             — 更新权限 (platform auth)
+- 14 个可分配 API 权限: shop:read, products:read, services:read, breeds:read, members:read/write, pets:read/write, bookings:read/write, orders:read/write, coupons:read/write
+- 端到端验证全部 5 个步骤通过:
+  ✓ 开发者提交入驻申请：企业信息、对接用途、回调地址 → ID:1, status:pending
+  ✓ 平台审核通过后自动生成 AppKey (AK9dadf1b0e4a7bd64) 和 AppSecret (AS67051b366345574ed90ac08ecfee3f24)，默认权限含 shop:read/products:read/services:read/breeds:read
+  ✓ 开发者可查看自己的 AppKey/AppSecret 和接口权限范围 (GET /api/v1/open/developers/1 公开访问)，可用权限列表含 14 个权限项
+  ✓ 审核驳回需填写原因 (review_remark)，无原因提示 INVALID_PARAMS；驳回后重新提交 (PUT /apply) → status:pending, review_remark 清除
+  ✓ 开发者可申请追加接口权限 (POST /request-permissions 合并去重)，平台管理员可更新权限范围 (PUT /permissions)
+- 额外验证: 必填字段缺失 → INVALID_PARAMS (含缺失字段列表), 已通过申请不可再次通过 → INVALID_PARAMS "only pending applications can be approved"
+- 提交: --见下一条--
+

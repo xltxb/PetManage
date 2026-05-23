@@ -51,6 +51,7 @@ import (
 	"github.com/xltxb/PetManage/internal/purchase"
 	"github.com/xltxb/PetManage/internal/replenishment"
 	"github.com/xltxb/PetManage/internal/report"
+	"github.com/xltxb/PetManage/internal/openplatform"
 	"github.com/xltxb/PetManage/internal/review"
 	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
@@ -254,6 +255,9 @@ func main() {
 
 		// Initialize service card management service.
 		scService := servicecard.NewService(db)
+
+	// Initialize open platform developer service.
+	openPlatformService := openplatform.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -682,6 +686,20 @@ func main() {
 			mux.Handle("GET /api/v1/merchant/service-cards/code", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCCardByCodeHandler(scService))))
 			mux.Handle("GET /api/v1/merchant/service-cards", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCAllCardsHandler(scService))))
 			mux.Handle("GET /api/v1/merchant/service-cards/usage-logs/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSCUsageLogsHandler(scService))))
+
+		// Open platform — public developer onboarding.
+		mux.HandleFunc("POST /api/v1/open/developers/apply", makeDevApplyHandler(openPlatformService))
+		mux.HandleFunc("GET /api/v1/open/developers/{id}", makeDevGetHandler(openPlatformService))
+		mux.HandleFunc("PUT /api/v1/open/developers/{id}/apply", makeDevResubmitHandler(openPlatformService))
+		mux.HandleFunc("GET /api/v1/open/developers/permissions/available", makeDevPermissionsListHandler(openPlatformService))
+		mux.HandleFunc("POST /api/v1/open/developers/{id}/request-permissions", makeDevRequestPermissionsHandler(openPlatformService))
+
+		// Open platform — platform-admin auth routes.
+		mux.Handle("GET /api/v1/open/developers/pending", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDevPendingHandler(openPlatformService)))))
+		mux.Handle("GET /api/v1/open/developers", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDevListHandler(openPlatformService)))))
+		mux.Handle("POST /api/v1/open/developers/{id}/approve", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDevApproveHandler(openPlatformService)))))
+		mux.Handle("POST /api/v1/open/developers/{id}/reject", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDevRejectHandler(openPlatformService)))))
+		mux.Handle("PUT /api/v1/open/developers/{id}/permissions", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDevUpdatePermissionsHandler(openPlatformService)))))
 
 		// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
