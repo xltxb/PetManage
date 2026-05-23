@@ -2636,3 +2636,32 @@ SESSION 40 — F077 在线API文档与调试工具 [2026-05-24 01:55 CST]
   ✓ 调试工具支持选择商户上下文进行测试
   ✓ 文档版本与API版本同步（version: 1.0.0）
 - 提交: b531986 feat(F077): online API documentation & debugging tool
+
+================================================================================
+SESSION 18 — F081 数据自动备份 [2026-05-24 02:11 CST]
+================================================================================
+
+- 创建 internal/cron/ 定时任务调度器，支持基于时间点（每日固定时刻）和间隔周期两种调度模式
+- 创建 internal/backup/ 备份服务：
+  - FullBackup(): 调用 pg_dump -Fc 执行全量备份，gzip 压缩输出
+  - IncrementalBackup(): 扫描所有含 updated_at 列的数据表，导出自上次备份以来的变更行
+  - Restore(): 使用 pg_restore 从全量备份恢复，psql 从增量备份恢复
+  - CleanOldBackups(): 按 retention_days 配置自动清理过期备份
+  - ListBackups(): 查询 backup_records 表返回备份历史
+- 迁移 058_backup_system: 创建 backup_records 表（类型、路径、大小、状态、时间戳）
+- 配置 config.yaml 新增 backup 段：enabled、backup_dir、full_backup_time (03:00)、incremental_interval_min (60)、retention_days (30)、compression (true)
+- HTTP 管理端点（平台管理员权限）：
+  - GET /api/v1/admin/backups — 备份列表
+  - POST /api/v1/admin/backups/full — 手动触发全量备份
+  - POST /api/v1/admin/backups/incremental — 手动触发增量备份
+  - POST /api/v1/admin/backups/{id}/restore — 从指定备份恢复
+  - GET /api/v1/admin/backups/status — 调度器运行状态
+  - GET /api/v1/admin/backups/tables — 增量备份追踪的表列表
+- 备份失败时自动通过 notification service 创建告警通知
+- 端到端验证全部 5 个步骤通过:
+  ✓ 全量备份生成 gzip 压缩的 .dump.gz 文件，大小为 128KB
+  ✓ 增量备份生成 .sql.gz 文件，调度器配置为每 60 分钟
+  ✓ 备份文件自动 gzip 压缩，存储在 backups/ 目录
+  ✓ pg_restore 恢复成功，恢复后数据库健康检查通过
+  ✓ 备份失败时自动创建通知记录
+- 提交: 87a80b9 feat(F081): data auto-backup — daily full + hourly incremental backups with point-in-time recovery
