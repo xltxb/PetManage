@@ -29,6 +29,7 @@ import (
 	"github.com/xltxb/PetManage/internal/merchant"
 	"github.com/xltxb/PetManage/internal/merchantrole"
 	"github.com/xltxb/PetManage/internal/member"
+	"github.com/xltxb/PetManage/internal/memberlevel"
 	"github.com/xltxb/PetManage/internal/middleware"
 	"github.com/xltxb/PetManage/internal/operationlog"
 	"github.com/xltxb/PetManage/internal/pet"
@@ -140,6 +141,9 @@ func main() {
 	// Initialize member service.
 	memberService := member.NewService(db)
 	member.SetQRCodeSecret(cfg.JWT.Secret)
+
+	// Initialize member level service.
+	memberLevelService := memberlevel.NewService(db)
 
 	// Initialize supplier service.
 	supplierService := supplier.NewService(db)
@@ -334,6 +338,17 @@ func main() {
 	mux.Handle("GET /api/v1/merchant/members/{id}/qrcode", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberQRCodeHandler(memberService))))
 	mux.Handle("GET /api/v1/merchant/members/qrcode/scan", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberQRCodeScanHandler(memberService))))
 
+		// Member level management (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/member-levels", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelCreateHandler(memberLevelService))))
+		mux.Handle("GET /api/v1/merchant/member-levels", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelListHandler(memberLevelService))))
+		mux.Handle("GET /api/v1/merchant/member-levels/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelGetHandler(memberLevelService))))
+		mux.Handle("PUT /api/v1/merchant/member-levels/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelUpdateHandler(memberLevelService))))
+		mux.Handle("DELETE /api/v1/merchant/member-levels/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelDeleteHandler(memberLevelService))))
+		mux.Handle("POST /api/v1/merchant/member-levels/{id}/toggle", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelToggleHandler(memberLevelService))))
+		mux.Handle("GET /api/v1/merchant/members/{id}/level", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelInfoHandler(memberLevelService))))
+		mux.Handle("GET /api/v1/merchant/members/{id}/level-logs", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelLogsHandler(memberLevelService))))
+		mux.Handle("POST /api/v1/merchant/members/{id}/check-upgrade", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberLevelCheckUpgradeHandler(memberLevelService))))
+
 	// Pet management (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/members/{id}/pets", middleware.Auth(jwtManager)(http.HandlerFunc(makePetCreateHandler(petService))))
 	mux.Handle("GET /api/v1/merchant/members/{id}/pets", middleware.Auth(jwtManager)(http.HandlerFunc(makePetListHandler(petService))))
@@ -361,7 +376,7 @@ func main() {
 		mux.Handle("DELETE /api/v1/merchant/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleDeleteHandler(merchantRoleService))))
 
 	// Checkout (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService))))
+	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService, memberLevelService))))
 
 	// POS cash register (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/pos/cart/calculate", middleware.Auth(jwtManager)(http.HandlerFunc(makePosCartCalculateHandler(checkoutService))))
@@ -2888,7 +2903,7 @@ func makeSkuToggleStatusHandler(svc *product.Service) http.HandlerFunc {
 
 // --- Checkout handler ---
 
-func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service) http.HandlerFunc {
+func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service, levelSvc *memberlevel.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := middleware.UserClaimsFromContext(r.Context())
 		if claims == nil {
@@ -2919,6 +2934,8 @@ func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service) h
 		// Check high-frequency risk after successful checkout.
 		if req.MemberID != nil {
 			_, _ = riskSvc.CheckHighFrequency(r.Context(), *claims.MerchantID, *req.MemberID)
+			// Check member level upgrade.
+			_, _ = levelSvc.CheckAndUpgrade(r.Context(), *claims.MerchantID, *req.MemberID)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

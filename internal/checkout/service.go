@@ -105,13 +105,16 @@ type CartCalculateRequest struct {
 
 // CartCalculateResponse is the response for cart calculation.
 type CartCalculateResponse struct {
-	Items               []CartItemResult `json:"items"`
-	OriginalCents       int              `json:"original_cents"`
-	DiscountCents       int              `json:"discount_cents"`
-	PayableCents        int              `json:"payable_cents"`
-	MemberBalanceCents  int              `json:"member_balance_cents"`
-	MemberPoints        int              `json:"member_points"`
-	MaxPointsDeductCents int             `json:"max_points_deduct_cents"`
+	Items                []CartItemResult `json:"items"`
+	OriginalCents        int              `json:"original_cents"`
+	DiscountCents        int              `json:"discount_cents"`
+	LevelDiscountCents   int              `json:"level_discount_cents"`
+	LevelDiscountPercent int              `json:"level_discount_percent"`
+	PayableCents         int              `json:"payable_cents"`
+	MemberBalanceCents   int              `json:"member_balance_cents"`
+	MemberPoints         int              `json:"member_points"`
+	PointsMultiplier     int              `json:"points_multiplier"`
+	MaxPointsDeductCents int              `json:"max_points_deduct_cents"`
 }
 
 // PointsToCentsRate defines how many points equal 1 cent (100 points = 100 cents = ¥1).
@@ -123,13 +126,16 @@ const MaxPointsRatio = 0.5
 
 // MemberInfo holds basic member identification info.
 type MemberInfo struct {
-	MemberID     int64  `json:"member_id"`
-	CardNo       string `json:"card_no"`
-	Name         string `json:"name"`
-	Phone        string `json:"phone"`
-	Status       string `json:"status"`
-	BalanceCents int    `json:"balance_cents"`
-	Points       int    `json:"points"`
+	MemberID         int64  `json:"member_id"`
+	CardNo           string `json:"card_no"`
+	Name             string `json:"name"`
+	Phone            string `json:"phone"`
+	Status           string `json:"status"`
+	BalanceCents     int    `json:"balance_cents"`
+	Points           int    `json:"points"`
+	LevelName        string `json:"level_name,omitempty"`
+	DiscountPercent  int    `json:"discount_percent"`
+	PointsMultiplier int    `json:"points_multiplier"`
 }
 
 // CouponInfo holds validated coupon information.
@@ -170,12 +176,17 @@ func (s *Service) LookupMember(ctx context.Context, merchantID int64, phone, qrT
 	var m MemberInfo
 	var phoneStr sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, card_no, name, phone, status, COALESCE(balance_cents, 0), COALESCE(points, 0)
-		 FROM members
-		 WHERE merchant_id = $1 AND phone_hash = $2 AND status = 'active' AND deleted_at IS NULL
+		`SELECT m.id, m.card_no, m.name, m.phone, m.status,
+		        COALESCE(m.balance_cents, 0), COALESCE(m.points, 0),
+		        COALESCE(mlr.name, ''), COALESCE(mlr.discount_percent, 100),
+		        COALESCE(mlr.points_multiplier, 100)
+		 FROM members m
+		 LEFT JOIN member_level_rules mlr ON mlr.id = m.level_id AND mlr.status = 'active' AND mlr.deleted_at IS NULL
+		 WHERE m.merchant_id = $1 AND m.phone_hash = $2 AND m.status = 'active' AND m.deleted_at IS NULL
 		 LIMIT 1`,
 		merchantID, phash,
-	).Scan(&m.MemberID, &m.CardNo, &m.Name, &phoneStr, &m.Status, &m.BalanceCents, &m.Points)
+	).Scan(&m.MemberID, &m.CardNo, &m.Name, &phoneStr, &m.Status,
+			&m.BalanceCents, &m.Points, &m.LevelName, &m.DiscountPercent, &m.PointsMultiplier)
 	if err == sql.ErrNoRows {
 		return nil, apperrors.NewNotFoundError("member not found with phone: " + phone)
 	}
@@ -307,16 +318,34 @@ func (s *Service) CartCalculate(ctx context.Context, merchantID int64, req CartC
 		PayableCents:  originalCents - discountCents,
 	}
 
-	// If member is identified, load balance and points.
+	// If member is identified, load balance, points, and level info.
 	if req.MemberID != nil && *req.MemberID > 0 {
 		var balance, points int
+		var levelDiscountPercent, pointsMultiplier int
+		var levelName string
 		err := s.db.QueryRowContext(ctx,
-			`SELECT COALESCE(balance_cents, 0), COALESCE(points, 0) FROM members WHERE id = $1 AND deleted_at IS NULL`,
+			`SELECT COALESCE(m.balance_cents, 0), COALESCE(m.points, 0),
+			        COALESCE(mlr.discount_percent, 100), COALESCE(mlr.points_multiplier, 100),
+			        COALESCE(mlr.name, '')
+			 FROM members m
+			 LEFT JOIN member_level_rules mlr ON mlr.id = m.level_id AND mlr.status = 'active' AND mlr.deleted_at IS NULL
+			 WHERE m.id = $1 AND m.deleted_at IS NULL`,
 			*req.MemberID,
-		).Scan(&balance, &points)
+		).Scan(&balance, &points, &levelDiscountPercent, &pointsMultiplier, &levelName)
 		if err == nil {
 			resp.MemberBalanceCents = balance
 			resp.MemberPoints = points
+			resp.PointsMultiplier = pointsMultiplier
+
+			// Apply level-based discount.
+			if levelDiscountPercent < 100 {
+				levelDiscount := originalCents - (originalCents * levelDiscountPercent / 100)
+				resp.LevelDiscountCents = levelDiscount
+				resp.LevelDiscountPercent = levelDiscountPercent
+				resp.DiscountCents += levelDiscount
+				resp.PayableCents = originalCents - resp.DiscountCents
+			}
+
 			// Max points deduction: minimum of (total points / rate) and (50% of payable amount)
 			maxFromPoints := points / PointsToCentsRate
 			maxFromRatio := int(float64(resp.PayableCents) * MaxPointsRatio)
@@ -475,6 +504,23 @@ func (s *Service) Checkout(ctx context.Context, merchantID int64, req CheckoutRe
 
 		totalCents += detail.PriceCents * detail.Quantity
 		itemDetails = append(itemDetails, detail)
+	}
+
+
+	// Apply member level discount if applicable.
+	levelDiscountPercent := 100
+	if req.MemberID != nil && *req.MemberID > 0 {
+		_ = tx.QueryRowContext(ctx,
+			`SELECT COALESCE(mlr.discount_percent, 100)
+			 FROM members m
+			 LEFT JOIN member_level_rules mlr ON mlr.id = m.level_id AND mlr.status = 'active' AND mlr.deleted_at IS NULL
+			 WHERE m.id = $1`,
+			*req.MemberID,
+		).Scan(&levelDiscountPercent)
+	}
+	if levelDiscountPercent < 100 {
+		levelDiscount := totalCents - (totalCents * levelDiscountPercent / 100)
+		totalCents -= levelDiscount
 	}
 
 	// Validate payments total and handle special payment methods.
