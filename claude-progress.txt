@@ -1298,3 +1298,39 @@ SESSION 42 — F031 库存预警提醒 [2026-05-23 08:14 CST]
   ✓ 预警列表支持按类型筛选
 - 提交: 65e563c feat(F031): inventory alert reminders
 
+================================================================================
+SESSION 43 — F034 会员等级体系 [2026-05-23 08:45 CST]
+================================================================================
+
+- 创建迁移 031: member_level_rules 表 (等级规则配置) + member_level_logs 表 (等级变更历史)
+  + members 表添加 level_id 列
+- 创建 internal/memberlevel/service.go: 会员等级核心服务
+  - 等级规则 CRUD: Create/List/Get/Update/Delete/Toggle
+  - GetMemberLevel: 查询会员当前等级信息
+  - CheckAndUpgrade: 消费后自动检查并升级 (累计消费/次数达标)
+  - CheckAndDowngrade: 按降级天数检查并降级 (未消费超期)
+  - SetDefaultLevel: 为新会员分配默认等级
+  - GetLevelLogs: 等级变更历史查询
+  - GetApplicableDiscount: 获取会员等级的折扣和积分倍数
+- 集成收银系统:
+  - CartCalculate: 会员识别后自动查询等级折扣 (discount_percent) 并应用
+  - Checkout: 订单总金额应用等级折扣，完成后自动触发升级检查
+  - LookupMember: 返回会员等级名称、折扣、积分倍数
+  - CartCalculateResponse 新增 level_discount_cents, level_discount_percent, points_multiplier
+- 注册 9 个 API 端点 (auth-protected, merchant-only):
+  - POST   /api/v1/merchant/member-levels — 创建等级规则
+  - GET    /api/v1/merchant/member-levels — 等级规则列表
+  - GET    /api/v1/merchant/member-levels/{id} — 规则详情
+  - PUT    /api/v1/merchant/member-levels/{id} — 编辑规则
+  - DELETE /api/v1/merchant/member-levels/{id} — 删除规则
+  - POST   /api/v1/merchant/member-levels/{id}/toggle — 启用/禁用
+  - GET    /api/v1/merchant/members/{id}/level — 会员当前等级
+  - GET    /api/v1/merchant/members/{id}/level-logs — 等级变更日志
+  - POST   /api/v1/merchant/members/{id}/check-upgrade — 手动触发升降级检查
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建等级「黄金会员」(三级)「白银会员」(二级)「普通会员」(一级默认)，累计消费阈值和折扣正确
+  ✓ 会员消费 6000 元 (600000分) 后自动升级到黄金会员，日志记录升级原因
+  ✓ 降级检查：刚消费的会员不降级(在180天保护期内)，降级检查接口正常
+  ✓ POS 收银端自动应用等级折扣：黄金会员85折(原价10000→8500)，无会员无折扣(10000)
+  ✓ 修改等级折扣规则(90%→85%)后，现有会员等级不变但折扣比例自动更新
+- 提交: 6ce6062 feat(F034): member level system
