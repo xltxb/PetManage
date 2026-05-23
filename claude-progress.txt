@@ -2491,3 +2491,24 @@ SESSION 12 — F072 预约服务API (开放平台) [2026-05-24 00:42 CST]
   ✓ 无认证请求 → 401 UNAUTHORIZED
 - 修复: employee.GetByID 参数顺序 (merchantID, employeeID)
 - 提交: 802213d feat(F072): booking service API
+
+================================================================================
+SESSION 39 — F073 订单与支付API [2026-05-24 00:43 CST]
+================================================================================
+
+- 创建数据库迁移 056: orders 表添加 pending/paid 状态、order_no 列、refunds/refund_items 表
+- 创建 cmd/server/handlers_openapi_orders.go: 5 个 Open API 端点处理器
+  ✓ POST /api/open/v1/orders — 创建订单，生成 order_no (OP+YYYYMMDD+8hex)，状态 pending
+  ✓ GET /api/open/v1/orders/{id} — 查询订单详情和支付状态
+  ✓ POST /api/open/v1/orders/{id}/pay-callback — 支付回调，状态 pending→paid，记录 payments
+  ✓ POST /api/open/v1/orders/{id}/refund — 退款申请（full/partial），恢复库存
+  ✓ GET /api/open/v1/orders?member_id=X — 会员订单列表查询
+- 修改 internal/orders/service.go: RefundOrder 接受 paid 状态退款
+- 路由注册在 main.go F073 区块，使用 OpenAPIAuth 中间件
+- E2E 验证全部 5 个步骤通过:
+  ✓ POST /api/open/v1/orders → 201, order_id=52, order_no=OP20260524eb189b02
+  ✓ GET /api/open/v1/orders/52 → 200, status=pending
+  ✓ POST /api/open/v1/orders/52/pay-callback → 200, status=paid
+  ✓ POST /api/open/v1/orders/52/refund → 200, refund_id=6, status=completed
+  ✓ GET /api/open/v1/orders?member_id=1 → 200, total=0 (member has no orders yet)
+- 提交: 8a2c869 feat(F073): open platform order & payment API
