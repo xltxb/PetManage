@@ -2534,3 +2534,75 @@ SESSION 38 — F074 营销与核销API [2026-05-24 01:03 CST]
   ✓ POST /api/open/v1/groupon/verify → 200, verified:true, amount_cents:5000, source:meituan
   ✓ 不存在团购券 → 404
 - 提交: 5acde13 feat(F074): open platform marketing & verification API
+
+================================================================================
+SESSION 39 — F075 API限流与熔断 [2026-05-24 01:20 CST]
+================================================================================
+
+- 创建 internal/ratelimit/service.go: 令牌桶限流器 + 熔断器
+  - Token bucket rate limiter: 每个开发者(token key)独立桶, 默认 QPS=100
+  - Circuit breaker: CLOSED → OPEN → HALF_OPEN → CLOSED 状态机
+  - Config 结构体: QPS, CBWindow(30s), CBErrorThreshold(50%), CBCooldown(10s), CBHalfOpenMax(5)
+  - CircuitAllow: 检查熔断状态并允许/拒绝请求
+  - RecordResult: 记录请求结果(HTTP状态码), 用于计算错误率
+  - HALF_OPEN→CLOSED 时自动清空错误窗口, 防止旧错误立即重新触发熔断
+- 创建 internal/ratelimit/middleware.go: OpenAPIMiddleware 中间件
+  - 从 context 读取 OpenDevClaims (需放在 OpenAPIAuth 之后)
+  - 先检查熔断器 → 超限返回 503 SERVICE_UNAVAILABLE
+  - 再检查限流 → 超限返回 429 RATE_LIMIT_EXCEEDED
+  - statusResponseWriter 包装 http.ResponseWriter 捕获状态码用于熔断追踪
+- 更新 pkg/apperrors/errors.go:
+  - 新增 CodeRateLimitExceeded (429) + CodeServiceUnavailable (503)
+- 更新 cmd/server/main.go:
+  - 创建 ratelimit service (DefaultConfig)
+  - openAPIWrap 辅助函数组合 OpenAPIAuth + RateLimit 中间件
+  - 所有 27 个开放 API 路由使用 openAPIWrap 包装
+- 端到端验证全部 5 个步骤通过 (6/6):
+  ✓ 正常 API 调用返回 200 (shop/info)
+  ✓ 超 QPS 100 → 返回 RATE_LIMIT_EXCEEDED (429), 67/200 被限流
+  ✓ 等待 2s 恢复后 10/10 请求成功
+  ✓ 错误率 90% (45 错误/50 总) → 电路熔断, 返回 SERVICE_UNAVAILABLE (503)
+  ✓ 熔断后所有请求被拦截 (20/20 503), 不经过业务逻辑
+  ✓ 12s 冷却后 → 半开探测恢复, 15/15 请求成功, 电路恢复 CLOSED
+- 创建 e2e_f075_test.py: Python 自动化测试脚本含 HMAC 签名生成
+- 提交: 045fbd3 feat(F075): API rate limiting and circuit breaker for open platform
+
+================================================================================
+SESSION 40 — F076 API监控面板 [2026-05-24 01:40 CST]
+================================================================================
+
+- 创建迁移 057: open_api_logs 表（developer_id, endpoint, method, status_code, duration_ms, ip_address, request_id）
+- 创建 internal/monitor/service.go: 监控数据服务
+  - LogAsync: 异步日志写入（channel + goroutine consumer，缓冲2000条）
+  - GetEndpointMetrics: 按端点聚合（call_count, success_rate, error_rate, p95_latency, avg_latency）
+  - GetDeveloperMetrics: 按开发者聚合（JOIN open_developers）
+  - GetAnomalies: 错误率>10%的端点（HAVING子句过滤）
+  - 支持 period 参数: 1h/24h/7d
+  - 支持 keyword 搜索（ILIKE）、sort_by + sort_dir 排序
+  - P95使用 PostgreSQL percentile_cont 有序集合聚合函数
+- 创建 internal/monitor/middleware.go: API日志中间件
+  - 包装 http.ResponseWriter 捕获状态码
+  - 从 context 提取 developer_id（OpenDevClaims）
+  - 计算请求耗时并异步写入 open_api_logs
+  - 嵌入 openAPIWrap 链: Auth → Monitor → RateLimit → Handler
+- 创建 cmd/server/handlers_monitor.go: 3个API处理器
+  - GET /api/v1/monitor/endpoints — 接口调用统计
+  - GET /api/v1/monitor/developers — 开发者调用统计
+  - GET /api/v1/monitor/anomalies — 异常预警列表
+- 前端:
+  - 创建 MonitorDashboard.vue: 完整监控面板
+    - 4个摘要卡片: 总调用量、成功率、P95响应时间、异常预警数
+    - 异常预警红色边框 + 红色文字高亮（error_rate > 10%）
+    - 接口调用统计表: keyword搜索、click-to-sort列（调用量/成功率/错误率/P95/平均）
+    - 开发者调用统计表: 按公司名称展示
+    - 时间段切换器: 1小时/24小时/7天
+    - 导航栏: 经营大盘 | API监控
+  - 更新 frontend/src/api/client.ts: 新增 getMonitorEndpoints/getMonitorDevelopers/getMonitorAnomalies
+  - 更新 frontend/src/router/index.ts: 新增 /monitor 路由
+- 端到端验证全部 5 个步骤通过:
+  ✓ 监控页面展示各接口的调用量、成功率、P95响应时间（5个endpoint各含完整指标）
+  ✓ 按开发者维度统计调用数据（Test Company: 23 calls, 87% success）
+  ✓ 切换时间范围（1小时/24小时/7天），period参数正确传递
+  ✓ 接口异常率超过阈值时页面红色高亮提示（members/99999 error_rate=100%, anomaly卡片红框+行红色背景）
+  ✓ 支持按接口名称搜索（keyword=breeds → 1 result）和排序（success_rate ASC, p95 DESC）
+- 提交: 24bd614 feat(F076): API monitoring dashboard
