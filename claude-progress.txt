@@ -2075,3 +2075,29 @@ SESSION 63 — F059 自动化财务报表 [2026-05-23 21:10 CST]
   ✓ 支持按月切换查看（不同月份返回不同数据，year-only 返回全年）
 - 参数校验：year 必填、有效范围，month 可选（0=全年）
 - 提交: d801bda feat(F059): automated financial statements
+
+================================================================================
+SESSION 64 — F060 财务报表导出 [2026-05-23 21:19 CST]
+================================================================================
+
+- 创建 internal/statement/export.go: 8 个导出方法
+  - ExportProfitLossExcel / ExportProfitLossPDF
+  - ExportRevenueDetailExcel / ExportRevenueDetailPDF
+  - ExportProductSalesExcel / ExportProductSalesPDF
+  - ExportServicePerformanceExcel / ExportServicePerformancePDF
+- 每个方法支持 start_time / end_time 自定义时间段参数
+- Excel 使用 excelize/v2 生成 .xlsx 文件，含标题行、表头样式、数据单元格
+- PDF 使用 gofpdf 生成，含中英文标题、格式化表格、生成时间戳
+- handler 层：makeExportHandler 通用工厂函数，支持指定导出函数和 Content-Type
+- 注册 8 个导出路由：/api/v1/merchant/statements/{type}/{format}
+  权限控制：RequireMerchantPermission("report:view")
+- 内容提取为可复用查询 helper (queryProfitLossData, queryRevenueDetailData, etc.)
+  避免重复代码，view API 仍用原有 year/month 参数
+- 端到端验证全部 5 个步骤通过:
+  ✓ 所有 8 个导出端点返回 200，Excel 文件有效（~6.5KB），PDF 含 %PDF 头
+  ✓ 自定义时间段 (start_time/end_time) 正确支持
+  ✓ PDF 格式排版正确（标题、表格、页脚）
+  ✓ 4 并发导出完成时间 0.06s（远低于 3s 要求）
+  ✓ 收银员角色 (无 report:view) 访问返回 403 FORBIDDEN
+- 额外验证: 无 auth→401, 无时间参数→400, Content-Type/Content-Disposition 头正确
+- 提交: 0deb1e5 feat(F060): financial statement export
