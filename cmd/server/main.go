@@ -55,6 +55,7 @@ import (
 	"github.com/xltxb/PetManage/internal/servicerecord"
 	"github.com/xltxb/PetManage/internal/supplier"
 	"github.com/xltxb/PetManage/internal/receipttemplate"
+	"github.com/xltxb/PetManage/internal/shift"
 	"github.com/xltxb/PetManage/internal/verification"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
@@ -232,6 +233,9 @@ func main() {
 
 	// Initialize receipt template service.
 	receiptTemplateService := receipttemplate.NewService(db)
+
+	// Initialize shift service.
+	shiftService := shift.NewService(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -585,7 +589,7 @@ func main() {
 		mux.Handle("DELETE /api/v1/merchant/roles/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleDeleteHandler(merchantRoleService))))
 
 	// Checkout (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService, memberLevelService, pointsService, memberTagService))))
+	mux.Handle("POST /api/v1/merchant/checkout", middleware.Auth(jwtManager)(http.HandlerFunc(makeCheckoutHandler(checkoutService, riskService, memberLevelService, pointsService, memberTagService, shiftService))))
 
 	// POS cash register (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/pos/cart/calculate", middleware.Auth(jwtManager)(http.HandlerFunc(makePosCartCalculateHandler(checkoutService))))
@@ -608,6 +612,13 @@ func main() {
 		mux.Handle("PUT /api/v1/merchant/receipt-template", middleware.Auth(jwtManager)(http.HandlerFunc(makeReceiptTemplateUpdateHandler(receiptTemplateService))))
 		mux.Handle("POST /api/v1/merchant/receipt-template/logo", middleware.Auth(jwtManager)(http.HandlerFunc(makeReceiptTemplateLogoHandler(receiptTemplateService))))
 		mux.Handle("GET /api/v1/merchant/orders/{id}/receipt", middleware.Auth(jwtManager)(http.HandlerFunc(makeOrderReceiptHandler(receiptTemplateService))))
+
+		// Shift reconciliation (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/shift", middleware.Auth(jwtManager)(http.HandlerFunc(makeShiftCreateHandler(shiftService))))
+		mux.Handle("GET /api/v1/merchant/shift", middleware.Auth(jwtManager)(http.HandlerFunc(makeShiftListHandler(shiftService))))
+		mux.Handle("GET /api/v1/merchant/shift/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeShiftGetHandler(shiftService))))
+		mux.Handle("POST /api/v1/merchant/shift/{id}/confirm", middleware.Auth(jwtManager)(http.HandlerFunc(makeShiftConfirmHandler(shiftService))))
+		mux.Handle("GET /api/v1/merchant/shift/today", middleware.Auth(jwtManager)(http.HandlerFunc(makeShiftTodayHandler(shiftService))))
 
 	// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
@@ -3126,7 +3137,7 @@ func makeSkuToggleStatusHandler(svc *product.Service) http.HandlerFunc {
 
 // --- Checkout handler ---
 
-func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service, levelSvc *memberlevel.Service, pointsSvc *points.Service, tagSvc *membertag.Service) http.HandlerFunc {
+func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service, levelSvc *memberlevel.Service, pointsSvc *points.Service, tagSvc *membertag.Service, shiftSvc *shift.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := middleware.UserClaimsFromContext(r.Context())
 		if claims == nil {
@@ -3136,6 +3147,14 @@ func makeCheckoutHandler(checkoutSvc *checkout.Service, riskSvc *risk.Service, l
 		if claims.MerchantID == nil {
 			apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
 			return
+		}
+		// Check if employee is shift-locked (must re-login after shift).
+		if claims.EmployeeID != nil && *claims.EmployeeID > 0 {
+			locked, err := shiftSvc.IsEmployeeShiftLocked(r.Context(), *claims.MerchantID, *claims.EmployeeID)
+			if err == nil && locked {
+				apperrors.WriteError(w, r, apperrors.NewForbiddenError("shift handover completed, please re-login to continue POS operations"))
+				return
+			}
 		}
 
 		var req checkout.CheckoutRequest

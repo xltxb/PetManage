@@ -13,6 +13,7 @@ type Claims struct {
 	Username   string `json:"username"`
 	RoleID     int64  `json:"role_id"`
 	MerchantID *int64 `json:"merchant_id,omitempty"`
+	EmployeeID *int64 `json:"employee_id,omitempty"`
 }
 
 // TokenPair holds an access token and refresh token.
@@ -41,13 +42,13 @@ func NewJWTManager(secret string, accessTTL, refreshTTL int) *JWTManager {
 }
 
 // GenerateTokenPair creates both access and refresh tokens.
-func (m *JWTManager) GenerateTokenPair(userID int64, username string, roleID int64, merchantID *int64) (*TokenPair, error) {
-	accessToken, err := m.generateToken(userID, username, roleID, merchantID, m.accessTokenTTL)
+func (m *JWTManager) GenerateTokenPair(userID int64, username string, roleID int64, merchantID *int64, employeeID *int64) (*TokenPair, error) {
+	accessToken, err := m.generateToken(userID, username, roleID, merchantID, employeeID, m.accessTokenTTL)
 	if err != nil {
 		return nil, err
 	}
 
-	refreshToken, err := m.generateToken(userID, username, roleID, merchantID, m.refreshTokenTTL)
+	refreshToken, err := m.generateToken(userID, username, roleID, merchantID, employeeID, m.refreshTokenTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +61,7 @@ func (m *JWTManager) GenerateTokenPair(userID int64, username string, roleID int
 	}, nil
 }
 
-func (m *JWTManager) generateToken(userID int64, username string, roleID int64, merchantID *int64, ttl time.Duration) (string, error) {
+func (m *JWTManager) generateToken(userID int64, username string, roleID int64, merchantID *int64, employeeID *int64, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := &Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -72,6 +73,7 @@ func (m *JWTManager) generateToken(userID int64, username string, roleID int64, 
 		Username:   username,
 		RoleID:     roleID,
 		MerchantID: merchantID,
+		EmployeeID: employeeID,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

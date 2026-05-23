@@ -870,8 +870,40 @@ class ApiClient {
       notes: string
       created_at: string
     }>(`/api/v1/merchant/orders/${orderId}/receipt`)
+  // --- Shift reconciliation ---
+
+  async createMerchantShift() {
+    return this.request<any>('/api/v1/merchant/shift', { method: 'POST' })
+  }
+
+  async getMerchantShiftToday() {
+    return this.request<{ has_shift: boolean; shift: any; date: string }>('/api/v1/merchant/shift/today')
+  }
+
+  async getMerchantShift(id: number) {
+    return this.request<any>(`/api/v1/merchant/shift/${id}`)
+  }
+
+  async getMerchantShiftList(params: { page?: number; page_size?: number; status?: string; start_date?: string; end_date?: string }) {
+    const query = new URLSearchParams()
+    if (params.page) query.set('page', String(params.page))
+    if (params.page_size) query.set('page_size', String(params.page_size))
+    if (params.status) query.set('status', params.status)
+    if (params.start_date) query.set('start_date', params.start_date)
+    if (params.end_date) query.set('end_date', params.end_date)
+    const qs = query.toString()
+    return this.request<{ records: any[]; total: number; page: number; page_size: number }>(
+      `/api/v1/merchant/shift${qs ? '?' + qs : ''}`
+    )
+  }
+
+  async confirmMerchantShift(shiftId: number) {
+    return this.request<any>(`/api/v1/merchant/shift/${shiftId}/confirm`, { method: 'POST' })
+  }
+
   }
 
 }
 
 export const api = new ApiClient()
+export const apiClient = api

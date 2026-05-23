@@ -91,7 +91,7 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*TokenPair, erro
 		userID,
 	)
 
-	tokenPair, err := s.jwt.GenerateTokenPair(userID, username, roleID, nullableToPtr(merchantID))
+	tokenPair, err := s.jwt.GenerateTokenPair(userID, username, roleID, nullableToPtr(merchantID), nil)
 	if err != nil {
 		return nil, &apperrors.AppError{
 			Code:    apperrors.CodeInternalError,
@@ -163,7 +163,7 @@ func (s *Service) RefreshToken(ctx context.Context, req RefreshRequest) (*TokenP
 		}
 	}
 
-	return s.jwt.GenerateTokenPair(claims.UserID, claims.Username, claims.RoleID, claims.MerchantID)
+	return s.jwt.GenerateTokenPair(claims.UserID, claims.Username, claims.RoleID, claims.MerchantID, nil)
 }
 
 // MerchantLoginResponse extends TokenPair with merchant-specific info.
@@ -186,12 +186,14 @@ func (s *Service) MerchantLogin(ctx context.Context, req LoginRequest) (*Merchan
 	var displayName sql.NullString
 	var loginFailCount int
 	var lockedUntil sql.NullTime
+	var employeeID sql.NullInt64
 
 	err := s.db.QueryRowContext(ctx,
 		`SELECT u.id, u.username, u.password_hash, COALESCE(u.role_id, 0),
 			COALESCE(u.must_change_password, false),
 			COALESCE(u.display_name, ''),
 			u.merchant_id, m.name, m.status,
+			u.employee_id,
 			u.login_fail_count, u.locked_until
 		 FROM platform_users u
 		 LEFT JOIN merchants m ON u.merchant_id = m.id AND m.deleted_at IS NULL
@@ -200,6 +202,7 @@ func (s *Service) MerchantLogin(ctx context.Context, req LoginRequest) (*Merchan
 		req.Username,
 	).Scan(&userID, &username, &passwordHash, &roleID, &mustChangePassword,
 		&displayName, &merchantID, &merchantName, &merchantStatus,
+		&employeeID,
 		&loginFailCount, &lockedUntil)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -270,7 +273,16 @@ func (s *Service) MerchantLogin(ctx context.Context, req LoginRequest) (*Merchan
 		userID,
 	)
 
-	tokenPair, err := s.jwt.GenerateTokenPair(userID, username, roleID, nullableToPtr(merchantID))
+	// Auto-unlock employee shift lock on re-login.
+	if employeeID.Valid && employeeID.Int64 > 0 {
+		_, _ = s.db.ExecContext(ctx,
+			`UPDATE employees SET shift_locked = false, updated_at = NOW()
+			 WHERE id = $1 AND shift_locked = true`,
+			employeeID.Int64,
+		)
+	}
+
+	tokenPair, err := s.jwt.GenerateTokenPair(userID, username, roleID, nullableToPtr(merchantID), nullableToPtr(employeeID))
 	if err != nil {
 		return nil, &apperrors.AppError{
 			Code:    apperrors.CodeInternalError,
