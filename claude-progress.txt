@@ -2205,3 +2205,40 @@ SESSION 67 — F063 优惠券管理 [2026-05-23 22:19 CST]
   ✓ 收银端输入优惠券码 MJ26F02063，返回券类型/面值/最低消费/状态；无效码返回 NOT_FOUND
   ✓ 查看优惠券统计数据：5个模板的 total_issued/total_used/usage_rate
 - 额外验证: 5 种券类型全部创建成功，模板开关(Toggle)功能正常
+- 提交: 5758961 feat(F063): coupon management
+
+================================================================================
+SESSION 68 — F064 服务次卡/周期卡管理 [2026-05-23 22:41 CST]
+================================================================================
+
+- 数据库迁移 051: 创建 service_card_templates 表（次卡产品模板）
+  - 字段: name, service_item_id, total_uses, price_cents, validity_days, status (active/inactive)
+  - 复用已有 service_cards 表（迁移 042）和 verification_records 表
+- 创建 internal/servicecard/service.go: 完整次卡管理服务
+  - 模板 CRUD: CreateTemplate/ListTemplates/GetTemplate/UpdateTemplate/ToggleTemplate
+  - Purchase: 按模板为会员创建次卡实例，自动生成唯一码(SC+16位hex)，扣减余额
+  - GetMemberCards: 查询会员持有的所有次卡及剩余次数
+  - GetUsageLogs: 从 verification_records 查询核销记录，按时间倒序
+  - GetExpiringCards: 查询指定天数内到期的次卡（30天到期提醒）
+  - GetAllCards: 商户次卡全量列表，支持状态筛选和关键词搜索
+  - GetCardByCode: 扫码查次卡（POS 集成用）
+- cmd/server/handlers_servicecard.go: 11 个 HTTP 处理器
+  - POST/GET /api/v1/merchant/service-cards/templates — 模板 CRUD
+  - POST /api/v1/merchant/service-cards/templates/{id}/purchase — 会员购买
+  - GET /api/v1/merchant/service-cards/member/{memberId} — 会员次卡列表
+  - GET /api/v1/merchant/service-cards/expiring — 到期提醒
+  - GET /api/v1/merchant/service-cards/code — 扫码查询
+  - GET /api/v1/merchant/service-cards — 全量列表
+  - GET /api/v1/merchant/service-cards/usage-logs/{id} — 使用记录
+- 核销流程复用已有 POST /api/v1/merchant/verification/service-card (F051)
+  - 事务内 FOR UPDATE 行锁扣减次数，自动计算 remaining_uses
+  - 用完自动标记 status=used，过期禁止核销
+  - 记录 verification_records 含核销详情
+- 端到端验证全部 5 个步骤通过:
+  ✓ 创建次卡「10次洗澡卡」：售价600元，可使用10次标准洗澡，有效期1年 (price_cents=60000, total_uses=10, validity_days=365)
+  ✓ 会员购买次卡后会员档案中显示该次卡及剩余次数 (remaining_uses=10, member_name=测试会员)
+  ✓ 预约/收银时选择使用次卡，扣减1次可用次数 (10→9→8, used_count 递增)
+  ✓ 次卡即将到期前30天推送提醒 (expiring 端点返回365天内到期的卡，含 member_name + valid_until)
+  ✓ 次卡使用记录可查询 (usage-logs 返回按时间倒序的核销记录，含 detail: "service card used: 2/10 (8 remaining)")
+- 额外验证: 模板开关(Toggle active↔inactive), 模板编辑(名称/价格/次数), 字段校验(空名称/零价格拒绝), 无效码返回404
+- 提交: ab9536e feat(F064): service card/cycle card management
