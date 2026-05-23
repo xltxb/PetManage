@@ -606,6 +606,49 @@ class ApiClient {
 	    }> }>(`/api/v1/merchant/appointments/${id}/change-logs`)
 	  }
 
+	  // --- Schedule APIs ---
+
+	  getSchedules(params?: { employee_id?: number; start_date?: string; end_date?: string }) {
+	    const search = new URLSearchParams()
+	    if (params?.employee_id) search.set('employee_id', String(params.employee_id))
+	    if (params?.start_date) search.set('start_date', params.start_date)
+	    if (params?.end_date) search.set('end_date', params.end_date)
+	    const qs = search.toString()
+	    return this.request<{
+	      schedules: Array<{
+	        id: number
+	        merchant_id: number
+	        employee_id: number
+	        schedule_date: string
+	        shift_type: string
+	        created_at: string
+	        updated_at: string
+	      }>
+	    }>(`/api/v1/merchant/schedules${qs ? '?' + qs : ''}`)
+	  }
+
+	  upsertSchedule(data: { employee_id: number; schedule_date: string; shift_type: string }) {
+	    return this.request<any>('/api/v1/merchant/schedules', { method: 'PUT', body: data })
+	  }
+
+	  batchSetSchedules(data: { employee_id: number; schedules: Array<{ date: string; shift_type: string }> }) {
+	    return this.request<any>('/api/v1/merchant/schedules/batch', { method: 'POST', body: data })
+	  }
+
+	  copyWeekSchedules(data: { from_employee_id: number; to_employee_id: number; from_week_start: string; to_week_start: string }) {
+	    return this.request<{ message: string }>('/api/v1/merchant/schedules/copy-week', { method: 'POST', body: data })
+	  }
+
+	  getOnDutyEmployees(appointmentTime: string) {
+	    return this.request<{
+	      employees: Array<{
+	        id: number
+	        name: string
+	        position: string
+	      }>
+	    }>(`/api/v1/merchant/schedules/on-duty?appointment_time=${encodeURIComponent(appointmentTime)}`)
+	  }
+
 }
 
 export const api = new ApiClient()

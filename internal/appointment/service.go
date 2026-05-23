@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xltxb/PetManage/internal/notification"
+	"github.com/xltxb/PetManage/internal/schedule"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 )
 
@@ -64,8 +65,9 @@ type ListResult struct {
 
 // Service provides appointment management operations.
 type Service struct {
-	db       *sql.DB
-	notifSvc *notification.Service
+	db          *sql.DB
+	notifSvc    *notification.Service
+	scheduleSvc *schedule.Service
 }
 
 // NewService creates a new appointment Service.
@@ -76,6 +78,11 @@ func NewService(db *sql.DB) *Service {
 // SetNotificationService sets the notification service for sending appointment notifications.
 func (s *Service) SetNotificationService(notifSvc *notification.Service) {
 	s.notifSvc = notifSvc
+}
+
+// SetScheduleService sets the schedule service for shift validation during appointment creation.
+func (s *Service) SetScheduleService(scheduleSvc *schedule.Service) {
+	s.scheduleSvc = scheduleSvc
 }
 
 const appointmentColumns = `a.id, a.merchant_id, a.member_id, a.pet_id, a.service_item_id, a.employee_id, a.appointment_time, a.status, a.remark, a.created_at, a.updated_at`
@@ -185,6 +192,17 @@ func (s *Service) Create(ctx context.Context, merchantID int64, req CreateAppoin
 	}
 	if !empExists {
 		return nil, apperrors.NewNotFoundError("employee not found or inactive")
+	}
+
+	// Verify employee is on duty at the requested time.
+	if s.scheduleSvc != nil {
+		onDuty, err := s.scheduleSvc.IsOnDuty(ctx, merchantID, req.EmployeeID, apptTime)
+		if err != nil {
+			return nil, apperrors.NewInternalError("failed to check employee schedule", err)
+		}
+		if !onDuty {
+			return nil, apperrors.NewValidationError("the technician is not on duty at the selected time")
+		}
 	}
 
 	// Detect conflict: same technician at the same time slot (within 1 hour window).

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api/client'
@@ -235,14 +235,34 @@ function selectService(s: ServiceItem) {
 async function loadEmployees() {
   employeesLoading.value = true
   try {
-    const result = await api.getEmployees({ status: 'active', page_size: 100 })
-    employees.value = result.employees || []
+    if (appointmentDate.value && appointmentHour.value && appointmentMinute.value) {
+      // Filter by on-duty employees for the selected date/time
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+      const apptTime = `${appointmentDate.value}T${appointmentHour.value.padStart(2, '0')}:${appointmentMinute.value.padStart(2, '0')}:00`
+      const result = await api.getOnDutyEmployees(apptTime)
+      employees.value = (result.employees || []).map((e: any) => ({
+        ...e,
+        employee_no: '',
+        status: 'active',
+      }))
+    } else {
+      const result = await api.getEmployees({ status: 'active', page_size: 100 })
+      employees.value = result.employees || []
+    }
   } catch (e: any) {
     createError.value = e.message || '加载员工失败'
   } finally {
     employeesLoading.value = false
   }
 }
+
+// Reload employees when the appointment time changes in step 4.
+watch([appointmentDate, appointmentHour, appointmentMinute], () => {
+  if (createStep.value === 3 && appointmentDate.value && appointmentHour.value && appointmentMinute.value) {
+    selectedEmployee.value = null
+    loadEmployees()
+  }
+})
 
 function selectEmployee(e: Employee) {
   selectedEmployee.value = e
@@ -438,6 +458,12 @@ onMounted(loadAppointments)
             &larr; 返回首页
           </button>
           <h1 class="text-lg font-semibold text-gray-800">预约管理</h1>
+          <button
+            @click="router.push('/merchant/schedules')"
+            class="text-sm text-blue-600 hover:text-blue-800 cursor-pointer ml-4"
+          >
+            排班管理 →
+          </button>
         </div>
         <button
           @click="openCreateModal"

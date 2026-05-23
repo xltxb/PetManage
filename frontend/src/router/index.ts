@@ -84,6 +84,11 @@ const router = createRouter({
       component: () => import('@/views/MerchantRoles.vue'),
     },
     {
+      path: '/merchant/schedules',
+      name: 'merchant-schedules',
+      component: () => import('@/views/ScheduleCalendar.vue'),
+    },
+    {
       path: '/merchant/settings',
       name: 'merchant-settings',
       component: () => import('@/views/MerchantSettings.vue'),

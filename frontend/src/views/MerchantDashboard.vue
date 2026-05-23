@@ -106,6 +106,7 @@ const quickLinks = [
   { label: '商品管理', path: '/merchant/products', icon: '📦' },
   { label: '订单管理', path: '/merchant/orders', icon: '📋' },
   { label: '预约管理', path: '/merchant/appointments', icon: '📅' },
+  { label: '技师排班', path: '/merchant/schedules', icon: '👨‍⚕️' },
   { label: '会员管理', path: '/merchant/members', icon: '👤' },
   { label: '库存管理', path: '/merchant/inventory', icon: '🏪' },
   { label: '服务记录', path: '/merchant/services', icon: '📝' },

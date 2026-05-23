@@ -44,6 +44,7 @@ import (
 	"github.com/xltxb/PetManage/internal/report"
 	"github.com/xltxb/PetManage/internal/risk"
 	"github.com/xltxb/PetManage/internal/role"
+	"github.com/xltxb/PetManage/internal/schedule"
 	"github.com/xltxb/PetManage/internal/servicepackage"
 	"github.com/xltxb/PetManage/internal/servicemgmt"
 	"github.com/xltxb/PetManage/internal/supplier"
@@ -191,6 +192,10 @@ func main() {
 	appointmentService := appointment.NewService(db)
 	notifService := notification.NewService(db)
 	appointmentService.SetNotificationService(notifService)
+
+	// Initialize schedule service.
+	scheduleService := schedule.NewService(db)
+	appointmentService.SetScheduleService(scheduleService)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -457,6 +462,13 @@ func main() {
 		mux.Handle("GET /api/v1/merchant/notifications", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationListHandler(notifService))))
 		mux.Handle("POST /api/v1/merchant/notifications/upcoming-reminders", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationSendUpcomingHandler(notifService))))
 		mux.Handle("POST /api/v1/merchant/notifications/{id}/mark-read", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationMarkReadHandler(notifService))))
+
+		// Schedule management (auth-protected, merchant-only).
+		mux.Handle("GET /api/v1/merchant/schedules", middleware.Auth(jwtManager)(http.HandlerFunc(makeScheduleListHandler(scheduleService))))
+		mux.Handle("PUT /api/v1/merchant/schedules", middleware.Auth(jwtManager)(http.HandlerFunc(makeScheduleUpsertHandler(scheduleService))))
+		mux.Handle("POST /api/v1/merchant/schedules/batch", middleware.Auth(jwtManager)(http.HandlerFunc(makeScheduleBatchSetHandler(scheduleService))))
+		mux.Handle("POST /api/v1/merchant/schedules/copy-week", middleware.Auth(jwtManager)(http.HandlerFunc(makeScheduleCopyWeekHandler(scheduleService))))
+		mux.Handle("GET /api/v1/merchant/schedules/on-duty", middleware.Auth(jwtManager)(http.HandlerFunc(makeScheduleOnDutyHandler(scheduleService))))
 
 		// Merchant role management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/roles", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleCreateHandler(merchantRoleService))))
