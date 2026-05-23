@@ -187,6 +187,7 @@ onMounted(() => {
       <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
         <h1 class="text-xl font-bold text-gray-900">宠物店管理系统</h1>
         <div class="flex items-center gap-4">
+          <router-link to="/docs" class="text-sm text-blue-600 hover:text-blue-800">API 文档</router-link>
           <span class="text-sm text-gray-600">{{ auth.user?.username }}</span>
           <button
             @click="handleLogout"

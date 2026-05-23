@@ -791,6 +791,15 @@ func main() {
 			),
 		)
 
+		// F077: API documentation (platform-only auth).
+		mux.Handle("GET /api/v1/api-docs",
+			middleware.Auth(jwtManager)(
+				middleware.RequirePlatformUser(
+					http.HandlerFunc(makeAPIDocsHandler()),
+				),
+			),
+		)
+
 		// Risk control — rule management (platform-only auth + permission).
 	mux.Handle("GET /api/v1/risk/rules",
 		middleware.Auth(jwtManager)(

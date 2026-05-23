@@ -901,6 +901,29 @@ class ApiClient {
     return this.request<any>(`/api/v1/merchant/shift/${shiftId}/confirm`, { method: 'POST' })
   }
 
+  // === API Docs (F077) ===
+
+  async getApiDocs() {
+    return this.request<{
+      version: string
+      title: string
+      modules: Array<{
+        name: string
+        description: string
+        endpoints: Array<{
+          method: string
+          path: string
+          summary: string
+          description: string
+          auth: string
+          params?: Array<{ name: string; in: string; type: string; required: boolean; description: string }>
+          request_body?: { content_type: string; example: any }
+          responses: Array<{ status: number; description: string; example?: any }>
+        }>
+      }>
+    }>('/api/v1/api-docs')
+  }
+
   // === Monitoring (F076) ===
 
   async getMonitorEndpoints(params: { period?: string; keyword?: string; sort_by?: string; sort_dir?: string }) {
