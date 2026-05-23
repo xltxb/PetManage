@@ -126,11 +126,39 @@ class ApiClient {
       today_appointments: number
       today_service_complete: number
       stock_warnings: number
+      near_expiry_count: number
+      expired_count: number
       pending_appointments: number
       birthday_reminders: number
       revenue_trend: number[]
       merchant_id: number
     }>('/api/v1/merchant/dashboard')
+  }
+
+  getInventoryAlerts(params?: { alert_type?: string; page?: number; page_size?: number }) {
+    const search = new URLSearchParams()
+    if (params?.alert_type) search.set('alert_type', params.alert_type)
+    if (params?.page) search.set('page', String(params.page))
+    if (params?.page_size) search.set('page_size', String(params.page_size))
+    const qs = search.toString()
+    return this.request<{
+      alerts: Array<{
+        id: number
+        merchant_id: number
+        product_id: number
+        name: string
+        barcode: string
+        stock: number
+        alert_stock: number
+        expiry_date: string | null
+        alert_type: string
+        days_left: number | null
+        status: string
+      }>
+      total: number
+      page: number
+      page_size: number
+    }>(`/api/v1/merchant/inventory/alerts${qs ? '?' + qs : ''}`)
   }
 
   getDashboardOverview(period = 'all') {

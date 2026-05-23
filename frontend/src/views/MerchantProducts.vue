@@ -189,6 +189,11 @@ function formatPrice(cents: number) {
   return '¥' + (cents / 100).toFixed(2)
 }
 
+function isExpired(product: Product): boolean {
+  if (!product.expiry_date) return false
+  return new Date(product.expiry_date) < new Date(new Date().toDateString())
+}
+
 onMounted(() => {
   loadProducts()
 })
@@ -282,7 +287,7 @@ onMounted(() => {
               v-for="product in products"
               :key="product.id"
               class="border-b border-gray-100 hover:bg-gray-50"
-              :class="{ 'opacity-60': product.status === 'inactive' }"
+              :class="{ 'opacity-60': product.status === 'inactive', 'bg-red-50': isExpired(product) }"
             >
               <td class="px-4 py-3 text-gray-600 font-mono text-xs">{{ product.barcode || '-' }}</td>
               <td class="px-4 py-3 font-medium text-gray-800">{{ product.name }}</td>
@@ -297,7 +302,10 @@ onMounted(() => {
                 >{{ product.stock }}</span>
               </td>
               <td class="px-4 py-3 text-center">
-                <span
+                <span v-if="isExpired(product)"
+                  class="inline-block px-2 py-0.5 text-xs rounded-full font-medium bg-red-100 text-red-700"
+                >已过期</span>
+                <span v-else
                   class="inline-block px-2 py-0.5 text-xs rounded-full font-medium"
                   :class="product.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'"
                 >{{ product.status === 'active' ? '上架' : '下架' }}</span>

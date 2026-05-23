@@ -14,6 +14,8 @@ interface DashboardData {
   today_appointments: number
   today_service_complete: number
   stock_warnings: number
+  near_expiry_count: number
+  expired_count: number
   pending_appointments: number
   birthday_reminders: number
   revenue_trend: number[]
@@ -190,19 +192,59 @@ onMounted(loadDashboard)
         </div>
 
         <!-- Alert Area -->
-        <div class="grid grid-cols-3 gap-4 mb-6">
-          <div class="bg-white rounded-lg shadow-sm p-4 flex items-center gap-3">
+        <div class="grid grid-cols-5 gap-4 mb-6">
+          <!-- Low Stock Alert -->
+          <div
+            class="bg-white rounded-lg shadow-sm p-4 flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow"
+            :class="data.stock_warnings > 0 ? 'border-2 border-red-300' : ''"
+            @click="router.push('/merchant/inventory/alerts?alert_type=low_stock')"
+          >
             <div class="w-10 h-10 rounded-full flex items-center justify-center text-lg"
               :class="data.stock_warnings > 0 ? 'bg-red-100' : 'bg-gray-100'">
               ⚠️
             </div>
             <div>
-              <p class="text-xs text-gray-500">库存预警</p>
+              <p class="text-xs text-gray-500">低库存预警</p>
               <p class="text-lg font-semibold" :class="data.stock_warnings > 0 ? 'text-red-600' : 'text-gray-400'">
                 {{ data.stock_warnings }} 项
               </p>
             </div>
           </div>
+          <!-- Near-Expiry Alert -->
+          <div
+            class="bg-white rounded-lg shadow-sm p-4 flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow"
+            :class="data.near_expiry_count > 0 ? 'border-2 border-orange-300' : ''"
+            @click="router.push('/merchant/inventory/alerts?alert_type=near_expiry')"
+          >
+            <div class="w-10 h-10 rounded-full flex items-center justify-center text-lg"
+              :class="data.near_expiry_count > 0 ? 'bg-orange-100' : 'bg-gray-100'">
+              ⏰
+            </div>
+            <div>
+              <p class="text-xs text-gray-500">商品临期</p>
+              <p class="text-lg font-semibold" :class="data.near_expiry_count > 0 ? 'text-orange-600' : 'text-gray-400'">
+                {{ data.near_expiry_count }} 项
+              </p>
+            </div>
+          </div>
+          <!-- Expired Alert -->
+          <div
+            class="bg-white rounded-lg shadow-sm p-4 flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow"
+            :class="data.expired_count > 0 ? 'border-2 border-gray-400' : ''"
+            @click="router.push('/merchant/inventory/alerts?alert_type=expired')"
+          >
+            <div class="w-10 h-10 rounded-full flex items-center justify-center text-lg"
+              :class="data.expired_count > 0 ? 'bg-gray-200' : 'bg-gray-100'">
+              ❌
+            </div>
+            <div>
+              <p class="text-xs text-gray-500">已过期</p>
+              <p class="text-lg font-semibold" :class="data.expired_count > 0 ? 'text-gray-600' : 'text-gray-400'">
+                {{ data.expired_count }} 项
+              </p>
+            </div>
+          </div>
+          <!-- Pending Appointments -->
           <div class="bg-white rounded-lg shadow-sm p-4 flex items-center gap-3">
             <div class="w-10 h-10 rounded-full flex items-center justify-center text-lg"
               :class="data.pending_appointments > 0 ? 'bg-yellow-100' : 'bg-gray-100'">
@@ -215,6 +257,7 @@ onMounted(loadDashboard)
               </p>
             </div>
           </div>
+          <!-- Birthday Reminders -->
           <div class="bg-white rounded-lg shadow-sm p-4 flex items-center gap-3">
             <div class="w-10 h-10 rounded-full flex items-center justify-center text-lg"
               :class="data.birthday_reminders > 0 ? 'bg-pink-100' : 'bg-gray-100'">

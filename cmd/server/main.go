@@ -256,6 +256,9 @@ func main() {
 		mux.Handle("POST /api/v1/merchant/inventory/surplus", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventorySurplusHandler(inventoryService))))
 		mux.Handle("GET /api/v1/merchant/inventory/flows", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryFlowsHandler(inventoryService))))
 
+		// Inventory alerts (auth-protected, merchant-only).
+		mux.Handle("GET /api/v1/merchant/inventory/alerts", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryAlertsHandler(inventoryService))))
+
 		// Inventory count checks (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/inventory/checks", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckCreateHandler(inventoryService))))
 		mux.Handle("GET /api/v1/merchant/inventory/checks", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckListHandler(inventoryService))))
@@ -5319,5 +5322,39 @@ func makeInventoryCheckApproveHandler(svc *inventory.Service) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(check)
+	}
+}
+
+func makeInventoryAlertsHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		q := r.URL.Query()
+
+		params := inventory.AlertListParams{
+			AlertType: q.Get("alert_type"),
+		}
+		if v := q.Get("page"); v != "" {
+			page, err := strconv.Atoi(v)
+			if err == nil {
+				params.Page = page
+			}
+		}
+		if v := q.Get("page_size"); v != "" {
+			size, err := strconv.Atoi(v)
+			if err == nil {
+				params.PageSize = size
+			}
+		}
+
+		result, err := svc.GetAlerts(r.Context(), *claims.MerchantID, params)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to get alerts", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
 	}
 }
