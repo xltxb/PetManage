@@ -25,6 +25,7 @@ import (
 	"github.com/xltxb/PetManage/internal/database"
 	"github.com/xltxb/PetManage/internal/dictionary"
 	"github.com/xltxb/PetManage/internal/employee"
+	"github.com/xltxb/PetManage/internal/inventory"
 	"github.com/xltxb/PetManage/internal/merchant"
 	"github.com/xltxb/PetManage/internal/merchantrole"
 	"github.com/xltxb/PetManage/internal/member"
@@ -149,6 +150,9 @@ func main() {
 	// Initialize replenishment service.
 	replenishmentService := replenishment.NewService(db)
 
+	// Initialize inventory service.
+	inventoryService := inventory.NewService(db)
+
 	// Initialize service management service.
 	serviceMgmtService := servicemgmt.NewService(db)
 
@@ -239,6 +243,19 @@ func main() {
 		// Replenishment suggestions (auth-protected, merchant-only).
 		mux.Handle("GET /api/v1/merchant/replenishment/suggestions", middleware.Auth(jwtManager)(http.HandlerFunc(makeReplenishSuggestionsHandler(replenishmentService))))
 		mux.Handle("POST /api/v1/merchant/replenishment/generate-po", middleware.Auth(jwtManager)(http.HandlerFunc(makeReplenishGeneratePOHandler(replenishmentService, purchaseService))))
+
+		// Inventory warehouse management (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/inventory/warehouses", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryWarehouseCreateHandler(inventoryService))))
+		mux.Handle("GET /api/v1/merchant/inventory/warehouses", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryWarehouseListHandler(inventoryService))))
+
+		// Inventory stock operations (auth-protected, merchant-only).
+		mux.Handle("POST /api/v1/merchant/inventory/inbound", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryInboundHandler(inventoryService))))
+		mux.Handle("POST /api/v1/merchant/inventory/outbound", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryOutboundHandler(inventoryService))))
+		mux.Handle("POST /api/v1/merchant/inventory/transfer", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryTransferHandler(inventoryService))))
+		mux.Handle("POST /api/v1/merchant/inventory/loss", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryLossHandler(inventoryService))))
+		mux.Handle("POST /api/v1/merchant/inventory/surplus", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventorySurplusHandler(inventoryService))))
+		mux.Handle("GET /api/v1/merchant/inventory/flows", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryFlowsHandler(inventoryService))))
+
 		// Service management (auth-protected, merchant-only).
 	mux.Handle("POST /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryCreateHandler(serviceMgmtService))))
 	mux.Handle("GET /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryListHandler(serviceMgmtService))))
@@ -4790,6 +4807,242 @@ func maskEmployee(e *employee.Employee) {
 func maskEmployeeList(result *employee.ListResult) {
 	for i := range result.Employees {
 		result.Employees[i].Phone = cryptopkg.MaskPhone(result.Employees[i].Phone)
+	}
+}
+
+// --- Inventory handlers ---
+
+func getMerchantClaims(w http.ResponseWriter, r *http.Request) (*auth.Claims, bool) {
+	claims := middleware.UserClaimsFromContext(r.Context())
+	if claims == nil {
+		apperrors.WriteError(w, r, apperrors.NewUnauthorizedError("authentication required"))
+		return nil, false
+	}
+	if claims.MerchantID == nil {
+		apperrors.WriteError(w, r, apperrors.NewForbiddenError("merchant account required"))
+		return nil, false
+	}
+	return claims, true
+}
+
+func makeInventoryWarehouseCreateHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		var req inventory.CreateWarehouseRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		result, err := svc.CreateWarehouse(r.Context(), *claims.MerchantID, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to create warehouse", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeInventoryWarehouseListHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		result, err := svc.ListWarehouses(r.Context(), *claims.MerchantID)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list warehouses", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"warehouses": result, "total": len(result)})
+	}
+}
+
+func makeInventoryInboundHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		var req inventory.InboundRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		result, err := svc.Inbound(r.Context(), *claims.MerchantID, claims.UserID, claims.Username, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("inbound failed", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeInventoryOutboundHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		var req inventory.OutboundRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		result, err := svc.Outbound(r.Context(), *claims.MerchantID, claims.UserID, claims.Username, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("outbound failed", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeInventoryTransferHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		var req inventory.TransferRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		out, in, err := svc.Transfer(r.Context(), *claims.MerchantID, claims.UserID, claims.Username, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("transfer failed", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{"transfer_out": out, "transfer_in": in})
+	}
+}
+
+func makeInventoryLossHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		var req inventory.LossRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		result, err := svc.Loss(r.Context(), *claims.MerchantID, claims.UserID, claims.Username, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("loss failed", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeInventorySurplusHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		var req inventory.SurplusRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			apperrors.WriteError(w, r, apperrors.NewValidationError("invalid request body"))
+			return
+		}
+		result, err := svc.Surplus(r.Context(), *claims.MerchantID, claims.UserID, claims.Username, req)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("surplus failed", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func makeInventoryFlowsHandler(svc *inventory.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := getMerchantClaims(w, r)
+		if !ok {
+			return
+		}
+		q := r.URL.Query()
+
+		params := inventory.ListFlowsParams{
+			Type:      q.Get("type"),
+			StartTime: q.Get("start_time"),
+			EndTime:   q.Get("end_time"),
+		}
+
+		if v := q.Get("product_id"); v != "" {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err == nil {
+				params.ProductID = &id
+			}
+		}
+		if v := q.Get("warehouse_id"); v != "" {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err == nil {
+				params.WarehouseID = &id
+			}
+		}
+		if v := q.Get("page"); v != "" {
+			page, err := strconv.Atoi(v)
+			if err == nil {
+				params.Page = page
+			}
+		}
+		if v := q.Get("page_size"); v != "" {
+			size, err := strconv.Atoi(v)
+			if err == nil {
+				params.PageSize = size
+			}
+		}
+
+		result, err := svc.ListFlows(r.Context(), *claims.MerchantID, params)
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to list flows", err))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
 	}
 }
 
