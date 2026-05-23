@@ -2467,3 +2467,27 @@ SESSION 11 — F071 会员与宠物API (开放平台) [2026-05-24 00:19 CST]
   ✓ GET /api/open/v1/members/{id}/pets → 200, 1 个宠物
   ✓ 无认证请求 → 401 UNAUTHORIZED
 - 提交: 3693e7e feat(F071): member & pet open platform API
+
+
+================================================================================
+SESSION 12 — F072 预约服务API (开放平台) [2026-05-24 00:42 CST]
+================================================================================
+
+- 扩展 appointment.ListParams 添加 MemberID 过滤字段，支持按会员查询预约
+- 新增 appointment.GetBookedSlots 方法：按技师+日期查询已预订时段
+- 新增 5 个 OpenAPI v1 handlers in cmd/server/handlers_openapi_v1.go:
+  - POST /api/open/v1/bookings: 创建预约，含冲突检测、技师值班验证
+  - GET /api/open/v1/bookings?member_id=X: 按会员ID分页查询预约列表
+  - PUT /api/open/v1/bookings/{id}: 修改预约时间(排班校验+冲突检测)，记录变更日志
+  - DELETE /api/open/v1/bookings/{id}: 取消预约，软取消保留审计记录
+  - GET /api/open/v1/technicians/{id}/availability?date=YYYY-MM-DD: 按30分钟粒度查询可用时段
+- 路由注册在 main.go F072 区块，使用 OpenAPIAuth 中间件
+- 创建 cmd/server/f072_test.go: 6 个集成测试，100% 通过率
+  ✓ POST /api/open/v1/bookings → 201, bookingID=19
+  ✓ GET /api/open/v1/bookings?member_id=68 → 200, total=1
+  ✓ PUT /api/open/v1/bookings/{id} → 200, 时间和备注已更新
+  ✓ DELETE /api/open/v1/bookings/{id} → 200, booking cancelled
+  ✓ GET /api/open/v1/technicians/3/availability?date=2026-05-24 → 200, shift=morning, slots=16
+  ✓ 无认证请求 → 401 UNAUTHORIZED
+- 修复: employee.GetByID 参数顺序 (merchantID, employeeID)
+- 提交: 802213d feat(F072): booking service API
