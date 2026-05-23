@@ -22,6 +22,7 @@ import (
 	"github.com/xltxb/PetManage/internal/checkout"
 	"github.com/xltxb/PetManage/internal/commission"
 	"github.com/xltxb/PetManage/internal/revenue"
+	"github.com/xltxb/PetManage/internal/statement"
 	"github.com/xltxb/PetManage/internal/complaint"
 	"github.com/xltxb/PetManage/internal/config"
 	"github.com/xltxb/PetManage/internal/contract"
@@ -194,6 +195,9 @@ func main() {
 
 	// Initialize revenue service.
 	revenueService := revenue.NewService(db)
+
+	// Initialize statement service.
+	statementService := statement.NewService(db)
 
 	// Initialize merchant role service.
 	merchantRoleService := merchantrole.NewService(db)
@@ -510,6 +514,12 @@ func main() {
 			// Revenue statistics and income/expense details (auth-protected, merchant-only).
 			mux.Handle("GET /api/v1/merchant/revenue/summary", middleware.Auth(jwtManager)(http.HandlerFunc(makeRevenueSummaryHandler(revenueService))))
 			mux.Handle("GET /api/v1/merchant/revenue/transactions", middleware.Auth(jwtManager)(http.HandlerFunc(makeRevenueTransactionsHandler(revenueService))))
+
+			// Financial statements (auth-protected, merchant-only).
+			mux.Handle("GET /api/v1/merchant/statements/profit-loss", middleware.Auth(jwtManager)(http.HandlerFunc(makeProfitLossHandler(statementService))))
+			mux.Handle("GET /api/v1/merchant/statements/revenue-detail", middleware.Auth(jwtManager)(http.HandlerFunc(makeRevenueDetailHandler(statementService))))
+			mux.Handle("GET /api/v1/merchant/statements/product-sales", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductSalesHandler(statementService))))
+			mux.Handle("GET /api/v1/merchant/statements/service-performance", middleware.Auth(jwtManager)(http.HandlerFunc(makeServicePerformanceHandler(statementService))))
 
 		// Appointment management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/appointments", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCreateHandler(appointmentService))))
