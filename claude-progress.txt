@@ -2400,3 +2400,47 @@ SESSION 42 — F070 基础信息API (开放平台) [2026-05-23 23:40 CST]
   ✓ GET /api/open/v1/breeds?type=dog → 返回 1 个犬品种 (金毛寻回犬)
 - 安全验证通过: 无 auth→401, 无效 token→401, 无效签名→SIGNATURE_INVALID, 缺签名头→SIGNATURE_MISSING
 - 提交: 3b8037e feat(F070): open platform basic info APIs — shop info, product list/detail, service list, and breed query endpoints
+
+================================================================================
+SESSION 9 — F080 安全防护 [2026-05-24 00:05 CST]
+================================================================================
+
+- SQL注入防护: 所有查询使用参数化查询 ($1, $2)，注入payload测试返回 INVALID_CREDENTIALS
+- XSS防护: 新增 SecurityHeaders 中间件，设置 CSP/X-XSS-Protection/X-Content-Type-Options/X-Frame-Options/Referrer-Policy 头
+- 暴力破解防护: 平台 Login 新增登录失败计数器，5次失败后锁定15分钟
+  - MerchantLogin 锁定阈值从3次统一为5次 (maxLoginFailures=5)
+  - 成功登录后重置 fail_count 和 locked_until
+- CSRF防护: 新增 CSRF 中间件 (double-submit cookie 模式)
+  - GET 请求自动下发 csrf_token cookie (SameSite=Strict)
+  - POST/PUT/DELETE 请求验证 X-CSRF-Token 头与 cookie 一致
+  - auth 端点 (login/refresh/change-password) 绕过 CSRF (Bearer token 自防护)
+- 密码强度校验: 最低8位、必须包含字母和数字
+- 新增错误码: CSRF_MISSING (403)、CSRF_INVALID (403)
+- 新增中间件文件: internal/middleware/csrf.go, internal/middleware/security_headers.go
+- 端到端验证全部 5 个步骤通过:
+  ✓ SQL注入 ' OR '1'='1 → 被参数化查询防护，返回 INVALID_CREDENTIALS
+  ✓ XSS防护 → 安全响应头全部就位，XSS脚本在输入中被正确处理
+  ✓ 暴力破解 → 1-4次: INVALID_CREDENTIALS, 第5次: ACCOUNT_LOCKED (15min)
+  ✓ CSRF防护 → 缺少token→CSRF_MISSING, token不匹配→CSRF_INVALID, 正确token→pass
+  ✓ 密码强度 → 短密码/纯字母/纯数字→拒绝, 8位字母+数字→允许
+- 提交: 1617532 feat(F080): security protection — anti-SQL-injection, anti-XSS, anti-CSRF, brute-force login defense, and password strength validation
+
+================================================================================
+SESSION 10 — F084: API接口自动化测试 [2026-05-24 CST]
+================================================================================
+
+- 创建 cmd/server/openapi_integration_test.go: 覆盖所有开放API接口的集成测试
+- 测试覆盖 17+ 个API端点，131 个测试用例，100% 通过率
+- 覆盖的端点：
+  * 公共端点 (7个): apply, get, resubmit, permissions/available, request-permissions, token, token/refresh
+  * 平台管理端点 (5个): pending, list, approve, reject, update-permissions
+  * OpenAPI认证端点 (6个): ping, shop/info, products, products/{id}, services, breeds
+- 每个端点测试 4 种场景:
+  ✓ 正常请求 (normal request)
+  ✓ 缺少必填参数 (missing required params)
+  ✓ 无效Token/凭证 (invalid token/credentials)
+  ✓ 签名错误 (signature error — HMAC-SHA256)
+- 额外覆盖: 错误Auth格式、无Auth头、错误AppKey、过期时间戳、无效时间戳格式、查询字符串与路径
+- 测试自动运行并生成格式化摘要报告 (Pass/Fail计数和通过率)
+- 使用 TestMain 自动设置: 管理员登录 → 创建开发者 → 审核通过 → 获取OpenPlatform Token
+- 提交: 2ddc3d6 feat(F084): automated API integration tests for all open platform endpoints
