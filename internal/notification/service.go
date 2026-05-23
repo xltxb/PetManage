@@ -21,6 +21,7 @@ type Notification struct {
 	Category   string    `json:"category"`
 	RelatedID  int64     `json:"related_id"`
 	IsRead     bool      `json:"is_read"`
+	SendStatus string    `json:"send_status"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -34,6 +35,8 @@ func NewService(db *sql.DB) *Service {
 	return &Service{db: db}
 }
 
+const notificationColumns = `id, merchant_id, user_id, user_type, title, content, category, related_id, is_read, send_status, created_at`
+
 // Create creates a new notification.
 func (s *Service) Create(ctx context.Context, n *Notification) (*Notification, error) {
 	if n.UserType == "" {
@@ -44,9 +47,9 @@ func (s *Service) Create(ctx context.Context, n *Notification) (*Notification, e
 	}
 
 	result, err := scanNotificationRow(s.db.QueryRowContext(ctx,
-		`INSERT INTO notifications (merchant_id, user_id, user_type, title, content, category, related_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
-		 RETURNING id, merchant_id, user_id, user_type, title, content, category, related_id, is_read, created_at`,
+		`INSERT INTO notifications (merchant_id, user_id, user_type, title, content, category, related_id, send_status)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, 'success')
+		 RETURNING `+notificationColumns,
 		n.MerchantID, n.UserID, n.UserType, n.Title, n.Content, n.Category, n.RelatedID,
 	))
 	if err != nil {
@@ -62,7 +65,7 @@ func (s *Service) ListByUser(ctx context.Context, merchantID, userID int64, user
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, merchant_id, user_id, user_type, title, content, category, related_id, is_read, created_at
+		`SELECT `+notificationColumns+`
 		 FROM notifications
 		 WHERE merchant_id = $1 AND user_id = $2 AND user_type = $3
 		 ORDER BY created_at DESC LIMIT $4`,
@@ -85,6 +88,107 @@ func (s *Service) ListByUser(ctx context.Context, merchantID, userID int64, user
 		notifications = []Notification{}
 	}
 	return notifications, rows.Err()
+}
+
+// ListParams holds optional filters for listing notifications.
+type ListParams struct {
+	Category string
+	Status   string
+	UserType string
+	Page     int
+	PageSize int
+}
+
+// ListResult wraps notification list with pagination info.
+type ListResult struct {
+	Notifications []Notification `json:"notifications"`
+	Total         int            `json:"total"`
+	Page          int            `json:"page"`
+	PageSize      int            `json:"page_size"`
+}
+
+// List returns a filtered and paginated list of notifications for a merchant.
+func (s *Service) List(ctx context.Context, merchantID int64, params ListParams) (*ListResult, error) {
+	if params.Page <= 0 {
+		params.Page = 1
+	}
+	if params.PageSize <= 0 || params.PageSize > 100 {
+		params.PageSize = 20
+	}
+
+	var conditions []string
+	var args []interface{}
+	args = append(args, merchantID)
+	conditions = append(conditions, "merchant_id = $1")
+	argIdx := 2
+
+	if params.Category != "" {
+		conditions = append(conditions, "category = $"+itoa(argIdx))
+		args = append(args, params.Category)
+		argIdx++
+	}
+	if params.Status != "" {
+		conditions = append(conditions, "send_status = $"+itoa(argIdx))
+		args = append(args, params.Status)
+		argIdx++
+	}
+	if params.UserType != "" {
+		conditions = append(conditions, "user_type = $"+itoa(argIdx))
+		args = append(args, params.UserType)
+		argIdx++
+	}
+
+	whereClause := ""
+	for i, c := range conditions {
+		if i == 0 {
+			whereClause = c
+		} else {
+			whereClause += " AND " + c
+		}
+	}
+
+	var total int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM notifications WHERE `+whereClause,
+		args...,
+	).Scan(&total)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to count notifications", err)
+	}
+
+	offset := (params.Page - 1) * params.PageSize
+	queryArgs := append(args, params.PageSize, offset)
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+notificationColumns+`
+		 FROM notifications
+		 WHERE `+whereClause+`
+		 ORDER BY created_at DESC LIMIT $`+itoa(argIdx)+` OFFSET $`+itoa(argIdx+1),
+		queryArgs...,
+	)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to list notifications", err)
+	}
+	defer rows.Close()
+
+	var notes []Notification
+	for rows.Next() {
+		n, err := scanNotificationRows(rows)
+		if err != nil {
+			return nil, apperrors.NewInternalError("failed to scan notification", err)
+		}
+		notes = append(notes, *n)
+	}
+	if notes == nil {
+		notes = []Notification{}
+	}
+
+	return &ListResult{
+		Notifications: notes,
+		Total:         total,
+		Page:          params.Page,
+		PageSize:      params.PageSize,
+	}, rows.Err()
 }
 
 // MarkRead marks a notification as read.
@@ -110,6 +214,9 @@ func (s *Service) SendAppointmentNotification(ctx context.Context, merchantID in
 	content := ""
 
 	switch action {
+	case "created":
+		title = "预约已创建"
+		content = fmt.Sprintf("您的预约已创建，服务时间：%s，请等待确认", details["appointment_time"])
 	case "confirmed":
 		title = "预约已确认"
 		content = fmt.Sprintf("您的预约已确认，服务时间：%s", details["appointment_time"])
@@ -124,6 +231,9 @@ func (s *Service) SendAppointmentNotification(ctx context.Context, merchantID in
 		} else {
 			content = "您的预约已取消"
 		}
+	case "upcoming":
+		title = "服务即将开始"
+		content = fmt.Sprintf("您预约的服务将于 %s 开始，请准时到达", details["appointment_time"])
 	}
 
 	if title == "" {
@@ -143,12 +253,63 @@ func (s *Service) SendAppointmentNotification(ctx context.Context, merchantID in
 	s.Create(ctx, n) // fire-and-forget; errors are logged by the service layer
 }
 
+// SendUpcomingReminders finds appointments starting within the next 60 minutes
+// and sends reminder notifications to members.
+func (s *Service) SendUpcomingReminders(ctx context.Context) (int, error) {
+	now := time.Now()
+	windowEnd := now.Add(60 * time.Minute)
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT a.id, a.merchant_id, a.member_id, a.employee_id, a.appointment_time,
+		        COALESCE(m.name, ''), COALESCE(e.name, '')
+		 FROM appointments a
+		 LEFT JOIN members m ON m.id = a.member_id
+		 LEFT JOIN employees e ON e.id = a.employee_id
+		 WHERE a.status = 'confirmed'
+		 AND a.deleted_at IS NULL
+		 AND a.appointment_time > $1
+		 AND a.appointment_time <= $2
+		 AND a.id NOT IN (
+		     SELECT related_id FROM notifications
+		     WHERE category = 'appointment' AND title = '服务即将开始'
+		     AND created_at > NOW() - INTERVAL '2 hours'
+		 )`,
+		now, windowEnd,
+	)
+	if err != nil {
+		return 0, apperrors.NewInternalError("failed to query upcoming appointments", err)
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var id, merchantID, memberID, employeeID int64
+		var apptTime time.Time
+		var memberName, employeeName string
+		if err := rows.Scan(&id, &merchantID, &memberID, &employeeID, &apptTime, &memberName, &employeeName); err != nil {
+			continue
+		}
+
+		timeStr := apptTime.Format("2006-01-02 15:04")
+		s.SendAppointmentNotification(ctx, merchantID, id, memberID, "member", "upcoming",
+			map[string]string{"appointment_time": timeStr})
+
+		if employeeID > 0 {
+			s.SendAppointmentNotification(ctx, merchantID, id, employeeID, "employee", "upcoming",
+				map[string]string{"appointment_time": timeStr})
+		}
+		count++
+	}
+
+	return count, rows.Err()
+}
+
 func scanNotificationRow(row *sql.Row) (*Notification, error) {
 	n := &Notification{}
 	err := row.Scan(
 		&n.ID, &n.MerchantID, &n.UserID, &n.UserType,
 		&n.Title, &n.Content, &n.Category, &n.RelatedID,
-		&n.IsRead, &n.CreatedAt,
+		&n.IsRead, &n.SendStatus, &n.CreatedAt,
 	)
 	return n, err
 }
@@ -158,9 +319,13 @@ func scanNotificationRows(rows *sql.Rows) (*Notification, error) {
 	err := rows.Scan(
 		&n.ID, &n.MerchantID, &n.UserID, &n.UserType,
 		&n.Title, &n.Content, &n.Category, &n.RelatedID,
-		&n.IsRead, &n.CreatedAt,
+		&n.IsRead, &n.SendStatus, &n.CreatedAt,
 	)
 	return n, err
+}
+
+func itoa(i int) string {
+	return fmt.Sprintf("%d", i)
 }
 
 // Ensure encoding/json is used for JSONB handling in callers.

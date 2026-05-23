@@ -1569,3 +1569,43 @@ SESSION 49 — F042 预约创建 [2026-05-23 10:10 CST]
 - 提交: adae2d4 feat(F042): appointment creation
 
 下一步: 继续实现 F043 预约管理
+
+================================================================================
+SESSION 50 — F043 预约管理：预约确认、改期、取消操作 [2026-05-23 10:24 CST]
+================================================================================
+
+- 数据库迁移 037: appointment_change_logs + notifications 表
+  - appointment_change_logs: 记录每次状态变更的 old_value/new_value/reason
+  - notifications: 通知记录，支持 member/employee 两种 user_type
+- Go 后端新增 (internal/notification/service.go):
+  - 通知 CRUD: Create/ListByUser/MarkRead
+  - SendAppointmentNotification: 预约通知辅助方法（confirmed/rescheduled/cancelled）
+- Go 后端扩展 (internal/appointment/service.go):
+  - Confirm: 状态 pending→confirmed，校验只能确认待确认预约，记录变更日志，通知会员
+  - Reschedule: 改期时检查技师新时段冲突，记录 old_time→new_time 变更，通知会员和技师
+  - Cancel: 带取消原因，状态→cancelled，释放技师时段，通知双方；重复取消/已完成预约拒绝
+  - GetChangeLogs: 按 appointment_id 查询完整变更历史，按 created_at ASC 排序
+  - logChange: 内部方法，将 old/new value 序列化为 JSONB 写入日志表
+- HTTP handlers (cmd/server/handlers_appointment.go):
+  - POST /api/v1/merchant/appointments/{id}/confirm — 确认预约
+  - POST /api/v1/merchant/appointments/{id}/reschedule — 改期预约
+  - POST /api/v1/merchant/appointments/{id}/cancel — 取消预约
+  - GET /api/v1/merchant/appointments/{id}/change-logs — 变更历史
+- 路由注册: notification.NewService + appointmentService.SetNotificationService 初始化
+- 前端 API client: confirmAppointment/rescheduleAppointment/cancelAppointment/getAppointmentChangeLogs
+- 前端 AppointmentList.vue:
+  - 表格新增「操作」列：确认（绿）、改期（蓝）、取消（红）、记录（灰）
+  - 确认弹窗：摘要信息 + 确认按钮
+  - 改期弹窗：日期/时间选择 + 原因输入，服务端冲突检测
+  - 取消弹窗：原因输入 + 确认按钮
+  - 变更记录弹窗：展示所有操作的 old/new value 和原因
+- 端到端验证全部 5 个步骤通过:
+  ✓ 确认预约: 状态 pending→confirmed，通知已创建（"预约已确认，服务时间：..."）
+  ✓ 改期预约: 时间变更成功，冲突检测生效（CONFLICT），通知双方（member+employee）
+  ✓ 取消预约: 状态→cancelled，原因记录，通知双方；重复取消/已完成拒绝
+  ✓ 取消后时段自动释放: 同技师同时段可创建新预约（appointment 4 成功）
+  ✓ 变更历史完整记录: confirmed(old: pending→confirmed) + rescheduled(old_time→new_time+reason) + cancelled(old_status→cancelled+reason)
+- 提交: (pending)
+
+下一步: 继续实现 F044 预约提醒
+

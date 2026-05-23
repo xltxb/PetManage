@@ -453,6 +453,11 @@ func main() {
 		mux.Handle("POST /api/v1/merchant/appointments/{id}/cancel", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCancelHandler(appointmentService))))
 		mux.Handle("GET /api/v1/merchant/appointments/{id}/change-logs", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentChangeLogsHandler(appointmentService))))
 
+		// Notification management (auth-protected, merchant-only).
+		mux.Handle("GET /api/v1/merchant/notifications", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationListHandler(notifService))))
+		mux.Handle("POST /api/v1/merchant/notifications/upcoming-reminders", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationSendUpcomingHandler(notifService))))
+		mux.Handle("POST /api/v1/merchant/notifications/{id}/mark-read", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationMarkReadHandler(notifService))))
+
 		// Merchant role management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/roles", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleCreateHandler(merchantRoleService))))
 		mux.Handle("GET /api/v1/merchant/roles", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantRoleListHandler(merchantRoleService))))

@@ -213,6 +213,16 @@ func (s *Service) Create(ctx context.Context, merchantID int64, req CreateAppoin
 	if err != nil {
 		return nil, apperrors.NewInternalError("failed to create appointment", err)
 	}
+
+	if s.notifSvc != nil {
+		s.notifSvc.SendAppointmentNotification(ctx, merchantID, apt.ID,
+			apt.MemberID, "member", "created",
+			map[string]string{"appointment_time": apt.AppointmentTime.Format("2006-01-02 15:04")})
+		s.notifSvc.SendAppointmentNotification(ctx, merchantID, apt.ID,
+			apt.EmployeeID, "employee", "created",
+			map[string]string{"appointment_time": apt.AppointmentTime.Format("2006-01-02 15:04")})
+	}
+
 	return apt, nil
 }
 
