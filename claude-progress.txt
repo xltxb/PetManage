@@ -1605,7 +1605,39 @@ SESSION 50 — F043 预约管理：预约确认、改期、取消操作 [2026-05
   ✓ 取消预约: 状态→cancelled，原因记录，通知双方；重复取消/已完成拒绝
   ✓ 取消后时段自动释放: 同技师同时段可创建新预约（appointment 4 成功）
   ✓ 变更历史完整记录: confirmed(old: pending→confirmed) + rescheduled(old_time→new_time+reason) + cancelled(old_status→cancelled+reason)
-- 提交: (pending)
+- 提交: ae97dd6 feat(F043): appointment lifecycle management
 
 下一步: 继续实现 F044 预约提醒
+
+================================================================================
+SESSION 51 — F044 预约提醒 [2026-05-23 10:42 CST]
+================================================================================
+
+- 扩展通知系统，新增 created/upcoming 动作类型
+- 预约创建(Create)时自动向会员和技师发送"预约已创建"通知
+- 预约确认(Confirm)时发送"预约已确认"通知（F043已实现）
+- 预约改期(Reschedule)时向会员和技师双方发送改期通知（F043已实现）
+- 预约取消(Cancel)时向会员和技师双方发送取消通知（F043已实现）
+- 新增 SendUpcomingReminders 方法：查找未来60分钟内开始的已确认预约，自动发送"服务即将开始"提醒
+  - 去重机制：检查2小时内是否已发送过同类提醒，防止重复推送
+  - 同时通知会员和技师
+- 迁移 038: notifications 表新增 send_status 列（默认'success'），添加索引
+- 通知列表查询 API (GET /api/v1/merchant/notifications)：
+  - 支持按 category/status/user_type 筛选
+  - 支持分页(page/page_size)
+  - 所有通知均包含 send_status 字段
+- 标记已读 API (POST /api/v1/merchant/notifications/{id}/mark-read)
+- 触发提醒 API (POST /api/v1/merchant/notifications/upcoming-reminders)：返回 sent_count
+- 更新 notification 模型和 scan 函数以支持 send_status 字段
+- 注册 3 个新 API 端点（auth-protected, merchant-only）
+- 创建 cmd/server/handlers_notification.go 通知处理器
+- 端到端验证全部 5 个步骤通过 (20/20 assertions):
+  ✓ 预约创建后会员和技师收到预约已创建通知 (4条)
+  ✓ 改期后会员和技师双方收到改期通知 (4条，含 member+employee)
+  ✓ 取消预约后技师和会员收到取消通知 (8条)
+  ✓ 服务开始前1小时推送提醒 (sent_count=1，member+employee各1条，去重有效)
+  ✓ 通知记录可查询推送状态（send_status=success，status筛选，分页，标记已读，未授权401）
+- 提交: b90039b feat(F044): appointment notification system
+
+下一步: 继续实现 F045 技师排班管理
 
