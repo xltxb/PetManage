@@ -254,7 +254,7 @@ func (m *Migrator) Status() error {
 }
 
 // Connect opens a PostgreSQL connection and verifies it with a ping.
-func Connect(dsn string) (*sql.DB, error) {
+func Connect(dsn string, maxOpen, maxIdle int) (*sql.DB, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to database: %w", err)
@@ -262,5 +262,12 @@ func Connect(dsn string) (*sql.DB, error) {
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("pinging database: %w", err)
 	}
+	if maxOpen > 0 {
+		db.SetMaxOpenConns(maxOpen)
+	}
+	if maxIdle > 0 {
+		db.SetMaxIdleConns(maxIdle)
+	}
+	db.SetConnMaxLifetime(5 * time.Minute)
 	return db, nil
 }

@@ -5,20 +5,44 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/xltxb/PetManage/internal/cache"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 )
 
+var dictCacheTTL = 10 * time.Minute
+
 // Service manages system data dictionaries (categories, breeds).
 type Service struct {
-	db *sql.DB
+	db    *sql.DB
+	cache *cache.RedisClient
 }
 
 // NewService creates a new dictionary Service.
 func NewService(db *sql.DB) *Service {
 	return &Service{db: db}
+}
+
+// SetCache injects a Redis cache client for read-through caching.
+func (s *Service) SetCache(c *cache.RedisClient) {
+	s.cache = c
+}
+
+func (s *Service) categoriesCacheKey(merchantID int64) string {
+	return fmt.Sprintf("cache:dict_categories:%d", merchantID)
+}
+
+func (s *Service) breedsCacheKey(petType string, merchantID int64) string {
+	return fmt.Sprintf("cache:dict_breeds:%s:%d", petType, merchantID)
+}
+
+func (s *Service) invalidateDictCache(ctx context.Context) {
+	if s.cache != nil {
+		_ = s.cache.InvalidatePattern(ctx, "cache:dict_*")
+	}
 }
 
 // --- Category types ---
@@ -113,6 +137,7 @@ func (s *Service) CreateCategory(ctx context.Context, req CreateCategoryRequest,
 	cat.UpdatedAt = updatedAt.Format(time.RFC3339)
 	cat.Children = []*Category{}
 
+	s.invalidateDictCache(ctx)
 	return &cat, nil
 }
 
@@ -120,6 +145,13 @@ func (s *Service) CreateCategory(ctx context.Context, req CreateCategoryRequest,
 // When merchantID > 0, returns platform enabled categories + the merchant's own categories.
 // When merchantID == 0 (platform admin), returns all non-deleted categories.
 func (s *Service) ListCategories(ctx context.Context, merchantID int64) ([]*Category, error) {
+	if s.cache != nil {
+		var cached []*Category
+		if s.cache.GetJSON(ctx, s.categoriesCacheKey(merchantID), &cached) {
+			return cached, nil
+		}
+	}
+
 	var rows *sql.Rows
 	var err error
 
@@ -186,6 +218,9 @@ func (s *Service) ListCategories(ctx context.Context, merchantID int64) ([]*Cate
 
 	if roots == nil {
 		roots = []*Category{}
+	}
+	if s.cache != nil {
+		_ = s.cache.SetJSON(ctx, s.categoriesCacheKey(merchantID), roots, dictCacheTTL)
 	}
 	return roots, nil
 }
@@ -263,6 +298,7 @@ func (s *Service) UpdateCategory(ctx context.Context, id int64, req UpdateCatego
 	cat.UpdatedAt = updatedAt.Format(time.RFC3339)
 	cat.Children = []*Category{}
 
+	s.invalidateDictCache(ctx)
 	return &cat, nil
 }
 
@@ -309,6 +345,7 @@ func (s *Service) DeleteCategory(ctx context.Context, id int64, merchantID int64
 	if err != nil {
 		return apperrors.NewInternalError("failed to delete category", err)
 	}
+	s.invalidateDictCache(ctx)
 	return nil
 }
 
@@ -360,6 +397,7 @@ func (s *Service) ToggleCategory(ctx context.Context, id int64, merchantID int64
 		return nil, apperrors.NewInternalError("failed to toggle category", err)
 	}
 
+	s.invalidateDictCache(ctx)
 	return &ToggleCategoryResponse{Message: message, Status: newStatus}, nil
 }
 
@@ -407,6 +445,7 @@ func (s *Service) CreateBreed(ctx context.Context, req CreateBreedRequest) (*Bre
 	}
 	breed.CreatedAt = createdAt.Format(time.RFC3339)
 	breed.UpdatedAt = updatedAt.Format(time.RFC3339)
+	s.invalidateDictCache(ctx)
 	return &breed, nil
 }
 
@@ -419,6 +458,13 @@ type BreedListResponse struct {
 // ListBreeds returns pet breeds, optionally filtered by pet_type.
 // When merchantID > 0, only enabled breeds are returned (merchant view).
 func (s *Service) ListBreeds(ctx context.Context, petType string, merchantID int64) (*BreedListResponse, error) {
+	if s.cache != nil {
+		var cached BreedListResponse
+		if s.cache.GetJSON(ctx, s.breedsCacheKey(petType, merchantID), &cached) {
+			return &cached, nil
+		}
+	}
+
 	var rows *sql.Rows
 	var err error
 
@@ -481,7 +527,11 @@ func (s *Service) ListBreeds(ctx context.Context, petType string, merchantID int
 		breeds = []Breed{}
 	}
 
-	return &BreedListResponse{Breeds: breeds, Total: len(breeds)}, nil
+	resp := &BreedListResponse{Breeds: breeds, Total: len(breeds)}
+	if s.cache != nil {
+		_ = s.cache.SetJSON(ctx, s.breedsCacheKey(petType, merchantID), resp, dictCacheTTL)
+	}
+	return resp, nil
 }
 
 // UpdateBreedRequest is the request body for updating a breed.
@@ -535,6 +585,7 @@ func (s *Service) UpdateBreed(ctx context.Context, id int64, req UpdateBreedRequ
 	}
 	breed.CreatedAt = createdAt.Format(time.RFC3339)
 	breed.UpdatedAt = updatedAt.Format(time.RFC3339)
+	s.invalidateDictCache(ctx)
 	return &breed, nil
 }
 
@@ -550,6 +601,7 @@ func (s *Service) DeleteBreed(ctx context.Context, id int64) error {
 	if n == 0 {
 		return apperrors.NewNotFoundError("breed not found")
 	}
+	s.invalidateDictCache(ctx)
 	return nil
 }
 
@@ -587,6 +639,7 @@ func (s *Service) ToggleBreed(ctx context.Context, id int64) (*ToggleBreedRespon
 		return nil, apperrors.NewInternalError("failed to toggle breed", err)
 	}
 
+	s.invalidateDictCache(ctx)
 	return &ToggleBreedResponse{Message: message, Status: newStatus}, nil
 }
 

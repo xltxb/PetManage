@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/xltxb/PetManage/internal/attendance"
 	"github.com/xltxb/PetManage/internal/auth"
 	"github.com/xltxb/PetManage/internal/backup"
+	"github.com/xltxb/PetManage/internal/cache"
 	"github.com/xltxb/PetManage/internal/cron"
 	"github.com/xltxb/PetManage/internal/balance"
 	"github.com/xltxb/PetManage/internal/category"
@@ -108,11 +110,20 @@ func main() {
 	// Connect to database.
 	dsn := cfg.DSN()
 	lgr.Info("Connecting to database...")
-	db, err := database.Connect(dsn)
+	db, err := database.Connect(dsn, cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns)
 	if err != nil {
 		lgr.Fatal("Database connection failed", zap.Error(err))
 	}
 	defer db.Close()
+
+	// Initialize Redis cache (non-fatal if unavailable).
+	redisCache := cache.NewRedisClient(cfg.Redis)
+	defer redisCache.Close()
+	if redisCache.Available() {
+		lgr.Info("Redis connected")
+	} else {
+		lgr.Warn("Redis unavailable, caching disabled")
+	}
 
 	// Initialize JWT manager.
 	jwtManager := auth.NewJWTManager(
@@ -132,6 +143,7 @@ func main() {
 
 	// Initialize dictionary service.
 	dictService := dictionary.NewService(db)
+	dictService.SetCache(redisCache)
 
 	// Initialize role service and permission checker.
 	roleService := role.NewService(db)
@@ -163,6 +175,7 @@ func main() {
 
 	// Initialize category service.
 	categoryService := category.NewService(db)
+	categoryService.SetCache(redisCache)
 
 	// Initialize member service.
 	memberService := member.NewService(db)
@@ -287,6 +300,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("GET /api/v1/health/performance", makePerfStatsHandler(redisCache, db))
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
 	mux.HandleFunc("/api/v1/auth/refresh", makeRefreshHandler(authService))
 	mux.HandleFunc("POST /api/v1/merchant/auth/login", makeMerchantLoginHandler(authService))
@@ -1149,7 +1163,7 @@ func main() {
 func handleMigration(cfg *config.Config, migrate, rollback, status bool) {
 	dsn := cfg.DSN()
 	fmt.Println("Connecting to database...")
-	db, err := database.Connect(dsn)
+	db, err := database.Connect(dsn, cfg.Database.MaxOpenConns, cfg.Database.MaxIdleConns)
 	if err != nil {
 		log.Fatalf("Database connection failed: %v", err)
 	}
@@ -1182,6 +1196,21 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
+}
+
+func makePerfStatsHandler(rc *cache.RedisClient, db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		stats := map[string]interface{}{
+			"redis_available": rc.Available(),
+			"cache_hit_rate":  rc.HitRate(),
+			"db_max_open":     db.Stats().MaxOpenConnections,
+			"db_open":         db.Stats().OpenConnections,
+			"db_in_use":       db.Stats().InUse,
+			"db_idle":         db.Stats().Idle,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(stats)
+	}
 }
 
 // --- Auth handlers ---
@@ -1362,7 +1391,7 @@ func loggingMiddleware(lgr *zap.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 
-			wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK, start: start}
 			next.ServeHTTP(wrapped, r)
 
 			lgr.Info("request",
@@ -1377,12 +1406,27 @@ func loggingMiddleware(lgr *zap.Logger) func(http.Handler) http.Handler {
 
 type responseWriter struct {
 	http.ResponseWriter
-	statusCode int
+	statusCode  int
+	start       time.Time
+	wroteHeader bool
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
+	if rw.wroteHeader {
+		return
+	}
+	rw.wroteHeader = true
 	rw.statusCode = code
+	duration := time.Since(rw.start)
+	rw.ResponseWriter.Header().Set("X-Response-Time", fmt.Sprintf("%.2fms", float64(duration.Microseconds())/1000.0))
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	if !rw.wroteHeader {
+		rw.WriteHeader(http.StatusOK)
+	}
+	return rw.ResponseWriter.Write(b)
 }
 
 // --- Merchant handlers ---

@@ -3,11 +3,15 @@ package category
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/xltxb/PetManage/internal/cache"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 )
+
+var catCacheTTL = 5 * time.Minute
 
 // Category represents a product category node.
 type Category struct {
@@ -37,12 +41,22 @@ type UpdateCategoryRequest struct {
 
 // Service provides product category management operations.
 type Service struct {
-	db *sql.DB
+	db    *sql.DB
+	cache *cache.RedisClient
 }
 
 // NewService creates a new category Service.
 func NewService(db *sql.DB) *Service {
 	return &Service{db: db}
+}
+
+// SetCache injects a Redis cache client for read-through caching.
+func (s *Service) SetCache(c *cache.RedisClient) {
+	s.cache = c
+}
+
+func (s *Service) cacheKey(merchantID int64) string {
+	return fmt.Sprintf("cache:product_categories:%d", merchantID)
 }
 
 // Create creates a new product category for a merchant.
@@ -84,11 +98,19 @@ func (s *Service) Create(ctx context.Context, merchantID int64, req CreateCatego
 	}
 	c.CreatedAt = createdAt.Format(time.RFC3339)
 	c.UpdatedAt = updatedAt.Format(time.RFC3339)
+	s.invalidateCache(ctx, merchantID)
 	return &c, nil
 }
 
 // List returns all categories for a merchant as a tree.
 func (s *Service) List(ctx context.Context, merchantID int64) ([]*Category, error) {
+	if s.cache != nil {
+		var cached []*Category
+		if s.cache.GetJSON(ctx, s.cacheKey(merchantID), &cached) {
+			return cached, nil
+		}
+	}
+
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, merchant_id, parent_id, name, sort_order, created_at, updated_at
 		 FROM product_categories
@@ -120,7 +142,21 @@ func (s *Service) List(ctx context.Context, merchantID int64) ([]*Category, erro
 		return []*Category{}, rows.Err()
 	}
 
-	return buildTree(flat), rows.Err()
+	result := buildTree(flat)
+	s.cacheListResult(ctx, merchantID, result)
+	return result, rows.Err()
+}
+
+func (s *Service) cacheListResult(ctx context.Context, merchantID int64, result []*Category) {
+	if s.cache != nil {
+		_ = s.cache.SetJSON(ctx, s.cacheKey(merchantID), result, catCacheTTL)
+	}
+}
+
+func (s *Service) invalidateCache(ctx context.Context, merchantID int64) {
+	if s.cache != nil {
+		_ = s.cache.Delete(ctx, s.cacheKey(merchantID))
+	}
 }
 
 // Update updates a category's name, parent, and sort order.
@@ -182,6 +218,7 @@ func (s *Service) Update(ctx context.Context, categoryID, merchantID int64, req 
 	}
 	c.CreatedAt = createdAt.Format(time.RFC3339)
 	c.UpdatedAt = updatedAt.Format(time.RFC3339)
+	s.invalidateCache(ctx, merchantID)
 	return &c, nil
 }
 
@@ -233,6 +270,7 @@ func (s *Service) Delete(ctx context.Context, categoryID, merchantID int64) erro
 	if err != nil {
 		return apperrors.NewInternalError("failed to delete category", err)
 	}
+	s.invalidateCache(ctx, merchantID)
 	return nil
 }
 
