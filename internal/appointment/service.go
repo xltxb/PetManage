@@ -65,14 +65,24 @@ type ListResult struct {
 
 // Service provides appointment management operations.
 type Service struct {
-	db          *sql.DB
-	notifSvc    *notification.Service
-	scheduleSvc *schedule.Service
+	db              *sql.DB
+	notifSvc        *notification.Service
+	scheduleSvc     *schedule.Service
+	serviceRecordSvc interface {
+		ArchiveOnComplete(ctx context.Context, merchantID, appointmentID int64) error
+	}
 }
 
 // NewService creates a new appointment Service.
 func NewService(db *sql.DB) *Service {
 	return &Service{db: db}
+}
+
+// SetServiceRecordService sets the service record service for archiving on completion.
+func (s *Service) SetServiceRecordService(svc interface {
+	ArchiveOnComplete(ctx context.Context, merchantID, appointmentID int64) error
+}) {
+	s.serviceRecordSvc = svc
 }
 
 // SetNotificationService sets the notification service for sending appointment notifications.
@@ -634,6 +644,11 @@ func (s *Service) Complete(ctx context.Context, merchantID, appointmentID int64)
 		map[string]string{"status": oldStatus},
 		map[string]string{"status": newStatus},
 		"")
+
+	// Archive service record to pet and member profiles.
+	if s.serviceRecordSvc != nil {
+		s.serviceRecordSvc.ArchiveOnComplete(ctx, merchantID, appointmentID)
+	}
 
 	if s.notifSvc != nil {
 		s.notifSvc.SendAppointmentNotification(ctx, merchantID, appointmentID,

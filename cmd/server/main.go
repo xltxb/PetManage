@@ -47,6 +47,7 @@ import (
 	"github.com/xltxb/PetManage/internal/schedule"
 	"github.com/xltxb/PetManage/internal/servicepackage"
 	"github.com/xltxb/PetManage/internal/servicemgmt"
+	"github.com/xltxb/PetManage/internal/servicerecord"
 	"github.com/xltxb/PetManage/internal/supplier"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
@@ -196,6 +197,10 @@ func main() {
 	// Initialize schedule service.
 	scheduleService := schedule.NewService(db)
 	appointmentService.SetScheduleService(scheduleService)
+
+	// Initialize service record service for archiving.
+	serviceRecordService := servicerecord.NewService(db)
+	appointmentService.SetServiceRecordService(serviceRecordService)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -461,6 +466,12 @@ func main() {
 		mux.Handle("POST /api/v1/merchant/appointments/{id}/complete", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCompleteHandler(appointmentService))))
 		mux.Handle("POST /api/v1/merchant/appointments/{id}/pickup", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentPickupHandler(appointmentService))))
 		mux.Handle("GET /api/v1/merchant/appointments/{id}/change-logs", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentChangeLogsHandler(appointmentService))))
+
+			// Service record archiving (auth-protected, merchant-only).
+			mux.Handle("GET /api/v1/merchant/service-records/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceRecordGetHandler(serviceRecordService))))
+			mux.Handle("GET /api/v1/merchant/pets/{petId}/service-records", middleware.Auth(jwtManager)(http.HandlerFunc(makePetServiceRecordsHandler(serviceRecordService))))
+			mux.Handle("GET /api/v1/merchant/members/{memberId}/service-records", middleware.Auth(jwtManager)(http.HandlerFunc(makeMemberServiceRecordsHandler(serviceRecordService))))
+			mux.Handle("POST /api/v1/merchant/service-records/{id}/evaluate", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceRecordEvaluateHandler(serviceRecordService))))
 
 		// Notification management (auth-protected, merchant-only).
 		mux.Handle("GET /api/v1/merchant/notifications", middleware.Auth(jwtManager)(http.HandlerFunc(makeNotificationListHandler(notifService))))
