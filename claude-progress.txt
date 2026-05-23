@@ -2512,3 +2512,25 @@ SESSION 39 — F073 订单与支付API [2026-05-24 00:43 CST]
   ✓ POST /api/open/v1/orders/52/refund → 200, refund_id=6, status=completed
   ✓ GET /api/open/v1/orders?member_id=1 → 200, total=0 (member has no orders yet)
 - 提交: 8a2c869 feat(F073): open platform order & payment API
+
+================================================================================
+SESSION 38 — F074 营销与核销API [2026-05-24 01:03 CST]
+================================================================================
+
+- 创建迁移: coupon_templates + coupon_codes 表 (本地 PostgreSQL + Supabase)
+- 创建 cmd/server/handlers_openapi_marketing.go: 4 个开放平台 API 处理器
+  - POST /api/open/v1/coupons/{id}/claim: 会员领取优惠券, 使用 coupon.Service.IssueCoupons
+  - POST /api/open/v1/coupons/verify: 核销优惠券码, 验证券码有效性并返回抵扣金额
+  - GET /api/open/v1/activities: 查询进行中的活动列表, 使用 promotion.Service.GetActivePromotions
+  - POST /api/open/v1/groupon/verify: 核销第三方团购券, 使用 verification.Service.VerifyThirdPartyVoucher
+- 更新 cmd/server/main.go: 注册 4 个 F074 路由 (OpenAPIAuth 中间件保护)
+- 修复: 活动列表 nil → [] 空数组处理
+- 端到端验证全部 4 个步骤通过 (17/17 assertions):
+  ✓ POST /api/open/v1/coupons/6/claim → 201, code=MJD491279B, 含 value_cents/expires_at
+  ✓ 缺失 member_id → 400, 无效模板 → 404
+  ✓ POST /api/open/v1/coupons/verify → 200, valid:true, value_cents:3000, min_order_cents:10000
+  ✓ 不存在券码 → 400, 缺失 code → 400
+  ✓ GET /api/open/v1/activities → 200, activities 数组含 1 条 active 活动 (含 rules JSON)
+  ✓ POST /api/open/v1/groupon/verify → 200, verified:true, amount_cents:5000, source:meituan
+  ✓ 不存在团购券 → 404
+- 提交: 5acde13 feat(F074): open platform marketing & verification API
