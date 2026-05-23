@@ -1834,3 +1834,49 @@ SESSION 56 — F051 优惠券核销与服务预约核销 [2026-05-23 12:03 CST]
 - 提交: 3859cab feat(F051): coupon and service appointment verification
 
 下一步: 继续实现 F052 小票模板自定义与打印
+
+
+================================================================================
+SESSION 57 — F052 小票模板自定义与打印 [2026-05-23 12:23 CST]
+================================================================================
+
+- 数据库迁移 (043_receipt_templates):
+  - 新建 receipt_templates 表: id, merchant_id (UNIQUE), logo_url, store_name, contact_phone, contact_address, footer_note, paper_width (58mm/80mm), show_qrcode
+- 新建 internal/receipttemplate/service.go:
+  - GetTemplate: 获取模板配置，不存在时从 merchant 表合并默认值
+  - SaveTemplate: INSERT ON CONFLICT 实现创建或更新
+  - GetOrderReceipt: 生成完整小票数据（商品明细、支付明细、会员信息、找零）
+- API 端点 (auth-protected, merchant-only):
+  - GET /api/v1/merchant/receipt-template — 获取小票模板
+  - PUT /api/v1/merchant/receipt-template — 保存小票模板
+  - POST /api/v1/merchant/receipt-template/logo — 上传模板 Logo
+  - GET /api/v1/merchant/orders/{id}/receipt — 获取订单小票数据（用于重打）
+- 前端:
+  - ReceiptTemplate.vue: 小票模板编辑器
+    - Logo 上传（图片预览 + 上传按钮）
+    - 门店名称、联系电话、门店地址输入框
+    - 底部备注文本域
+    - 打印纸宽度选择（58mm/80mm）
+    - 二维码显示开关
+    - 实时预览面板：模拟小票效果，响应式展示模板配置
+  - MerchantPos.vue 增强:
+    - 加载小票模板数据，收银成功页使用模板样式
+    - 小票内容增强：会员信息、商品明细、支付明细、优惠信息、找零
+    - 收银完成后自动调用 printReceipt() 弹出打印窗口
+    - 打印样式优化：@page 设置纸张宽度，支持58mm/80mm
+  - OrderList.vue 重打功能:
+    - 订单列表添加「打印」按钮
+    - 订单详情添加「打印小票」按钮
+    - reprintReceipt 函数：调用 API 获取小票数据 → 窗口打开 → print()
+  - MerchantDashboard.vue: 导航栏添加「小票模板」快捷入口
+  - 路由: /merchant/receipt-template
+- API 客户端新增: getReceiptTemplate, updateReceiptTemplate, uploadReceiptLogo, getOrderReceipt
+- 端到端验证全部 5 个步骤通过:
+  ✓ 编辑小票模板：API PUT 保存门店名称/联系方式/地址/底部备注/纸张宽度
+  ✓ 预览小票效果：ReceiptTemplate.vue 实时预览面板
+  ✓ 完成收银后自动打印：POS 收银成功后 nextTick → setTimeout → printReceipt()
+  ✓ 重打小票：OrderList 列表/详情页调用 getOrderReceipt → 新窗口 print()
+  ✓ 小票内容：商品明细(items)、支付明细(payments)、会员信息(member)、找零(change)
+- 提交: 366b7e5 feat(F052): receipt template customization and printing
+
+下一步: 继续实现 F053 员工档案管理
