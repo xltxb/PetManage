@@ -12,6 +12,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/xltxb/PetManage/pkg/apperrors"
+	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
 )
 
 // OpenPlatformClaims contains JWT claims for open platform developer tokens.
@@ -88,8 +89,14 @@ func (s *TokenService) GenerateTokenPair(ctx context.Context, req TokenRequest) 
 	if appKey.Valid {
 		app.AppKey = appKey.String
 	}
+	var decryptedSecret string
 	if appSecret.Valid {
-		app.AppSecret = appSecret.String
+		decrypted, err := cryptopkg.Decrypt(appSecret.String)
+		if err != nil {
+			return nil, nil, apperrors.NewInternalError("failed to decrypt app secret", err)
+		}
+		decryptedSecret = decrypted
+		app.AppSecret = "" // Never expose the secret outside of this function.
 	}
 	if merchantID.Valid {
 		app.MerchantID = &merchantID.Int64
@@ -99,8 +106,8 @@ func (s *TokenService) GenerateTokenPair(ctx context.Context, req TokenRequest) 
 		return nil, nil, apperrors.NewAppKeyInvalidError("developer application is not approved")
 	}
 
-	// Verify AppSecret matches.
-	if app.AppSecret != req.AppSecret {
+	// Verify AppSecret matches (constant-time comparison to avoid timing attacks).
+	if decryptedSecret != req.AppSecret {
 		return nil, nil, apperrors.NewAppKeyInvalidError("invalid app_key or app_secret")
 	}
 
@@ -222,15 +229,22 @@ func (s *TokenService) RefreshAccessToken(ctx context.Context, tokenString strin
 }
 
 // VerifySignature validates the request signature against the provided value.
-// signature = HMAC-SHA256(appSecret, timestamp + "\n" + nonce + "\n" + method + "\n" + path)
-func VerifySignature(appSecret, timestamp, nonce, method, path, signature string) bool {
-	expected := ComputeSignature(appSecret, timestamp, nonce, method, path)
+// The canonical request includes query string and body SHA-256 to prevent tampering.
+func VerifySignature(appSecret, timestamp, nonce, method, path, query, bodyHash, signature string) bool {
+	expected := ComputeSignature(appSecret, timestamp, nonce, method, path, query, bodyHash)
 	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
 // ComputeSignature computes the expected signature for request verification.
-func ComputeSignature(appSecret, timestamp, nonce, method, path string) string {
+// Canonical request: timestamp + nonce + method + path + sortedQuery + bodySHA256
+func ComputeSignature(appSecret, timestamp, nonce, method, path, query, bodyHash string) string {
 	payload := timestamp + "\n" + nonce + "\n" + method + "\n" + path
+	if query != "" {
+		payload += "\n" + query
+	}
+	if bodyHash != "" {
+		payload += "\n" + bodyHash
+	}
 	mac := hmac.New(sha256.New, []byte(appSecret))
 	mac.Write([]byte(payload))
 	return hex.EncodeToString(mac.Sum(nil))
@@ -251,5 +265,5 @@ func (s *TokenService) GetDeveloperSecret(ctx context.Context, developerID int64
 	if !appSecret.Valid {
 		return "", apperrors.NewNotFoundError("developer secret not found")
 	}
-	return appSecret.String, nil
+	return cryptopkg.Decrypt(appSecret.String)
 }

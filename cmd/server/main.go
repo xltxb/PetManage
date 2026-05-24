@@ -303,6 +303,7 @@ func main() {
 	mux.HandleFunc("GET /api/v1/health/performance", makePerfStatsHandler(redisCache, db))
 	mux.HandleFunc("/api/v1/auth/login", makeLoginHandler(authService))
 	mux.HandleFunc("/api/v1/auth/refresh", makeRefreshHandler(authService))
+	mux.HandleFunc("/api/v1/csrf-token", makeCSRFTokenHandler())
 	mux.HandleFunc("POST /api/v1/merchant/auth/login", makeMerchantLoginHandler(authService))
 	mux.Handle("/api/v1/auth/change-password", middleware.Auth(jwtManager)(http.HandlerFunc(makeChangePasswordHandler(authService))))
 
@@ -336,21 +337,21 @@ func main() {
 	mux.Handle("PUT /api/v1/merchant/shop-settings", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantShopSettingsUpdateHandler(merchantService))))
 	mux.Handle("POST /api/v1/merchant/shop-settings/logo", middleware.Auth(jwtManager)(http.HandlerFunc(makeMerchantShopSettingsLogoHandler(merchantService))))
 
-	// Product management (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductCreateHandler(productService))))
-	mux.Handle("GET /api/v1/merchant/products", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductListHandler(productService))))
-	mux.Handle("POST /api/v1/merchant/products/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductToggleStatusHandler(productService))))
-	mux.Handle("GET /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductGetHandler(productService))))
-	mux.Handle("PUT /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductUpdateHandler(productService))))
-	mux.Handle("DELETE /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeProductDeleteHandler(productService))))
+	// Product management (auth + merchant permission).
+	mux.Handle("POST /api/v1/merchant/products", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:manage")(http.HandlerFunc(makeProductCreateHandler(productService)))))
+	mux.Handle("GET /api/v1/merchant/products", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:view")(http.HandlerFunc(makeProductListHandler(productService)))))
+	mux.Handle("POST /api/v1/merchant/products/{id}/toggle-status", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:manage")(http.HandlerFunc(makeProductToggleStatusHandler(productService)))))
+	mux.Handle("GET /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:view")(http.HandlerFunc(makeProductGetHandler(productService)))))
+	mux.Handle("PUT /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:manage")(http.HandlerFunc(makeProductUpdateHandler(productService)))))
+	mux.Handle("DELETE /api/v1/merchant/products/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:manage")(http.HandlerFunc(makeProductDeleteHandler(productService)))))
 
-	// SKU management (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/products/{id}/skus", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuCreateHandler(productService))))
-	mux.Handle("GET /api/v1/merchant/products/{id}/skus", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuListHandler(productService))))
-	mux.Handle("GET /api/v1/merchant/products/{id}/skus/{skuId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuGetHandler(productService))))
-	mux.Handle("PUT /api/v1/merchant/products/{id}/skus/{skuId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuUpdateHandler(productService))))
-	mux.Handle("DELETE /api/v1/merchant/products/{id}/skus/{skuId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuDeleteHandler(productService))))
-	mux.Handle("POST /api/v1/merchant/products/{id}/skus/{skuId}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeSkuToggleStatusHandler(productService))))
+	// SKU management (auth + merchant permission).
+	mux.Handle("POST /api/v1/merchant/products/{id}/skus", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:manage")(http.HandlerFunc(makeSkuCreateHandler(productService)))))
+	mux.Handle("GET /api/v1/merchant/products/{id}/skus", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:view")(http.HandlerFunc(makeSkuListHandler(productService)))))
+	mux.Handle("GET /api/v1/merchant/products/{id}/skus/{skuId}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:view")(http.HandlerFunc(makeSkuGetHandler(productService)))))
+	mux.Handle("PUT /api/v1/merchant/products/{id}/skus/{skuId}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:manage")(http.HandlerFunc(makeSkuUpdateHandler(productService)))))
+	mux.Handle("DELETE /api/v1/merchant/products/{id}/skus/{skuId}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:manage")(http.HandlerFunc(makeSkuDeleteHandler(productService)))))
+	mux.Handle("POST /api/v1/merchant/products/{id}/skus/{skuId}/toggle-status", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("product:manage")(http.HandlerFunc(makeSkuToggleStatusHandler(productService)))))
 
 	// Category management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeCategoryCreateHandler(categoryService))))
@@ -385,41 +386,41 @@ func main() {
 		mux.Handle("GET /api/v1/merchant/replenishment/suggestions", middleware.Auth(jwtManager)(http.HandlerFunc(makeReplenishSuggestionsHandler(replenishmentService))))
 		mux.Handle("POST /api/v1/merchant/replenishment/generate-po", middleware.Auth(jwtManager)(http.HandlerFunc(makeReplenishGeneratePOHandler(replenishmentService, purchaseService))))
 
-		// Inventory warehouse management (auth-protected, merchant-only).
-		mux.Handle("POST /api/v1/merchant/inventory/warehouses", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryWarehouseCreateHandler(inventoryService))))
-		mux.Handle("GET /api/v1/merchant/inventory/warehouses", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryWarehouseListHandler(inventoryService))))
+		// Inventory warehouse management (auth + merchant permission).
+		mux.Handle("POST /api/v1/merchant/inventory/warehouses", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:manage")(http.HandlerFunc(makeInventoryWarehouseCreateHandler(inventoryService)))))
+		mux.Handle("GET /api/v1/merchant/inventory/warehouses", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:view")(http.HandlerFunc(makeInventoryWarehouseListHandler(inventoryService)))))
 
-		// Inventory stock operations (auth-protected, merchant-only).
-		mux.Handle("POST /api/v1/merchant/inventory/inbound", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryInboundHandler(inventoryService))))
-		mux.Handle("POST /api/v1/merchant/inventory/outbound", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryOutboundHandler(inventoryService))))
-		mux.Handle("POST /api/v1/merchant/inventory/transfer", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryTransferHandler(inventoryService))))
-		mux.Handle("POST /api/v1/merchant/inventory/loss", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryLossHandler(inventoryService))))
-		mux.Handle("POST /api/v1/merchant/inventory/surplus", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventorySurplusHandler(inventoryService))))
-		mux.Handle("GET /api/v1/merchant/inventory/flows", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryFlowsHandler(inventoryService))))
+		// Inventory stock operations (auth + inventory:manage).
+		mux.Handle("POST /api/v1/merchant/inventory/inbound", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:manage")(http.HandlerFunc(makeInventoryInboundHandler(inventoryService)))))
+		mux.Handle("POST /api/v1/merchant/inventory/outbound", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:manage")(http.HandlerFunc(makeInventoryOutboundHandler(inventoryService)))))
+		mux.Handle("POST /api/v1/merchant/inventory/transfer", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:manage")(http.HandlerFunc(makeInventoryTransferHandler(inventoryService)))))
+		mux.Handle("POST /api/v1/merchant/inventory/loss", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:manage")(http.HandlerFunc(makeInventoryLossHandler(inventoryService)))))
+		mux.Handle("POST /api/v1/merchant/inventory/surplus", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:manage")(http.HandlerFunc(makeInventorySurplusHandler(inventoryService)))))
+		mux.Handle("GET /api/v1/merchant/inventory/flows", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:view")(http.HandlerFunc(makeInventoryFlowsHandler(inventoryService)))))
 
-		// Inventory alerts (auth-protected, merchant-only).
-		mux.Handle("GET /api/v1/merchant/inventory/alerts", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryAlertsHandler(inventoryService))))
+		// Inventory alerts (auth + inventory:view).
+		mux.Handle("GET /api/v1/merchant/inventory/alerts", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:view")(http.HandlerFunc(makeInventoryAlertsHandler(inventoryService)))))
 
-		// Inventory count checks (auth-protected, merchant-only).
-		mux.Handle("POST /api/v1/merchant/inventory/checks", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckCreateHandler(inventoryService))))
-		mux.Handle("GET /api/v1/merchant/inventory/checks", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckListHandler(inventoryService))))
-		mux.Handle("GET /api/v1/merchant/inventory/checks/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckGetHandler(inventoryService))))
-		mux.Handle("PUT /api/v1/merchant/inventory/checks/{id}/items/{itemId}", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckUpdateItemHandler(inventoryService))))
-		mux.Handle("POST /api/v1/merchant/inventory/checks/{id}/submit", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckSubmitHandler(inventoryService))))
-		mux.Handle("POST /api/v1/merchant/inventory/checks/{id}/confirm", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckConfirmHandler(inventoryService))))
-		mux.Handle("POST /api/v1/merchant/inventory/checks/{id}/approve", middleware.Auth(jwtManager)(http.HandlerFunc(makeInventoryCheckApproveHandler(inventoryService))))
+		// Inventory count checks (auth + inventory:*).
+		mux.Handle("POST /api/v1/merchant/inventory/checks", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:manage")(http.HandlerFunc(makeInventoryCheckCreateHandler(inventoryService)))))
+		mux.Handle("GET /api/v1/merchant/inventory/checks", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:view")(http.HandlerFunc(makeInventoryCheckListHandler(inventoryService)))))
+		mux.Handle("GET /api/v1/merchant/inventory/checks/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:view")(http.HandlerFunc(makeInventoryCheckGetHandler(inventoryService)))))
+		mux.Handle("PUT /api/v1/merchant/inventory/checks/{id}/items/{itemId}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:manage")(http.HandlerFunc(makeInventoryCheckUpdateItemHandler(inventoryService)))))
+		mux.Handle("POST /api/v1/merchant/inventory/checks/{id}/submit", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:manage")(http.HandlerFunc(makeInventoryCheckSubmitHandler(inventoryService)))))
+		mux.Handle("POST /api/v1/merchant/inventory/checks/{id}/confirm", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:manage")(http.HandlerFunc(makeInventoryCheckConfirmHandler(inventoryService)))))
+		mux.Handle("POST /api/v1/merchant/inventory/checks/{id}/approve", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("inventory:manage")(http.HandlerFunc(makeInventoryCheckApproveHandler(inventoryService)))))
 
-		// Service management (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryCreateHandler(serviceMgmtService))))
-	mux.Handle("GET /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryListHandler(serviceMgmtService))))
-	mux.Handle("PUT /api/v1/merchant/service-categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryUpdateHandler(serviceMgmtService))))
-	mux.Handle("DELETE /api/v1/merchant/service-categories/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceCategoryDeleteHandler(serviceMgmtService))))
-	mux.Handle("POST /api/v1/merchant/service-items", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemCreateHandler(serviceMgmtService))))
-	mux.Handle("GET /api/v1/merchant/service-items", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemListHandler(serviceMgmtService))))
-	mux.Handle("GET /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemGetHandler(serviceMgmtService))))
-	mux.Handle("PUT /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemUpdateHandler(serviceMgmtService))))
-	mux.Handle("DELETE /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemDeleteHandler(serviceMgmtService))))
-	mux.Handle("POST /api/v1/merchant/service-items/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceItemToggleStatusHandler(serviceMgmtService))))
+		// Service management (auth + merchant permission).
+	mux.Handle("POST /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("service:manage")(http.HandlerFunc(makeServiceCategoryCreateHandler(serviceMgmtService)))))
+	mux.Handle("GET /api/v1/merchant/service-categories", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("service:view")(http.HandlerFunc(makeServiceCategoryListHandler(serviceMgmtService)))))
+	mux.Handle("PUT /api/v1/merchant/service-categories/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("service:manage")(http.HandlerFunc(makeServiceCategoryUpdateHandler(serviceMgmtService)))))
+	mux.Handle("DELETE /api/v1/merchant/service-categories/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("service:manage")(http.HandlerFunc(makeServiceCategoryDeleteHandler(serviceMgmtService)))))
+	mux.Handle("POST /api/v1/merchant/service-items", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("service:manage")(http.HandlerFunc(makeServiceItemCreateHandler(serviceMgmtService)))))
+	mux.Handle("GET /api/v1/merchant/service-items", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("service:view")(http.HandlerFunc(makeServiceItemListHandler(serviceMgmtService)))))
+	mux.Handle("GET /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("service:view")(http.HandlerFunc(makeServiceItemGetHandler(serviceMgmtService)))))
+	mux.Handle("PUT /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("service:manage")(http.HandlerFunc(makeServiceItemUpdateHandler(serviceMgmtService)))))
+	mux.Handle("DELETE /api/v1/merchant/service-items/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("service:manage")(http.HandlerFunc(makeServiceItemDeleteHandler(serviceMgmtService)))))
+	mux.Handle("POST /api/v1/merchant/service-items/{id}/toggle-status", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("service:manage")(http.HandlerFunc(makeServiceItemToggleStatusHandler(serviceMgmtService)))))
 		// Service package management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/service-packages", middleware.Auth(jwtManager)(http.HandlerFunc(makePackageCreateHandler(servicePackageService))))
 		mux.Handle("GET /api/v1/merchant/service-packages", middleware.Auth(jwtManager)(http.HandlerFunc(makePackageListHandler(servicePackageService))))
@@ -547,16 +548,16 @@ func main() {
 	mux.Handle("GET /api/v1/merchant/pets/health-reminders", middleware.Auth(jwtManager)(http.HandlerFunc(makeHealthRemindersHandler(petService))))
 	mux.Handle("GET /api/v1/merchant/pets/health-reminders/count", middleware.Auth(jwtManager)(http.HandlerFunc(makeHealthReminderCountHandler(petService))))
 
-	// Employee management (auth-protected, merchant-only).
-	mux.Handle("POST /api/v1/merchant/employees", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeCreateHandler(employeeService))))
-	mux.Handle("GET /api/v1/merchant/employees", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeListHandler(employeeService))))
-	mux.Handle("GET /api/v1/merchant/employees/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeGetHandler(employeeService))))
-	mux.Handle("PUT /api/v1/merchant/employees/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeUpdateHandler(employeeService))))
-	mux.Handle("POST /api/v1/merchant/employees/{id}/resign", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeResignHandler(employeeService))))
-	mux.Handle("POST /api/v1/merchant/employees/{id}/toggle-status", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeToggleStatusHandler(employeeService))))
-		mux.Handle("POST /api/v1/merchant/employees/{id}/create-account", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeCreateAccountHandler(merchantRoleService))))
-		mux.Handle("POST /api/v1/merchant/employees/{id}/assign-role", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeAssignRoleHandler(merchantRoleService))))
-		mux.Handle("POST /api/v1/merchant/employees/{id}/disable-account", middleware.Auth(jwtManager)(http.HandlerFunc(makeEmployeeDisableAccountHandler(merchantRoleService))))
+	// Employee management (auth + merchant permission).
+	mux.Handle("POST /api/v1/merchant/employees", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("employee:manage")(http.HandlerFunc(makeEmployeeCreateHandler(employeeService)))))
+	mux.Handle("GET /api/v1/merchant/employees", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("employee:view")(http.HandlerFunc(makeEmployeeListHandler(employeeService)))))
+	mux.Handle("GET /api/v1/merchant/employees/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("employee:view")(http.HandlerFunc(makeEmployeeGetHandler(employeeService)))))
+	mux.Handle("PUT /api/v1/merchant/employees/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("employee:manage")(http.HandlerFunc(makeEmployeeUpdateHandler(employeeService)))))
+	mux.Handle("POST /api/v1/merchant/employees/{id}/resign", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("employee:manage")(http.HandlerFunc(makeEmployeeResignHandler(employeeService)))))
+	mux.Handle("POST /api/v1/merchant/employees/{id}/toggle-status", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("employee:manage")(http.HandlerFunc(makeEmployeeToggleStatusHandler(employeeService)))))
+		mux.Handle("POST /api/v1/merchant/employees/{id}/create-account", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("employee:manage")(http.HandlerFunc(makeEmployeeCreateAccountHandler(merchantRoleService)))))
+		mux.Handle("POST /api/v1/merchant/employees/{id}/assign-role", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("employee:manage")(http.HandlerFunc(makeEmployeeAssignRoleHandler(merchantRoleService)))))
+		mux.Handle("POST /api/v1/merchant/employees/{id}/disable-account", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("employee:manage")(http.HandlerFunc(makeEmployeeDisableAccountHandler(merchantRoleService)))))
 
 		// Attendance management (auth-protected, merchant-only).
 		mux.Handle("POST /api/v1/merchant/attendance/check-in", middleware.Auth(jwtManager)(http.HandlerFunc(makeAttendanceCheckInHandler(attendanceService))))
@@ -605,18 +606,18 @@ func main() {
 			mux.Handle("GET /api/v1/merchant/statements/service-performance/excel", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("report:view")(http.HandlerFunc(makeServicePerformanceExcelHandler(statementService)))))
 			mux.Handle("GET /api/v1/merchant/statements/service-performance/pdf", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("report:view")(http.HandlerFunc(makeServicePerformancePDFHandler(statementService)))))
 
-		// Appointment management (auth-protected, merchant-only).
-		mux.Handle("POST /api/v1/merchant/appointments", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCreateHandler(appointmentService))))
-		mux.Handle("GET /api/v1/merchant/appointments", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentListHandler(appointmentService))))
-		mux.Handle("GET /api/v1/merchant/appointments/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentGetHandler(appointmentService))))
-		mux.Handle("POST /api/v1/merchant/appointments/{id}/confirm", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentConfirmHandler(appointmentService))))
-		mux.Handle("POST /api/v1/merchant/appointments/{id}/reschedule", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentRescheduleHandler(appointmentService))))
-		mux.Handle("POST /api/v1/merchant/appointments/{id}/cancel", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCancelHandler(appointmentService))))
-		mux.Handle("POST /api/v1/merchant/appointments/{id}/arrive", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentArriveHandler(appointmentService))))
-		mux.Handle("POST /api/v1/merchant/appointments/{id}/start", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentStartHandler(appointmentService))))
-		mux.Handle("POST /api/v1/merchant/appointments/{id}/complete", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentCompleteHandler(appointmentService))))
-		mux.Handle("POST /api/v1/merchant/appointments/{id}/pickup", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentPickupHandler(appointmentService))))
-		mux.Handle("GET /api/v1/merchant/appointments/{id}/change-logs", middleware.Auth(jwtManager)(http.HandlerFunc(makeAppointmentChangeLogsHandler(appointmentService))))
+		// Appointment management (auth + merchant permission).
+		mux.Handle("POST /api/v1/merchant/appointments", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("appointment:manage")(http.HandlerFunc(makeAppointmentCreateHandler(appointmentService)))))
+		mux.Handle("GET /api/v1/merchant/appointments", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("appointment:view")(http.HandlerFunc(makeAppointmentListHandler(appointmentService)))))
+		mux.Handle("GET /api/v1/merchant/appointments/{id}", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("appointment:view")(http.HandlerFunc(makeAppointmentGetHandler(appointmentService)))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/confirm", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("appointment:manage")(http.HandlerFunc(makeAppointmentConfirmHandler(appointmentService)))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/reschedule", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("appointment:manage")(http.HandlerFunc(makeAppointmentRescheduleHandler(appointmentService)))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/cancel", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("appointment:manage")(http.HandlerFunc(makeAppointmentCancelHandler(appointmentService)))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/arrive", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("appointment:manage")(http.HandlerFunc(makeAppointmentArriveHandler(appointmentService)))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/start", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("appointment:manage")(http.HandlerFunc(makeAppointmentStartHandler(appointmentService)))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/complete", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("appointment:manage")(http.HandlerFunc(makeAppointmentCompleteHandler(appointmentService)))))
+		mux.Handle("POST /api/v1/merchant/appointments/{id}/pickup", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("appointment:manage")(http.HandlerFunc(makeAppointmentPickupHandler(appointmentService)))))
+		mux.Handle("GET /api/v1/merchant/appointments/{id}/change-logs", middleware.Auth(jwtManager)(permChecker.RequireMerchantPermission("appointment:view")(http.HandlerFunc(makeAppointmentChangeLogsHandler(appointmentService)))))
 
 			// Service record archiving (auth-protected, merchant-only).
 			mux.Handle("GET /api/v1/merchant/service-records/{id}", middleware.Auth(jwtManager)(http.HandlerFunc(makeServiceRecordGetHandler(serviceRecordService))))
@@ -975,6 +976,7 @@ func main() {
 	mux.Handle("GET /api/v1/contracts/merchant/{id}/current", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractCurrentHandler(contractService)))))
 	mux.Handle("POST /api/v1/contracts/merchant/{id}/renew", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractRenewHandler(contractService)))))
 	mux.Handle("GET /api/v1/contracts/reminders", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractRemindersHandler(contractService)))))
+	mux.Handle("GET /api/v1/contracts/{id}/download", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractDownloadHandler(contractService)))))
 
 	// Dictionary management — Categories (platform-only, auth-protected).
 	mux.Handle("GET /api/v1/dict/categories", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDictListCategoriesHandler(dictService)))))
@@ -1126,11 +1128,20 @@ func main() {
 	inner = notFoundWrapper(inner)
 	inner = middleware.CSRF()(inner)
 
-	// Serve uploaded files.
-	uploadsFS := http.FileServer(http.Dir("uploads"))
+	// Only serve public upload subdirectories (logos, receipts).
+	// Private files (contracts, attachments) require authenticated endpoints.
+	publicUploadsFS := http.FileServer(http.Dir("uploads"))
 	chain := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/uploads/") {
-			http.StripPrefix("/uploads/", uploadsFS).ServeHTTP(w, r)
+			if r.URL.Path == "/uploads/" || r.URL.Path == "/uploads" ||
+				!(strings.HasPrefix(r.URL.Path, "/uploads/logos/") ||
+					strings.HasPrefix(r.URL.Path, "/uploads/receipts/")) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"code":"NOT_FOUND","message":"resource not found"}`))
+				return
+			}
+			http.StripPrefix("/uploads/", publicUploadsFS).ServeHTTP(w, r)
 			return
 		}
 		inner.ServeHTTP(w, r)
@@ -1210,6 +1221,27 @@ func makePerfStatsHandler(rc *cache.RedisClient, db *sql.DB) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(stats)
+	}
+}
+
+// --- CSRF token endpoint ---
+
+func makeCSRFTokenHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token, err := middleware.GenerateCSRFToken()
+		if err != nil {
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to generate CSRF token", err))
+			return
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     "csrf_token",
+			Value:    token,
+			Path:     "/",
+			SameSite: http.SameSiteStrictMode,
+			HttpOnly: false,
+		})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"csrf_token": token})
 	}
 }
 
@@ -2007,6 +2039,30 @@ func makeContractRemindersHandler(svc *contract.Service) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+func makeContractDownloadHandler(svc *contract.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		contractID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"code":"INVALID_PARAMS","message":"invalid contract id"}`))
+			return
+		}
+
+		c, err := svc.GetByID(r.Context(), contractID)
+		if err != nil {
+			if appErr, ok := err.(*apperrors.AppError); ok {
+				apperrors.WriteError(w, r, appErr)
+				return
+			}
+			apperrors.WriteError(w, r, apperrors.NewInternalError("failed to retrieve contract", err))
+			return
+		}
+
+		http.ServeFile(w, r, c.FilePath)
 	}
 }
 

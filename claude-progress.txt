@@ -2665,3 +2665,61 @@ SESSION 18 — F081 数据自动备份 [2026-05-24 02:11 CST]
   ✓ pg_restore 恢复成功，恢复后数据库健康检查通过
   ✓ 备份失败时自动创建通知记录
 - 提交: 87a80b9 feat(F081): data auto-backup — daily full + hourly incremental backups with point-in-time recovery
+
+================================================================================
+SESSION 19 — F082 接口性能达标 [2026-05-24 02:12 CST]
+================================================================================
+
+- 实现 X-Response-Time 响应头中间件：通过 responseWriter 包装器在首个 Write 调用前设置耗时
+- 添加 Redis 客户端 (go-redis/v9)：支持故障优雅降级，Redis 不可用时自动回退到数据库
+- 实现 Redis 缓存层 (internal/cache/redis.go)：
+  - Cache-aside 模式：先查缓存 → 未命中查数据库 → 回填缓存
+  - 原子计数跟踪命中率 (hits/misses)
+  - 支持 JSON 序列化存储、模糊匹配批量删除
+- 为商品分类 (category.Service) 添加缓存：
+  - List 方法读取 Redis 缓存，TTL 5 分钟
+  - Create/Update/Delete 操作自动失效缓存
+- 为数据字典 (dictionary.Service) 添加缓存：
+  - ListCategories 和 ListBreeds 读取 Redis 缓存，TTL 10 分钟
+  - Create/Update/Delete/Toggle 操作自动失效缓存（pattern: cache:dict_*）
+- 数据库连接池优化：
+  - 从 config.yaml 读取 max_open_conns (100) 和 max_idle_conns (10)
+  - 设置 ConnMaxLifetime 为 5 分钟
+- 添加性能监控端点 GET /api/v1/health/performance：
+  - cache_hit_rate, redis_available, db_open/in_use/idle/max_open
+- 端到端验证全部 5 个步骤通过:
+  ✓ 健康检查 1000并发: avg 26.9ms, P95 45ms, 32007 TPS (远超目标 ≤100ms 和 10000+ TPS)
+  ✓ 商品列表 100并发: avg 52.21ms, P95 104.56ms (目标 P95 ≤200ms)
+  ✓ 数据库索引: idx_products_merchant_id, idx_products_status (复合索引), idx_products_barcode, idx_products_category_id
+  ✓ Redis 缓存命中率: 90% (目标 >80%), 10次请求 1 miss + 9 hits
+  ✓ X-Response-Time 响应头: 每个请求均包含精确耗时信息
+- 提交: f373958 feat(F082): API performance optimization — response timing headers, Redis caching, connection pooling
+
+================================================================================
+SESSION 39 — CODE REVIEW BUG FIXES [2026-05-24]
+================================================================================
+
+Fixes based on comprehensive code review (issue.md):
+
+P0 Fixes:
+- Frontend build: Fixed missing closing } in getOrderReceipt() (client.ts:872)
+- JWT isolation: Added TokenType field to Claims, separated ValidateAccessToken/ValidateRefreshToken
+- Merchant RBAC: Applied RequireMerchantPermission to all major merchant write routes
+  (products→product, inventory→inventory, service→service, appointments→appointment, employees→employee)
+- Upload security: Removed public FileServer, only serves /uploads/logos/ and /uploads/receipts/,
+  added authenticated contract download endpoint
+- Integration tests: Added //go:build integration to exclude external-dependency tests from go test ./...
+
+P1 Fixes:
+- CSRF: Added /api/v1/csrf-token endpoint, frontend reads cookie + sends X-CSRF-Token header
+- API signature: Added sorted query string + body SHA-256 to canonical request, nonce replay protection
+- AppSecret: AES-256-GCM encrypted storage, decrypted only for auth, never exposed in API responses
+- Production secrets: Startup validation rejects hardcoded defaults in release mode
+
+P2 Fixes:
+- Git: Removed .DS_Store and .idea/* from index (kept .gitignore rules)
+
+Verification:
+- go build ./... : PASS
+- go test ./... : PASS (no tests without integration tag)
+- npx vite build: PASS (91 modules, 283ms)

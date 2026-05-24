@@ -139,7 +139,7 @@ type RefreshRequest struct {
 
 // RefreshToken validates a refresh token and issues a new token pair.
 func (s *Service) RefreshToken(ctx context.Context, req RefreshRequest) (*TokenPair, error) {
-	claims, err := s.jwt.ValidateToken(req.RefreshToken)
+	claims, err := s.jwt.ValidateRefreshToken(req.RefreshToken)
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
 			return nil, &apperrors.AppError{
@@ -149,7 +149,7 @@ func (s *Service) RefreshToken(ctx context.Context, req RefreshRequest) (*TokenP
 		}
 		return nil, &apperrors.AppError{
 			Code:    apperrors.CodeUnauthorized,
-			Message: "invalid refresh token",
+			Message: "invalid or unsuitable token type for refresh",
 		}
 	}
 

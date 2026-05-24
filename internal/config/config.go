@@ -126,5 +126,28 @@ func Load(path string) (*Config, error) {
 		cfg.Log.Level = "debug"
 	}
 
+	if err := cfg.validateSecrets(); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
+}
+
+// validateSecrets ensures production mode rejects hardcoded default secrets.
+func (c *Config) validateSecrets() error {
+	if c.Server.Mode != "release" {
+		return nil
+	}
+
+	if c.JWT.Secret == "" || c.JWT.Secret == "change-me-in-production" {
+		return fmt.Errorf("production mode requires JWT_SECRET environment variable to be set to a strong random value")
+	}
+
+	for version, key := range c.Encryption.Keys {
+		if key == "" {
+			return fmt.Errorf("production mode requires ENCRYPTION_KEY_%s environment variable to be set", version)
+		}
+	}
+
+	return nil
 }

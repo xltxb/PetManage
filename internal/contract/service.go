@@ -391,6 +391,48 @@ func (s *Service) GetCurrent(ctx context.Context, merchantID int64) (*ContractRe
 	return &c, nil
 }
 
+// GetByID returns a single contract record by ID.
+func (s *Service) GetByID(ctx context.Context, contractID int64) (*ContractRecord, error) {
+	var c ContractRecord
+	var startDate, endDate time.Time
+	var createdAt, updatedAt time.Time
+	var prevContractID sql.NullInt64
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, merchant_id, contract_number, file_name, file_path, file_size,
+		        start_date, end_date, status, is_current, prev_contract_id, uploaded_by,
+		        created_at, updated_at
+		 FROM merchant_contracts
+		 WHERE id = $1 AND deleted_at IS NULL`,
+		contractID,
+	).Scan(&c.ID, &c.MerchantID, &c.ContractNumber, &c.FileName, &c.FilePath,
+		&c.FileSize, &startDate, &endDate, &c.Status, &c.IsCurrent,
+		&prevContractID, &c.UploadedBy, &createdAt, &updatedAt)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeNotFound,
+			Message: "contract not found",
+		}
+	}
+	if err != nil {
+		return nil, &apperrors.AppError{
+			Code:    apperrors.CodeInternalError,
+			Message: "failed to retrieve contract",
+			Err:     err,
+		}
+	}
+
+	c.StartDate = startDate.Format("2006-01-02")
+	c.EndDate = endDate.Format("2006-01-02")
+	c.CreatedAt = createdAt.Format(time.RFC3339)
+	c.UpdatedAt = updatedAt.Format(time.RFC3339)
+	if prevContractID.Valid {
+		c.PrevContractID = &prevContractID.Int64
+	}
+	return &c, nil
+}
+
 // Renew uploads a new contract that replaces the current one.
 func (s *Service) Renew(ctx context.Context, merchantID int64, req UploadRequest, operatorID int64) (*UploadResponse, error) {
 	if strings.TrimSpace(req.ContractNumber) == "" {

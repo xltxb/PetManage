@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	cryptopkg "github.com/xltxb/PetManage/pkg/crypto"
 	"github.com/xltxb/PetManage/pkg/apperrors"
 )
 
@@ -51,7 +52,7 @@ type Application struct {
 	CallbackURL   string          `json:"callback_url"`
 	Status        string          `json:"status"`
 	AppKey        string          `json:"app_key,omitempty"`
-	AppSecret     string          `json:"app_secret,omitempty"`
+	AppSecret     string          `json:"-"` // Only returned once via ApproveResponse
 	MerchantID    *int64          `json:"merchant_id,omitempty"`
 	Permissions   json.RawMessage `json:"permissions"`
 	ReviewRemark  string          `json:"review_remark,omitempty"`
@@ -260,6 +261,12 @@ func (s *Service) Approve(ctx context.Context, id int64, reviewerID int64, merch
 		return nil, apperrors.NewInternalError("failed to generate app secret", err)
 	}
 
+	// Encrypt AppSecret before storing. Only the plaintext is returned once here.
+	encryptedSecret, err := cryptopkg.Encrypt(appSecret)
+	if err != nil {
+		return nil, apperrors.NewInternalError("failed to encrypt app secret", err)
+	}
+
 	defaultPerms, _ := json.Marshal(defaultPermissions)
 	now := time.Now()
 
@@ -279,7 +286,7 @@ func (s *Service) Approve(ctx context.Context, id int64, reviewerID int64, merch
 		 RETURNING id, company_name, contact_person, contact_phone, contact_email,
 		 usage_purpose, callback_url, status, app_key, app_secret, permissions,
 		 merchant_id, review_remark, reviewed_by, reviewed_at, created_at, updated_at`,
-		appKey, appSecret, defaultPerms, reviewerID, now, id, midParam,
+		appKey, encryptedSecret, defaultPerms, reviewerID, now, id, midParam,
 	).Scan(&result.ID, &result.CompanyName, &result.ContactPerson, &result.ContactPhone,
 		&result.ContactEmail, &result.UsagePurpose, &result.CallbackURL, &result.Status,
 		&result.AppKey, &result.AppSecret, &result.Permissions, &scannedMerchantID, &result.ReviewRemark,

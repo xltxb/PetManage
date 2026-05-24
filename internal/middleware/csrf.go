@@ -20,6 +20,7 @@ var csrfSkipPaths = []string{
 	"/api/v1/auth/login",
 	"/api/v1/auth/refresh",
 	"/api/v1/auth/change-password",
+	"/api/v1/csrf-token",
 	"/api/v1/merchant/auth/login",
 	"/api/v1/open/",
 	"/api/open/v1/",
@@ -35,7 +36,7 @@ func csrfShouldSkip(path string) bool {
 	return false
 }
 
-func generateCSRFToken() (string, error) {
+func GenerateCSRFToken() (string, error) {
 	b := make([]byte, csrfTokenLen)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -85,7 +86,7 @@ func CSRF() func(http.Handler) http.Handler {
 
 			// Ensure a CSRF token cookie is set for browsers to use.
 			if _, err := r.Cookie(csrfCookieName); err != nil {
-				token, genErr := generateCSRFToken()
+				token, genErr := GenerateCSRFToken()
 				if genErr != nil {
 					next.ServeHTTP(w, r)
 					return

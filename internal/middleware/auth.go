@@ -45,7 +45,7 @@ func Auth(jwtManager *auth.JWTManager) func(http.Handler) http.Handler {
 				return
 			}
 
-			claims, err := jwtManager.ValidateToken(parts[1])
+			claims, err := jwtManager.ValidateAccessToken(parts[1])
 			if err != nil {
 				if errors.Is(err, jwt.ErrTokenExpired) {
 					apperrors.WriteError(w, r, &apperrors.AppError{

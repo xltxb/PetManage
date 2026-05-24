@@ -26,6 +26,11 @@ function parseJWT(token: string): any {
   }
 }
 
+function getCookie(name: string): string | null {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()\[\]\\\/\+^])/g, '\\$1') + '=([^;]*)'))
+  return match ? decodeURIComponent(match[1]) : null
+}
+
 class ApiClient {
   private token: string | null = null
 
@@ -54,6 +59,15 @@ class ApiClient {
     const token = this.getToken()
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
+    }
+
+    // Add CSRF token for state-changing requests.
+    const method = (options.method || 'GET').toUpperCase()
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+      const csrfToken = getCookie('csrf_token')
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken
+      }
     }
 
     const res = await fetch(`${API_BASE}${path}`, {
@@ -427,6 +441,10 @@ class ApiClient {
     const token = this.getToken()
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
+    }
+    const csrfToken = getCookie('csrf_token')
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken
     }
 
     const res = await fetch(`${API_BASE}/api/v1/merchant/shop-settings/logo`, {
@@ -838,6 +856,10 @@ class ApiClient {
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
     }
+    const csrfToken = getCookie('csrf_token')
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken
+    }
     const res = await fetch(`${API_BASE}/api/v1/merchant/receipt-template/logo`, {
       method: 'POST',
       headers,
@@ -870,6 +892,8 @@ class ApiClient {
       notes: string
       created_at: string
     }>(`/api/v1/merchant/orders/${orderId}/receipt`)
+  }
+
   // --- Shift reconciliation ---
 
   async createMerchantShift() {
