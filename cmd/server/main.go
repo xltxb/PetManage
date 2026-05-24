@@ -976,7 +976,7 @@ func main() {
 	mux.Handle("GET /api/v1/contracts/merchant/{id}/current", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractCurrentHandler(contractService)))))
 	mux.Handle("POST /api/v1/contracts/merchant/{id}/renew", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractRenewHandler(contractService)))))
 	mux.Handle("GET /api/v1/contracts/reminders", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractRemindersHandler(contractService)))))
-	mux.Handle("GET /api/v1/contracts/{id}/download", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractDownloadHandler(contractService)))))
+	mux.Handle("GET /api/v1/contracts/download/{id}", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeContractDownloadHandler(contractService)))))
 
 	// Dictionary management — Categories (platform-only, auth-protected).
 	mux.Handle("GET /api/v1/dict/categories", middleware.Auth(jwtManager)(middleware.RequirePlatformUser(http.HandlerFunc(makeDictListCategoriesHandler(dictService)))))
