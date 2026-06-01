@@ -7,6 +7,7 @@ import (
 	"pawprint/backend/internal/config"
 	"pawprint/backend/internal/middleware"
 	"pawprint/backend/internal/module/auth"
+	"pawprint/backend/internal/module/dashboard"
 )
 
 func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
@@ -31,6 +32,17 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	authSvc := auth.NewService(authRepo, cfg.JWT.AccessSecret, cfg.JWT.RefreshSecret)
 	authHandler := auth.NewHandler(authSvc)
 	auth.RegisterRoutes(v1, authHandler)
+
+	// Protected routes (require JWT + store scope)
+	protected := v1.Group("")
+	protected.Use(middleware.AuthRequired(authSvc))
+	protected.Use(middleware.StoreScope(authSvc))
+
+	// Dashboard
+	dashRepo := dashboard.NewRepository(db)
+	dashSvc := dashboard.NewService(dashRepo, cfg.Timezone)
+	dashHandler := dashboard.NewHandler(dashSvc)
+	dashboard.RegisterRoutes(protected, dashHandler)
 
 	return r
 }
