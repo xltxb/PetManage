@@ -1,6 +1,10 @@
 package auth
 
-import "gorm.io/gorm"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // Repository defines the data access interface for auth.
 type Repository interface {
@@ -10,6 +14,8 @@ type Repository interface {
 	FindUserPermissions(userID int64, storeID int64) ([]string, error)
 	FindUserStoreRole(userID, storeID int64) (*UserStoreRole, error)
 	UpdateLastStore(userID, storeID int64) error
+	IncrementFailedLogin(userID int64, lockedUntil *time.Time) error
+	ResetFailedLogin(userID int64) error
 }
 
 type repo struct {
@@ -74,4 +80,21 @@ func (r *repo) FindUserStoreRole(userID, storeID int64) (*UserStoreRole, error) 
 func (r *repo) UpdateLastStore(userID, storeID int64) error {
 	return r.db.Model(&User{}).Where("id = ?", userID).
 		Update("last_store_id", storeID).Error
+}
+
+func (r *repo) IncrementFailedLogin(userID int64, lockedUntil *time.Time) error {
+	updates := map[string]interface{}{
+		"failed_login_count": gorm.Expr("failed_login_count + 1"),
+	}
+	if lockedUntil != nil {
+		updates["locked_until"] = lockedUntil
+	}
+	return r.db.Model(&User{}).Where("id = ?", userID).Updates(updates).Error
+}
+
+func (r *repo) ResetFailedLogin(userID int64) error {
+	return r.db.Model(&User{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"failed_login_count": 0,
+		"locked_until":       nil,
+	}).Error
 }

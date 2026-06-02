@@ -4,17 +4,19 @@ import "time"
 
 // User mirrors the users table.
 type User struct {
-	ID           int64      `gorm:"primaryKey" json:"id"`
-	Username     string     `gorm:"uniqueIndex;size:64" json:"username"`
-	PasswordHash string     `gorm:"size:255" json:"-"`
-	DisplayName  string     `gorm:"size:64" json:"display_name"`
-	Phone        string     `gorm:"uniqueIndex;size:20" json:"phone"`
-	AvatarText   string     `gorm:"size:4" json:"avatar_text"`
-	Status       int16      `json:"status"`
-	LastStoreID  *int64     `json:"last_store_id"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	DeletedAt    *time.Time `gorm:"index" json:"-"`
+	ID               int64      `gorm:"primaryKey" json:"id"`
+	Username         string     `gorm:"uniqueIndex;size:64" json:"username"`
+	PasswordHash     string     `gorm:"size:255" json:"-"`
+	DisplayName      string     `gorm:"size:64" json:"display_name"`
+	Phone            string     `gorm:"uniqueIndex;size:20" json:"phone"`
+	AvatarText       string     `gorm:"size:4" json:"avatar_text"`
+	Status           int16      `json:"status"`
+	LastStoreID      *int64     `json:"last_store_id"`
+	FailedLoginCount int        `json:"-"`
+	LockedUntil      *time.Time `json:"-"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	DeletedAt        *time.Time `gorm:"index" json:"-"`
 }
 
 func (User) TableName() string { return "users" }

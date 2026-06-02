@@ -1,10 +1,15 @@
 package auth
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+
+	"pawprint/backend/internal/pkg/apperr"
+	"pawprint/backend/internal/pkg/errcode"
 )
 
 // mockRepo implements Repository for testing
@@ -62,12 +67,62 @@ func (m *mockRepo) UpdateLastStore(userID, storeID int64) error {
 	return m.lastStoreErr
 }
 
+func (m *mockRepo) IncrementFailedLogin(userID int64, lockedUntil *time.Time) error {
+	for _, u := range m.users {
+		if u.ID == userID {
+			u.FailedLoginCount++
+			u.LockedUntil = lockedUntil
+			return nil
+		}
+	}
+	return gorm.ErrRecordNotFound
+}
+
+func (m *mockRepo) ResetFailedLogin(userID int64) error {
+	for _, u := range m.users {
+		if u.ID == userID {
+			u.FailedLoginCount = 0
+			u.LockedUntil = nil
+			return nil
+		}
+	}
+	return gorm.ErrRecordNotFound
+}
+
 func mustHashPassword(pw string) string {
 	hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
 	if err != nil {
 		panic(err)
 	}
 	return string(hash)
+}
+
+func TestLoginLocksAccountAfterFiveFailures(t *testing.T) {
+	repo := newMockRepo()
+	repo.users["admin"] = &User{
+		ID:           1,
+		Username:     "admin",
+		PasswordHash: mustHashPassword("pawprint123"),
+		Status:       1,
+	}
+	repo.stores[1] = []StoreInfo{{ID: 1, Name: "旗舰店", Role: "super_admin"}}
+
+	svc := NewService(repo, "access-secret-32-chars-minimum!!", "refresh-secret-32-chars-minimum!!")
+	for i := 0; i < 5; i++ {
+		_, err := svc.Login("admin", "wrong-password")
+		if err == nil {
+			t.Fatalf("failure %d returned nil error", i+1)
+		}
+	}
+
+	_, err := svc.Login("admin", "pawprint123")
+	if err == nil {
+		t.Fatal("expected locked account error")
+	}
+	var appErr *apperr.AppError
+	if !errors.As(err, &appErr) || appErr.Code != errcode.Unauthenticated {
+		t.Fatalf("expected unauthenticated lockout error, got %v", err)
+	}
 }
 
 func TestLoginSuccess(t *testing.T) {

@@ -52,9 +52,21 @@ func (s *Service) Login(username, password string) (*LoginResponse, error) {
 		return nil, apperr.Internal(err)
 	}
 
+	if user.LockedUntil != nil && user.LockedUntil.After(time.Now().UTC()) {
+		return nil, apperr.Unauthorized("账号已锁定，请10分钟后再试")
+	}
+
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		var lockedUntil *time.Time
+		if user.FailedLoginCount+1 >= 5 {
+			until := time.Now().UTC().Add(10 * time.Minute)
+			lockedUntil = &until
+		}
+		_ = s.repo.IncrementFailedLogin(user.ID, lockedUntil)
 		return nil, apperr.Unauthorized("用户名或密码错误")
 	}
+
+	_ = s.repo.ResetFailedLogin(user.ID)
 
 	stores, err := s.repo.FindUserStores(user.ID)
 	if err != nil {

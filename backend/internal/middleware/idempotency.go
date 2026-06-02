@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,7 +22,7 @@ func Idempotency(rdb *redis.Client) gin.HandlerFunc {
 			return
 		}
 
-		hash := hashIdempotencyKey(key + ":" + c.Request.URL.Path)
+		hash := hashIdempotencyKey(idempotencyScope(c, key))
 
 		ctx := context.Background()
 		cached, err := rdb.Get(ctx, "idem:"+hash).Result()
@@ -52,6 +53,20 @@ func Idempotency(rdb *redis.Client) gin.HandlerFunc {
 func hashIdempotencyKey(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])[:16]
+}
+
+func idempotencyScope(c *gin.Context, key string) string {
+	storeID, _ := c.Get("store_id")
+	userID, _ := c.Get("user_id")
+	customerID, _ := c.Get("customer_id")
+	return fmt.Sprintf("%s:%s:%v:%v:%v:%s",
+		c.Request.Method,
+		c.Request.URL.Path,
+		storeID,
+		userID,
+		customerID,
+		key,
+	)
 }
 
 type cachedIdemResponse struct {

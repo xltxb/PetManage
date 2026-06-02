@@ -2,6 +2,7 @@ package router
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
 	"pawprint/backend/internal/config"
@@ -35,6 +36,8 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 
 	// API v1 group
 	v1 := r.Group("/api/v1")
+	rdb := redis.NewClient(&redis.Options{Addr: cfg.Redis.Addr})
+	idem := middleware.Idempotency(rdb)
 
 	// Auth routes (public)
 	authRepo := auth.NewRepository(db)
@@ -51,61 +54,61 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	dashRepo := dashboard.NewRepository(db)
 	dashSvc := dashboard.NewService(dashRepo, cfg.Timezone)
 	dashHandler := dashboard.NewHandler(dashSvc)
-	dashboard.RegisterRoutes(protected, dashHandler)
+	dashboard.RegisterRoutes(protected, dashHandler, authSvc)
 
 	// Appointment
 	apptRepo := appointment.NewRepository(db)
 	apptSvc := appointment.NewService(apptRepo)
 	apptHandler := appointment.NewHandler(apptSvc)
-	appointment.RegisterRoutes(protected, apptHandler)
+	appointment.RegisterRoutes(protected, apptHandler, authSvc, idem)
 
 	// Boarding
 	boardingRepo := boarding.NewRepository(db)
 	boardingSvc := boarding.NewService(boardingRepo)
 	boardingHandler := boarding.NewHandler(boardingSvc)
-	boarding.RegisterRoutes(protected, boardingHandler)
+	boarding.RegisterRoutes(protected, boardingHandler, authSvc, idem)
 
 	// Pet
 	petRepo := pet.NewRepository(db)
 	petSvc := pet.NewService(petRepo)
 	petHandler := pet.NewHandler(petSvc)
-	pet.RegisterRoutes(protected, petHandler)
+	pet.RegisterRoutes(protected, petHandler, authSvc, idem)
 
 	// Member
 	memberRepo := member.NewRepository(db)
 	memberSvc := member.NewService(memberRepo)
 	memberHandler := member.NewHandler(memberSvc)
-	member.RegisterRoutes(protected, memberHandler)
+	member.RegisterRoutes(protected, memberHandler, authSvc, idem)
 
 	// Inventory
 	invRepo := inventory.NewRepository(db)
 	invSvc := inventory.NewService(invRepo)
 	invHandler := inventory.NewHandler(invSvc)
-	inventory.RegisterRoutes(protected, invHandler)
+	inventory.RegisterRoutes(protected, invHandler, authSvc, idem)
 
 	// Settlement
 	setRepo := settlement.NewRepository(db)
 	setSvc := settlement.NewService(setRepo)
 	setHandler := settlement.NewHandler(setSvc)
-	settlement.RegisterRoutes(protected, setHandler)
+	settlement.RegisterRoutes(protected, setHandler, authSvc, idem)
 
 	// Notification
 	notifRepo := notification.NewRepository(db)
 	notifSvc := notification.NewService(notifRepo)
 	notifHandler := notification.NewHandler(notifSvc)
-	notification.RegisterRoutes(protected, notifHandler)
+	notification.RegisterRoutes(protected, notifHandler, authSvc, idem)
 
 	// Analytics
 	analyticsRepo := analytics.NewRepository(db)
 	analyticsSvc := analytics.NewService(analyticsRepo)
 	analyticsHandler := analytics.NewHandler(analyticsSvc)
-	analytics.RegisterRoutes(protected, analyticsHandler)
+	analytics.RegisterRoutes(protected, analyticsHandler, authSvc)
 
 	// Settings
 	settingRepo := setting.NewRepository(db)
 	settingSvc := setting.NewService(settingRepo)
 	settingHandler := setting.NewHandler(settingSvc)
-	setting.RegisterRoutes(protected, settingHandler)
+	setting.RegisterRoutes(protected, settingHandler, authSvc, idem)
 
 	return r
 }

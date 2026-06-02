@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -37,6 +38,37 @@ func (r rbacAuthRepo) FindUserStoreRole(userID, storeID int64) (*auth.UserStoreR
 
 func (r rbacAuthRepo) UpdateLastStore(userID, storeID int64) error {
 	return nil
+}
+
+func (r rbacAuthRepo) IncrementFailedLogin(userID int64, lockedUntil *time.Time) error {
+	return nil
+}
+
+func (r rbacAuthRepo) ResetFailedLogin(userID int64) error {
+	return nil
+}
+
+func TestRequirePermissionRejectsMissingPermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	authSvc := auth.NewService(rbacAuthRepo{}, "access-secret-32-chars-minimum!!", "refresh-secret-32-chars-minimum!!")
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("user_id", int64(10))
+		c.Set("store_id", int64(1))
+		c.Set("role", "front_desk")
+		c.Next()
+	})
+	r.POST("/settlements", RequirePermission(authSvc, "settlement:create"), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/settlements", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
 }
 
 func TestRequirePermissionReturnsUnauthorizedWhenAuthContextIncomplete(t *testing.T) {
