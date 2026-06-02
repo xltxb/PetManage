@@ -8,6 +8,7 @@ import (
 	"pawprint/backend/internal/middleware"
 	"pawprint/backend/internal/module/appointment"
 	"pawprint/backend/internal/module/auth"
+	"pawprint/backend/internal/module/boarding"
 	"pawprint/backend/internal/module/dashboard"
 )
 
@@ -50,6 +51,12 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	apptSvc := appointment.NewService(apptRepo)
 	apptHandler := appointment.NewHandler(apptSvc)
 	appointment.RegisterRoutes(protected, apptHandler)
+
+	// Boarding
+	boardingRepo := boarding.NewRepository(db)
+	boardingSvc := boarding.NewService(boardingRepo)
+	boardingHandler := boarding.NewHandler(boardingSvc)
+	boarding.RegisterRoutes(protected, boardingHandler)
 
 	return r
 }
