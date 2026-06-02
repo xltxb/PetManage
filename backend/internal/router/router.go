@@ -6,6 +6,7 @@ import (
 
 	"pawprint/backend/internal/config"
 	"pawprint/backend/internal/middleware"
+	"pawprint/backend/internal/module/appointment"
 	"pawprint/backend/internal/module/auth"
 	"pawprint/backend/internal/module/dashboard"
 )
@@ -43,6 +44,12 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	dashSvc := dashboard.NewService(dashRepo, cfg.Timezone)
 	dashHandler := dashboard.NewHandler(dashSvc)
 	dashboard.RegisterRoutes(protected, dashHandler)
+
+	// Appointment
+	apptRepo := appointment.NewRepository(db)
+	apptSvc := appointment.NewService(apptRepo)
+	apptHandler := appointment.NewHandler(apptSvc)
+	appointment.RegisterRoutes(protected, apptHandler)
 
 	return r
 }
