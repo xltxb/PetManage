@@ -228,6 +228,42 @@ func TestCheckOutCreatesBoardingSettlement(t *testing.T) {
 	}
 }
 
+func TestCancelCheckedInOrderReleasesRoom(t *testing.T) {
+	repo := newMockRepo()
+	roomID := int64(5)
+	repo.orders[1] = &BoardingOrder{
+		ID: 1, StoreID: 1, CustomerID: 100, PetID: 200,
+		RoomID: &roomID, Status: StatusCheckedIn, Remark: "提前接走",
+	}
+	repo.rooms[5] = &BoardingRoom{ID: 5, StoreID: 1, Code: "S05", Status: RoomStatusOccupied}
+	svc := NewService(repo)
+
+	err := svc.Cancel(1, 1, 3, "宠物提前接走")
+	if err != nil {
+		t.Fatalf("Cancel() error: %v", err)
+	}
+	if repo.orders[1].Status != StatusCancelled {
+		t.Fatalf("order status = %q, want %q", repo.orders[1].Status, StatusCancelled)
+	}
+	if repo.rooms[5].Status != RoomStatusFree {
+		t.Fatalf("room status = %q, want %q", repo.rooms[5].Status, RoomStatusFree)
+	}
+	if repo.orders[1].Remark != "提前接走\n异常取消: 宠物提前接走" {
+		t.Fatalf("remark = %q", repo.orders[1].Remark)
+	}
+}
+
+func TestCancelRejectsNonCheckedInOrder(t *testing.T) {
+	repo := newMockRepo()
+	repo.orders[1] = &BoardingOrder{ID: 1, StoreID: 1, Status: StatusCheckedOut}
+	svc := NewService(repo)
+
+	err := svc.Cancel(1, 1, 3, "重复取消")
+	if err == nil {
+		t.Fatal("expected error for non-checked-in order")
+	}
+}
+
 // --- Care Log Tests ---
 
 func TestLogCare(t *testing.T) {

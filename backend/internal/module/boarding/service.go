@@ -3,6 +3,7 @@ package boarding
 import (
 	"errors"
 	"math"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -174,6 +175,57 @@ func (s *Service) CheckOut(id, storeID int64) (*CheckOutResponse, error) {
 		return nil, apperr.Internal(err)
 	}
 	return &response, nil
+}
+
+func (s *Service) Cancel(id, storeID, operatorID int64, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return apperr.BadRequest("异常取消必须填写原因")
+	}
+
+	err := s.repo.WithTx(func(txRepo Repository) error {
+		order, err := txRepo.FindOrderByID(id, storeID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apperr.NotFound("寄养订单不存在")
+			}
+			return apperr.Internal(err)
+		}
+
+		if order.Status != StatusCheckedIn {
+			return apperr.New(errcode.StateTransitionInvalid, "仅可取消在住状态的寄养订单")
+		}
+
+		order.Status = StatusCancelled
+		if order.Remark == "" {
+			order.Remark = "异常取消: " + reason
+		} else {
+			order.Remark += "\n异常取消: " + reason
+		}
+
+		if err := txRepo.UpdateOrder(order); err != nil {
+			return apperr.Internal(err)
+		}
+
+		if order.RoomID != nil {
+			room, err := txRepo.FindRoomByID(*order.RoomID)
+			if err == nil {
+				room.Status = RoomStatusFree
+				if err := txRepo.UpdateRoom(room); err != nil {
+					return apperr.Internal(err)
+				}
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		if appErr, ok := err.(*apperr.AppError); ok {
+			return appErr
+		}
+		return apperr.Internal(err)
+	}
+	return nil
 }
 
 // LogCare records a care task for a boarding order.

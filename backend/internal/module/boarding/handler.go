@@ -54,6 +54,27 @@ func (h *Handler) CheckOut(c *gin.Context) {
 	response.Success(c, resp)
 }
 
+func (h *Handler) Cancel(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, apperr.BadRequest("无效的订单ID"))
+		return
+	}
+
+	var req CancelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, apperr.BadRequest("参数校验失败"))
+		return
+	}
+
+	storeID, _ := c.Get("current_store_id")
+	if err := h.svc.Cancel(id, storeID.(int64), req.OperatorID, req.Reason); err != nil {
+		response.Error(c, err.(*apperr.AppError))
+		return
+	}
+	response.Success(c, nil)
+}
+
 // List handles GET /api/v1/boarding-orders.
 func (h *Handler) List(c *gin.Context) {
 	storeID, _ := c.Get("current_store_id")

@@ -23,6 +23,11 @@ type CheckOutResponse struct {
 	TotalAmount int64          `json:"total_amount"`
 }
 
+type CancelRequest struct {
+	Reason     string `json:"reason" binding:"required"`
+	OperatorID int64  `json:"operator_id"`
+}
+
 // CareLogRequest is the POST /care-logs body.
 type CareLogRequest struct {
 	Task       string `json:"task" binding:"required"`
