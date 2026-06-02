@@ -19,16 +19,23 @@ func RequirePermission(authSvc *auth.Service, permissionCode string) gin.Handler
 			return
 		}
 
-		userID, exists := c.Get("user_id")
-		if !exists {
+		userIDValue, exists := c.Get("user_id")
+		userID, ok := userIDValue.(int64)
+		if !exists || !ok {
 			response.Error(c, apperr.Unauthorized())
 			c.Abort()
 			return
 		}
 
-		storeID, _ := c.Get("store_id")
+		storeIDValue, exists := c.Get("store_id")
+		storeID, ok := storeIDValue.(int64)
+		if !exists || !ok {
+			response.Error(c, apperr.Unauthorized())
+			c.Abort()
+			return
+		}
 
-		perms, err := authSvc.GetPermissions(userID.(int64), storeID.(int64))
+		perms, err := authSvc.GetPermissions(userID, storeID)
 		if err != nil {
 			response.Error(c, apperr.Internal(err))
 			c.Abort()

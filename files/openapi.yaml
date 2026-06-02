@@ -1,0 +1,591 @@
+openapi: 3.1.0
+info:
+  title: 爪迹 PawPrint 宠物店管理 SaaS API
+  version: 1.0.0-draft
+  description: |
+    接口草案。约定见开发文档 §9。所有业务接口需 Bearer 鉴权与 X-Store-Id 头。
+    统一响应包络 { code, message, data, trace_id }；金额单位为分(整数)；时间 ISO8601 带时区。
+    本草案列出鉴权与各模块代表性端点；未列出的资源遵循同样的 REST 与包络约定。
+servers:
+  - url: /api/v1
+    description: 管理后台
+tags:
+  - name: auth
+  - name: dashboard
+  - name: appointment
+  - name: boarding
+  - name: pet
+  - name: member
+  - name: inventory
+  - name: settlement
+  - name: wx (顾客小程序)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: 员工登录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          access: { type: string }
+                          refresh: { type: string }
+                          stores:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id: { type: integer }
+                                name: { type: string }
+                                role: { type: string }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      security: []
+      summary: 刷新令牌
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh]
+              properties: { refresh: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /auth/switch-store:
+    post:
+      tags: [auth]
+      summary: 切换当前门店
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [store_id]
+              properties: { store_id: { type: integer } }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /dashboard/summary:
+    get:
+      tags: [dashboard]
+      summary: 经营概览汇总(当前门店,当日)
+      parameters: [{ $ref: '#/components/parameters/StoreId' }]
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          revenue_today_amount: { type: integer, description: 分 }
+                          appointments_today: { type: integer }
+                          pets_in_store: { type: integer }
+                          new_members_today: { type: integer }
+                          revenue_14d:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                date: { type: string, format: date }
+                                amount: { type: integer }
+
+  /appointments:
+    get:
+      tags: [appointment]
+      summary: 预约列表(看板/筛选)
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - in: query
+          name: date
+          schema: { type: string, format: date }
+        - in: query
+          name: status
+          schema: { type: string, enum: [pending, arrived, in_progress, completed, cancelled, no_show] }
+        - in: query
+          name: station_id
+          schema: { type: integer }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PageOfAppointment' }
+    post:
+      tags: [appointment]
+      summary: 创建预约(后台)
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppointmentCreate' }
+      responses:
+        '200':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties: { data: { $ref: '#/components/schemas/Appointment' } }
+        '422':
+          description: 资源冲突(RESOURCE_CONFLICT)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /appointments/{id}/transitions:
+    post:
+      tags: [appointment]
+      summary: 预约状态流转
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [arrive, start, complete, cancel, no_show] }
+                reason: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '409':
+          description: 非法状态迁移
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /boarding-orders:
+    get:
+      tags: [boarding]
+      summary: 寄养订单列表
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - in: query
+          name: status
+          schema: { type: string, enum: [booked, checked_in, checked_out, cancelled] }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+    post:
+      tags: [boarding]
+      summary: 办理入住(创建寄养订单)
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, pet_id, room_id, planned_check_in, planned_check_out]
+              properties:
+                customer_id: { type: integer }
+                pet_id: { type: integer }
+                room_id: { type: integer }
+                planned_check_in: { type: string, format: date-time }
+                planned_check_out: { type: string, format: date-time }
+                remark: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /boarding-orders/{id}/check-out:
+    post:
+      tags: [boarding]
+      summary: 办理退房(计费并生成结算单)
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: 返回应收与结算单
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Envelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          nights: { type: integer }
+                          total_amount: { type: integer }
+                          settlement_id: { type: integer }
+
+  /boarding-orders/{id}/care-logs:
+    post:
+      tags: [boarding]
+      summary: 照护打卡
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [task]
+              properties:
+                task: { type: string, enum: [feeding, walking, medication, photo] }
+                note: { type: string }
+                photo_url: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /pets:
+    get:
+      tags: [pet]
+      summary: 宠物检索(昵称/主人/芯片号)
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - in: query
+          name: keyword
+          schema: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+    post:
+      tags: [pet]
+      summary: 新建宠物档案
+      parameters: [{ $ref: '#/components/parameters/StoreId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PetCreate' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /customers/{id}/wallet:
+    post:
+      tags: [member]
+      summary: 储值充值/调整
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, amount]
+              properties:
+                type: { type: string, enum: [recharge, adjust] }
+                amount: { type: integer, description: 分,adjust 可为负 }
+                remark: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /settlements:
+    post:
+      tags: [settlement]
+      summary: 创建结算单
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettlementCreate' }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /settlements/{id}/pay:
+    post:
+      tags: [settlement]
+      summary: 收银(标记支付)
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method]
+              properties:
+                method: { type: string, enum: [wechat, alipay, pos, cash, wallet] }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '422':
+          description: 库存/储值不足
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+        '501':
+          description: 支付未启用(wechat/alipay)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+
+  /inventory:
+    get:
+      tags: [inventory]
+      summary: 门店库存列表(含预警标记)
+      parameters:
+        - { $ref: '#/components/parameters/StoreId' }
+        - in: query
+          name: warning_only
+          schema: { type: boolean }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /wx/auth/login:
+    post:
+      tags: [wx (顾客小程序)]
+      security: []
+      summary: 小程序登录(code2session)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties: { code: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /wx/service-offerings:
+    get:
+      tags: [wx (顾客小程序)]
+      security: []
+      summary: 可在线预约的服务(指定门店)
+      parameters:
+        - in: query
+          name: store_id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+  /wx/appointments:
+    post:
+      tags: [wx (顾客小程序)]
+      summary: 顾客自助预约
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [store_id, pet_id, service_offering_id, scheduled_start]
+              properties:
+                store_id: { type: integer }
+                pet_id: { type: integer }
+                service_offering_id: { type: integer }
+                scheduled_start: { type: string, format: date-time }
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    StoreId:
+      in: header
+      name: X-Store-Id
+      required: true
+      schema: { type: string, description: "门店ID; super_admin 可用 *" }
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: false
+      schema: { type: string }
+    Page:
+      in: query
+      name: page
+      schema: { type: integer, default: 1, minimum: 1 }
+    PageSize:
+      in: query
+      name: page_size
+      schema: { type: integer, default: 20, maximum: 100 }
+  responses:
+    Ok:
+      description: 成功
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Envelope' }
+    Error:
+      description: 错误
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Envelope' }
+  schemas:
+    Envelope:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: integer, description: "0=成功; 见文档 §17.1" }
+        message: { type: string }
+        data: {}
+        trace_id: { type: string }
+    Pagination:
+      type: object
+      properties:
+        total: { type: integer }
+        page: { type: integer }
+        page_size: { type: integer }
+    Appointment:
+      type: object
+      properties:
+        id: { type: integer }
+        store_id: { type: integer }
+        customer_id: { type: integer, nullable: true }
+        pet_id: { type: integer, nullable: true }
+        source: { type: integer, enum: [1, 2] }
+        status: { type: string, enum: [pending, arrived, in_progress, completed, cancelled, no_show] }
+        scheduled_start: { type: string, format: date-time }
+        scheduled_end: { type: string, format: date-time }
+        station_id: { type: integer, nullable: true }
+        staff_user_id: { type: integer, nullable: true }
+        total_amount: { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AppointmentItem' }
+    AppointmentItem:
+      type: object
+      properties:
+        service_offering_id: { type: integer }
+        service_name: { type: string }
+        price: { type: integer }
+        duration_min: { type: integer }
+        station_id: { type: integer, nullable: true }
+    AppointmentCreate:
+      type: object
+      required: [scheduled_start, items]
+      properties:
+        customer_id: { type: integer, nullable: true }
+        pet_id: { type: integer, nullable: true }
+        contact_name: { type: string }
+        contact_phone: { type: string }
+        scheduled_start: { type: string, format: date-time }
+        station_id: { type: integer, nullable: true }
+        staff_user_id: { type: integer, nullable: true }
+        remark: { type: string }
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [service_offering_id]
+            properties:
+              service_offering_id: { type: integer }
+              station_id: { type: integer, nullable: true }
+    PageOfAppointment:
+      allOf:
+        - $ref: '#/components/schemas/Pagination'
+        - type: object
+          properties:
+            list:
+              type: array
+              items: { $ref: '#/components/schemas/Appointment' }
+    PetCreate:
+      type: object
+      required: [customer_id, name, species]
+      properties:
+        customer_id: { type: integer }
+        name: { type: string }
+        species: { type: integer, enum: [1, 2, 9] }
+        breed: { type: string }
+        gender: { type: integer, enum: [0, 1, 2] }
+        neutered: { type: boolean }
+        birthday: { type: string, format: date }
+        weight_g: { type: integer }
+        chip_no: { type: string }
+        note: { type: string }
+    SettlementCreate:
+      type: object
+      required: [biz_type, items]
+      properties:
+        customer_id: { type: integer, nullable: true }
+        biz_type: { type: string, enum: [service, boarding, retail, recharge, mixed] }
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [source_type, name, unit_price, quantity]
+            properties:
+              source_type: { type: string, enum: [appointment, boarding_order, product, recharge] }
+              source_id: { type: integer, nullable: true }
+              name: { type: string }
+              unit_price: { type: integer }
+              quantity: { type: integer }

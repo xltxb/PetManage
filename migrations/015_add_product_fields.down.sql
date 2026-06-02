@@ -1,4 +1,0 @@
-ALTER TABLE products DROP COLUMN IF EXISTS brand;
-ALTER TABLE products DROP COLUMN IF EXISTS specification;
-ALTER TABLE products DROP COLUMN IF EXISTS alert_stock;
-ALTER TABLE products DROP COLUMN IF EXISTS expiry_date;

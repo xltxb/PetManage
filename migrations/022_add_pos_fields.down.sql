@@ -1,3 +1,0 @@
-ALTER TABLE order_items ALTER COLUMN product_id SET NOT NULL;
-ALTER TABLE order_items DROP COLUMN IF EXISTS service_item_id;
-ALTER TABLE orders DROP COLUMN IF EXISTS notes;

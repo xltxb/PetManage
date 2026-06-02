@@ -1,5 +1,0 @@
-DROP TABLE IF EXISTS stock_flows;
-DROP TABLE IF EXISTS payments;
-DROP TABLE IF EXISTS order_items;
-DROP TABLE IF EXISTS orders;
-DROP TABLE IF EXISTS products;

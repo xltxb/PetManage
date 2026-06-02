@@ -1,2 +1,0 @@
-DROP TABLE IF EXISTS risk_alerts;
-DROP TABLE IF EXISTS risk_rules;
