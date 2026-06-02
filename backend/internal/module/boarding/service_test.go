@@ -5,29 +5,31 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"pawprint/backend/internal/module/settlement"
 )
 
 type mockRepo struct {
-	rooms       map[int64]*BoardingRoom
-	orders      map[int64]*BoardingOrder
-	careLogs    map[int64][]CareLog
-	nextRoomID  int64
-	nextOrderID int64
-	nextLogID   int64
-	findRoomErr error
+	rooms        map[int64]*BoardingRoom
+	orders       map[int64]*BoardingOrder
+	careLogs     map[int64][]CareLog
+	nextRoomID   int64
+	nextOrderID  int64
+	nextLogID    int64
+	findRoomErr  error
 	findOrderErr error
-	createErr   error
-	updateErr   error
+	createErr    error
+	updateErr    error
 }
 
 func newMockRepo() *mockRepo {
 	return &mockRepo{
-		rooms:    make(map[int64]*BoardingRoom),
-		orders:   make(map[int64]*BoardingOrder),
-		careLogs: make(map[int64][]CareLog),
-		nextRoomID: 1,
+		rooms:       make(map[int64]*BoardingRoom),
+		orders:      make(map[int64]*BoardingOrder),
+		careLogs:    make(map[int64][]CareLog),
+		nextRoomID:  1,
 		nextOrderID: 1,
-		nextLogID: 1,
+		nextLogID:   1,
 	}
 }
 
@@ -55,12 +57,18 @@ func (m *mockRepo) FindOrderByID(id, storeID int64) (*BoardingOrder, error) {
 }
 func (m *mockRepo) UpdateRoom(r *BoardingRoom) error { m.rooms[r.ID] = r; return nil }
 func (m *mockRepo) CreateOrder(o *BoardingOrder) error {
-	if m.createErr != nil { return m.createErr }
-	o.ID = m.nextOrderID; m.nextOrderID++; m.orders[o.ID] = o; return nil
+	if m.createErr != nil {
+		return m.createErr
+	}
+	o.ID = m.nextOrderID
+	m.nextOrderID++
+	m.orders[o.ID] = o
+	return nil
 }
 func (m *mockRepo) UpdateOrder(o *BoardingOrder) error { m.orders[o.ID] = o; return m.updateErr }
 func (m *mockRepo) CreateCareLog(cl *CareLog) error {
-	cl.ID = m.nextLogID; m.nextLogID++
+	cl.ID = m.nextLogID
+	m.nextLogID++
 	m.careLogs[cl.BoardingOrderID] = append(m.careLogs[cl.BoardingOrderID], *cl)
 	return nil
 }
@@ -69,6 +77,16 @@ func (m *mockRepo) FindCareLogs(orderID int64, date time.Time) ([]CareLog, error
 }
 func (m *mockRepo) ListOrders(storeID int64, status string, page, pageSize int) ([]BoardingOrder, int64, error) {
 	return nil, 0, nil
+}
+func (m *mockRepo) WithTx(fn func(Repository) error) error { return fn(m) }
+
+type fakeSettlementCreator struct {
+	req settlement.CreateSettlementRequest
+}
+
+func (f *fakeSettlementCreator) Create(req settlement.CreateSettlementRequest) (*settlement.Settlement, error) {
+	f.req = req
+	return &settlement.Settlement{ID: 99, StoreID: req.StoreID, BizType: req.BizType, Status: settlement.StatusUnpaid}, nil
 }
 
 // --- Billing Tests ---
@@ -114,15 +132,15 @@ func TestCheckIn(t *testing.T) {
 	svc := NewService(repo)
 
 	order, err := svc.CheckIn(CheckInRequest{
-		StoreID:        1,
-		CustomerID:     1,
-		PetID:          1,
-		RoomID:         5,
-		RoomTypeCode:   "small",
-		PricePerNight:  8800,
+		StoreID:         1,
+		CustomerID:      1,
+		PetID:           1,
+		RoomID:          5,
+		RoomTypeCode:    "small",
+		PricePerNight:   8800,
 		PlannedCheckIn:  time.Now(),
 		PlannedCheckOut: time.Now().Add(3 * 24 * time.Hour),
-		Remark:         "标准3晚",
+		Remark:          "标准3晚",
 	})
 	if err != nil {
 		t.Fatalf("CheckIn() error: %v", err)
@@ -175,6 +193,41 @@ func TestCheckOut(t *testing.T) {
 	}
 }
 
+func TestCheckOutCreatesBoardingSettlement(t *testing.T) {
+	repo := newMockRepo()
+	checkInTime := time.Now().UTC().Add(-51 * time.Hour)
+	roomID := int64(5)
+	repo.orders[1] = &BoardingOrder{
+		ID: 1, StoreID: 1, CustomerID: 100, PetID: 200,
+		RoomID: &roomID, RoomTypeSnapshot: "small", PricePerNight: 12000,
+		Status: StatusCheckedIn, ActualCheckIn: &checkInTime,
+	}
+	repo.rooms[5] = &BoardingRoom{ID: 5, StoreID: 1, Code: "S05", Status: RoomStatusOccupied}
+	settlements := &fakeSettlementCreator{}
+	svc := NewService(repo, WithSettlementCreator(settlements))
+
+	resp, err := svc.CheckOut(1, 1)
+	if err != nil {
+		t.Fatalf("CheckOut() error: %v", err)
+	}
+	if resp.Nights != 3 || resp.TotalAmount != 36000 {
+		t.Fatalf("resp = %#v", resp)
+	}
+	if settlements.req.BizType != settlement.BizBoarding {
+		t.Fatalf("settlement biz type = %q, want %q", settlements.req.BizType, settlement.BizBoarding)
+	}
+	if len(settlements.req.Items) != 1 {
+		t.Fatalf("settlement items = %#v", settlements.req.Items)
+	}
+	item := settlements.req.Items[0]
+	if item.SourceType != "boarding" || item.SourceID != 1 || item.UnitPrice != 12000 || item.Quantity != 3 {
+		t.Fatalf("settlement item = %#v", item)
+	}
+	if repo.rooms[5].Status != RoomStatusCleaning {
+		t.Fatalf("room status = %s, want %s", repo.rooms[5].Status, RoomStatusCleaning)
+	}
+}
+
 // --- Care Log Tests ---
 
 func TestLogCare(t *testing.T) {
@@ -220,8 +273,8 @@ func TestRoomStateTransitions(t *testing.T) {
 		{RoomStatusCleaning, RoomStatusFree, true},
 		{RoomStatusCleaning, RoomStatusMaintenance, true},
 		{RoomStatusMaintenance, RoomStatusFree, true},
-		{RoomStatusFree, RoomStatusCleaning, false},    // skip occupied
-		{RoomStatusOccupied, RoomStatusFree, false},    // skip cleaning
+		{RoomStatusFree, RoomStatusCleaning, false},     // skip occupied
+		{RoomStatusOccupied, RoomStatusFree, false},     // skip cleaning
 		{RoomStatusCleaning, RoomStatusOccupied, false}, // must be freed first
 	}
 	for _, tt := range tests {

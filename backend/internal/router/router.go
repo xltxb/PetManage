@@ -76,12 +76,6 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	wxHandler := wx.NewHandler(wxSvc)
 	wx.RegisterRoutes(v1, wxHandler, idem)
 
-	// Boarding
-	boardingRepo := boarding.NewRepository(db)
-	boardingSvc := boarding.NewService(boardingRepo)
-	boardingHandler := boarding.NewHandler(boardingSvc)
-	boarding.RegisterRoutes(protected, boardingHandler, authSvc, idem)
-
 	// Pet
 	petRepo := pet.NewRepository(db)
 	petSvc := pet.NewService(petRepo)
@@ -110,6 +104,12 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	)
 	setHandler := settlement.NewHandler(setSvc)
 	settlement.RegisterRoutes(protected, setHandler, authSvc, idem)
+
+	// Boarding
+	boardingRepo := boarding.NewRepository(db)
+	boardingSvc := boarding.NewService(boardingRepo, boarding.WithSettlementCreator(setSvc))
+	boardingHandler := boarding.NewHandler(boardingSvc)
+	boarding.RegisterRoutes(protected, boardingHandler, authSvc, idem)
 
 	// Analytics
 	analyticsRepo := analytics.NewRepository(db)

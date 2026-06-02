@@ -7,17 +7,35 @@ import (
 
 	"gorm.io/gorm"
 
+	"pawprint/backend/internal/module/settlement"
 	"pawprint/backend/internal/pkg/apperr"
 	"pawprint/backend/internal/pkg/errcode"
 )
 
 // Service handles boarding business logic.
 type Service struct {
-	repo Repository
+	repo        Repository
+	settlements SettlementCreator
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+type SettlementCreator interface {
+	Create(settlement.CreateSettlementRequest) (*settlement.Settlement, error)
+}
+
+type Option func(*Service)
+
+func WithSettlementCreator(c SettlementCreator) Option {
+	return func(s *Service) {
+		s.settlements = c
+	}
+}
+
+func NewService(repo Repository, opts ...Option) *Service {
+	s := &Service{repo: repo}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // CalculateNights computes the number of billable nights.
@@ -85,45 +103,77 @@ func (s *Service) CheckIn(req CheckInRequest) (*BoardingOrder, error) {
 
 // CheckOut completes a boarding order and calculates billing.
 func (s *Service) CheckOut(id, storeID int64) (*CheckOutResponse, error) {
-	order, err := s.repo.FindOrderByID(id, storeID)
+	var response CheckOutResponse
+	err := s.repo.WithTx(func(txRepo Repository) error {
+		order, err := txRepo.FindOrderByID(id, storeID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apperr.NotFound("寄养订单不存在")
+			}
+			return apperr.Internal(err)
+		}
+
+		if order.Status != StatusCheckedIn {
+			return apperr.New(errcode.StateTransitionInvalid, "仅可在住状态的订单办理退房")
+		}
+
+		now := time.Now().UTC()
+		nights := CalculateNights(*order.ActualCheckIn, now)
+		totalAmount := int64(nights) * order.PricePerNight
+
+		order.Status = StatusCheckedOut
+		order.ActualCheckOut = &now
+		order.Nights = &nights
+		order.TotalAmount = &totalAmount
+
+		if s.settlements != nil {
+			created, err := s.settlements.Create(settlement.CreateSettlementRequest{
+				StoreID:    order.StoreID,
+				CustomerID: order.CustomerID,
+				BizType:    settlement.BizBoarding,
+				Items: []settlement.SettlementItemRequest{{
+					SourceType: "boarding",
+					SourceID:   order.ID,
+					Name:       "寄养服务",
+					UnitPrice:  order.PricePerNight,
+					Quantity:   nights,
+				}},
+			})
+			if err != nil {
+				return err
+			}
+			order.SettlementID = &created.ID
+		}
+
+		if err := txRepo.UpdateOrder(order); err != nil {
+			return apperr.Internal(err)
+		}
+
+		// Mark room as cleaning
+		if order.RoomID != nil {
+			room, err := txRepo.FindRoomByID(*order.RoomID)
+			if err == nil {
+				room.Status = RoomStatusCleaning
+				if err := txRepo.UpdateRoom(room); err != nil {
+					return apperr.Internal(err)
+				}
+			}
+		}
+
+		response = CheckOutResponse{
+			Order:       order,
+			Nights:      nights,
+			TotalAmount: totalAmount,
+		}
+		return nil
+	})
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, apperr.NotFound("寄养订单不存在")
+		if appErr, ok := err.(*apperr.AppError); ok {
+			return nil, appErr
 		}
 		return nil, apperr.Internal(err)
 	}
-
-	if order.Status != StatusCheckedIn {
-		return nil, apperr.New(errcode.StateTransitionInvalid, "仅可在住状态的订单办理退房")
-	}
-
-	now := time.Now().UTC()
-	nights := CalculateNights(*order.ActualCheckIn, now)
-	totalAmount := int64(nights) * order.PricePerNight
-
-	order.Status = StatusCheckedOut
-	order.ActualCheckOut = &now
-	order.Nights = &nights
-	order.TotalAmount = &totalAmount
-
-	if err := s.repo.UpdateOrder(order); err != nil {
-		return nil, apperr.Internal(err)
-	}
-
-	// Mark room as cleaning
-	if order.RoomID != nil {
-		room, err := s.repo.FindRoomByID(*order.RoomID)
-		if err == nil {
-			room.Status = RoomStatusCleaning
-			_ = s.repo.UpdateRoom(room)
-		}
-	}
-
-	return &CheckOutResponse{
-		Order:       order,
-		Nights:      nights,
-		TotalAmount: totalAmount,
-	}, nil
+	return &response, nil
 }
 
 // LogCare records a care task for a boarding order.
@@ -182,10 +232,15 @@ func (s *Service) GetCareLogs(orderID int64) ([]CareLog, error) {
 
 func roomStatusLabel(s string) string {
 	switch s {
-	case RoomStatusFree: return "空闲"
-	case RoomStatusOccupied: return "已占用"
-	case RoomStatusCleaning: return "清洁中"
-	case RoomStatusMaintenance: return "维护中"
-	default: return s
+	case RoomStatusFree:
+		return "空闲"
+	case RoomStatusOccupied:
+		return "已占用"
+	case RoomStatusCleaning:
+		return "清洁中"
+	case RoomStatusMaintenance:
+		return "维护中"
+	default:
+		return s
 	}
 }

@@ -17,6 +17,7 @@ type Repository interface {
 	CreateCareLog(cl *CareLog) error
 	FindCareLogs(orderID int64, date time.Time) ([]CareLog, error)
 	ListOrders(storeID int64, status string, page, pageSize int) ([]BoardingOrder, int64, error)
+	WithTx(fn func(Repository) error) error
 }
 
 type repo struct {
@@ -80,4 +81,10 @@ func (r *repo) ListOrders(storeID int64, status string, page, pageSize int) ([]B
 	offset := (page - 1) * pageSize
 	err := q.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&list).Error
 	return list, total, err
+}
+
+func (r *repo) WithTx(fn func(Repository) error) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		return fn(&repo{db: tx})
+	})
 }
