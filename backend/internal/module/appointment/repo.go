@@ -84,7 +84,10 @@ func (r *repo) ListByStore(storeID int64, status string, start, end time.Time, p
 	var list []Appointment
 	var total int64
 
-	q := r.db.Where("store_id = ? AND deleted_at IS NULL", storeID)
+	q := r.db.Where("deleted_at IS NULL")
+	if storeID > 0 {
+		q = q.Where("store_id = ?", storeID)
+	}
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
