@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+/* Tender Precision Design Tokens */
+@theme {
+  --color-canvas: #F4EEE2;
+  --color-surface: #FFFDF8;
+  --color-ink: #231E18;
+  --color-coral: #E26B41;
+  --color-coral-d: #C9542C;
+  --color-pine: #2A5C4D;
+  --color-honey: #D99A28;
+  --color-sky: #5A83A6;
+  --color-berry: #BC5A78;
+  --color-sidebar: #211B14;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: system-ui, 'Noto Sans CJK SC', sans-serif;
+}
+
+/* Utility classes */
+.kpi-card {
+  background: var(--color-surface);
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: 0 1px 3px rgba(35,30,24,0.08);
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: white;
+}
+
+.status-active, .status-in_progress, .status-checked_in { background: var(--color-coral); }
+.status-done, .status-completed, .status-checked_out { background: var(--color-pine); }
+.status-pending, .status-booked, .status-unpaid { background: var(--color-honey); }
+.status-online { background: var(--color-sky); }
+.status-alert, .status-cancelled { background: var(--color-berry); }
