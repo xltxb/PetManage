@@ -5,16 +5,18 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"pawprint/backend/internal/module/notification"
 )
 
 // mockRepo implements Repository for testing
 type mockRepo struct {
-	appointments     map[int64]*Appointment
-	nextID           int64
-	conflictExists   bool
-	findErr          error
-	createErr        error
-	updateErr        error
+	appointments   map[int64]*Appointment
+	nextID         int64
+	conflictExists bool
+	findErr        error
+	createErr      error
+	updateErr      error
 }
 
 func newMockRepo() *mockRepo {
@@ -62,10 +64,19 @@ func (m *mockRepo) Update(a *Appointment) error {
 	return nil
 }
 
-func (m *mockRepo) CreateItems(items []AppointmentItem) error { return nil }
+func (m *mockRepo) CreateItems(items []AppointmentItem) error                { return nil }
 func (m *mockRepo) FindItems(appointmentID int64) ([]AppointmentItem, error) { return nil, nil }
 func (m *mockRepo) ListByStore(storeID int64, status string, start, end time.Time, page, pageSize int) ([]Appointment, int64, error) {
 	return nil, 0, nil
+}
+
+type fakeNotifier struct {
+	sent []notification.SendRequest
+}
+
+func (f *fakeNotifier) Send(req notification.SendRequest) error {
+	f.sent = append(f.sent, req)
+	return nil
 }
 
 // --- State Machine Tests ---
@@ -178,6 +189,33 @@ func TestCreateAppointment(t *testing.T) {
 	}
 	if a.TotalAmount != 26800 {
 		t.Errorf("TotalAmount = %d, want 26800", a.TotalAmount)
+	}
+}
+
+func TestCreateAppointmentSendsConfirmationNotification(t *testing.T) {
+	repo := newMockRepo()
+	notifier := &fakeNotifier{}
+	svc := NewService(repo, WithNotifier(notifier))
+	start := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+
+	appt, err := svc.Create(CreateAppointmentRequest{
+		StoreID:        1,
+		CustomerID:     100,
+		PetID:          200,
+		StationID:      10,
+		ScheduledStart: start,
+		Items: []CreateAppointmentItem{
+			{ServiceOfferingID: 1, ServiceName: "全套SPA", Price: 26800, DurationMin: 90},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create error = %v", err)
+	}
+	if appt.ScheduledEnd.Sub(start) != 90*time.Minute {
+		t.Fatalf("scheduled end = %s, want 90m after start", appt.ScheduledEnd)
+	}
+	if len(notifier.sent) != 1 || notifier.sent[0].TemplateCode != "appointment_confirmed" {
+		t.Fatalf("sent notifications = %#v", notifier.sent)
 	}
 }
 

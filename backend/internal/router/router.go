@@ -50,6 +50,13 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	protected.Use(middleware.AuthRequired(authSvc))
 	protected.Use(middleware.StoreScope(authSvc))
 
+	// Notification
+	notifRepo := notification.NewRepository(db)
+	notifSvc := notification.NewService(notifRepo)
+	notifSvc.SetFeatureFlags(cfg.FeatureSMSEnabled, cfg.FeatureWechatEnabled)
+	notifHandler := notification.NewHandler(notifSvc)
+	notification.RegisterRoutes(protected, notifHandler, authSvc, idem)
+
 	// Dashboard
 	dashRepo := dashboard.NewRepository(db)
 	dashSvc := dashboard.NewService(dashRepo, cfg.Timezone)
@@ -58,7 +65,7 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 
 	// Appointment
 	apptRepo := appointment.NewRepository(db)
-	apptSvc := appointment.NewService(apptRepo)
+	apptSvc := appointment.NewService(apptRepo, appointment.WithNotifier(notifSvc))
 	apptHandler := appointment.NewHandler(apptSvc)
 	appointment.RegisterRoutes(protected, apptHandler, authSvc, idem)
 
@@ -91,12 +98,6 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	setSvc := settlement.NewService(setRepo)
 	setHandler := settlement.NewHandler(setSvc)
 	settlement.RegisterRoutes(protected, setHandler, authSvc, idem)
-
-	// Notification
-	notifRepo := notification.NewRepository(db)
-	notifSvc := notification.NewService(notifRepo)
-	notifHandler := notification.NewHandler(notifSvc)
-	notification.RegisterRoutes(protected, notifHandler, authSvc, idem)
 
 	// Analytics
 	analyticsRepo := analytics.NewRepository(db)

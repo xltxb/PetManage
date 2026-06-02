@@ -2,21 +2,40 @@ package appointment
 
 import (
 	"errors"
+	"strconv"
 	"time"
 
 	"gorm.io/gorm"
 
+	"pawprint/backend/internal/module/notification"
 	"pawprint/backend/internal/pkg/apperr"
 	"pawprint/backend/internal/pkg/errcode"
 )
 
 // Service handles appointment business logic.
 type Service struct {
-	repo Repository
+	repo     Repository
+	notifier Notifier
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+type Notifier interface {
+	Send(notification.SendRequest) error
+}
+
+type Option func(*Service)
+
+func WithNotifier(n Notifier) Option {
+	return func(s *Service) {
+		s.notifier = n
+	}
+}
+
+func NewService(repo Repository, opts ...Option) *Service {
+	s := &Service{repo: repo}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Create creates a new appointment with items after validating no resource conflict.
@@ -32,9 +51,12 @@ func (s *Service) Create(req CreateAppointmentRequest) (*Appointment, error) {
 	}
 
 	// Calculate totals from items
-	totalAmount, _ := s.CalculateTotals(req.Items)
+	totalAmount, durationMin := s.CalculateTotals(req.Items)
 	if req.TotalAmount == 0 {
 		req.TotalAmount = totalAmount
+	}
+	if req.ScheduledEnd.IsZero() && durationMin > 0 {
+		req.ScheduledEnd = req.ScheduledStart.Add(time.Duration(durationMin) * time.Minute)
 	}
 
 	var customerID, petID, stationID, staffUserID, createdBy *int64
@@ -99,6 +121,19 @@ func (s *Service) Create(req CreateAppointmentRequest) (*Appointment, error) {
 	}
 	if err := s.repo.CreateItems(items); err != nil {
 		return nil, apperr.Internal(err)
+	}
+
+	if s.notifier != nil && a.CustomerID != nil {
+		_ = s.notifier.Send(notification.SendRequest{
+			StoreID:      a.StoreID,
+			CustomerID:   *a.CustomerID,
+			TemplateCode: "appointment_confirmed",
+			Channel:      notification.ChannelInApp,
+			Payload: map[string]string{
+				"appointment_id": strconv.FormatInt(a.ID, 10),
+				"start_at":       a.ScheduledStart.Format(time.RFC3339),
+			},
+		})
 	}
 
 	return a, nil
@@ -225,23 +260,36 @@ func parseSlot(s string) []time.Time {
 
 func statusLabel(s string) string {
 	switch s {
-	case StatusPending: return "待到店"
-	case StatusArrived: return "已到店"
-	case StatusInProgress: return "进行中"
-	case StatusCompleted: return "已完成"
-	case StatusCancelled: return "已取消"
-	case StatusNoShow: return "未到店"
-	default: return s
+	case StatusPending:
+		return "待到店"
+	case StatusArrived:
+		return "已到店"
+	case StatusInProgress:
+		return "进行中"
+	case StatusCompleted:
+		return "已完成"
+	case StatusCancelled:
+		return "已取消"
+	case StatusNoShow:
+		return "未到店"
+	default:
+		return s
 	}
 }
 
 func actionLabel(a string) string {
 	switch a {
-	case ActionArrive: return "到店"
-	case ActionStart: return "开始"
-	case ActionComplete: return "完成"
-	case ActionCancel: return "取消"
-	case ActionNoShow: return "标记未到"
-	default: return a
+	case ActionArrive:
+		return "到店"
+	case ActionStart:
+		return "开始"
+	case ActionComplete:
+		return "完成"
+	case ActionCancel:
+		return "取消"
+	case ActionNoShow:
+		return "标记未到"
+	default:
+		return a
 	}
 }
