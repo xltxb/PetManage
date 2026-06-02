@@ -12,6 +12,7 @@ import (
 	"pawprint/backend/internal/module/dashboard"
 	"pawprint/backend/internal/module/inventory"
 	"pawprint/backend/internal/module/member"
+	"pawprint/backend/internal/module/notification"
 	"pawprint/backend/internal/module/pet"
 	"pawprint/backend/internal/module/settlement"
 )
@@ -85,6 +86,12 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	setSvc := settlement.NewService(setRepo)
 	setHandler := settlement.NewHandler(setSvc)
 	settlement.RegisterRoutes(protected, setHandler)
+
+	// Notification
+	notifRepo := notification.NewRepository(db)
+	notifSvc := notification.NewService(notifRepo)
+	notifHandler := notification.NewHandler(notifSvc)
+	notification.RegisterRoutes(protected, notifHandler)
 
 	return r
 }
