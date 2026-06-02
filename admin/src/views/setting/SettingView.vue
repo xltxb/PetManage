@@ -141,15 +141,22 @@ function formatEditor() {
   }
 }
 
+function parseValue(raw: string) {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return raw
+  }
+}
+
 async function save() {
   saving.value = true
   error.value = ''
   try {
-    const parsed = JSON.parse(editor.value)
-    await client.put(`/settings/${selectedKey.value}`, { value: parsed, updated_by: 0 }, idem('setting-save'))
+    await client.put(`/settings/${selectedKey.value}`, { value: parseValue(editor.value), updated_by: 0 }, idem('setting-save'))
     await load()
   } catch (err) {
-    error.value = err instanceof SyntaxError ? '配置值不是合法 JSON' : errorMessage(err)
+    error.value = errorMessage(err)
   } finally {
     saving.value = false
   }

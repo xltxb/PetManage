@@ -36,6 +36,10 @@
             <p class="text-xs mt-1" style="opacity: 0.58">
               {{ dateLabel(order.planned_check_in) }} 至 {{ dateLabel(order.planned_check_out) }} · ¥{{ yuan(order.price_per_night) }}/晚
             </p>
+            <p class="text-xs mt-1" style="opacity: 0.58">
+              实际 {{ dateTimeLabel(order.actual_check_in) }} / {{ dateTimeLabel(order.actual_check_out) }} ·
+              {{ order.nights || '-' }} 晚 · 合计 ¥{{ yuan(order.total_amount || 0) }} · 结算 {{ order.settlement_id || '-' }}
+            </p>
           </div>
           <div class="row-actions">
             <button v-if="order.status === 'checked_in'" class="mini-btn pine" :disabled="saving" @click="postCare(order, 'feeding')">喂食</button>
@@ -117,6 +121,10 @@ interface BoardingOrder {
   status: string
   planned_check_in: string
   planned_check_out: string
+  actual_check_in?: string
+  actual_check_out?: string
+  nights?: number
+  total_amount?: number
   settlement_id?: number
 }
 
@@ -169,7 +177,7 @@ function dateLabel(value: string) {
   return value ? new Date(value).toLocaleDateString('zh-CN') : '-'
 }
 
-function dateTimeLabel(value: string) {
+function dateTimeLabel(value?: string) {
   return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-'
 }
 

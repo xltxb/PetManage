@@ -96,6 +96,7 @@
           <label class="label">品种<input v-model.trim="form.breed" class="field" /></label>
           <label class="label">生日<input v-model="form.birthday" class="field" type="date" /></label>
           <label class="label">体重（克）<input v-model.number="form.weight_g" class="field" type="number" min="0" /></label>
+          <label class="label">芯片号<input v-model.trim="form.chip_no" class="field" /></label>
           <label class="label">备注<input v-model.trim="form.note" class="field" /></label>
           <label class="check"><input v-model="form.neutered" type="checkbox" /> 已绝育</label>
           <button class="primary-btn" :disabled="saving">创建档案</button>
@@ -189,6 +190,7 @@ const form = reactive({
   neutered: false,
   birthday: '',
   weight_g: 5000,
+  chip_no: '',
   note: '',
 })
 const healthForm = reactive({
@@ -290,6 +292,7 @@ async function createPet() {
       neutered: form.neutered,
       birthday: birthdayValue(form.birthday),
       weight_g: form.weight_g,
+      chip_no: form.chip_no,
       note: form.note,
     }, idem('pet-create'))
     customerId.value = form.customer_id
