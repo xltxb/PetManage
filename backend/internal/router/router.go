@@ -6,6 +6,7 @@ import (
 
 	"pawprint/backend/internal/config"
 	"pawprint/backend/internal/middleware"
+	"pawprint/backend/internal/module/analytics"
 	"pawprint/backend/internal/module/appointment"
 	"pawprint/backend/internal/module/auth"
 	"pawprint/backend/internal/module/boarding"
@@ -92,6 +93,12 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	notifSvc := notification.NewService(notifRepo)
 	notifHandler := notification.NewHandler(notifSvc)
 	notification.RegisterRoutes(protected, notifHandler)
+
+	// Analytics
+	analyticsRepo := analytics.NewRepository(db)
+	analyticsSvc := analytics.NewService(analyticsRepo)
+	analyticsHandler := analytics.NewHandler(analyticsSvc)
+	analytics.RegisterRoutes(protected, analyticsHandler)
 
 	return r
 }
