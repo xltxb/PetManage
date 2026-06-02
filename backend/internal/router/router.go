@@ -10,6 +10,7 @@ import (
 	"pawprint/backend/internal/module/auth"
 	"pawprint/backend/internal/module/boarding"
 	"pawprint/backend/internal/module/dashboard"
+	"pawprint/backend/internal/module/inventory"
 	"pawprint/backend/internal/module/member"
 	"pawprint/backend/internal/module/pet"
 )
@@ -71,6 +72,12 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	memberSvc := member.NewService(memberRepo)
 	memberHandler := member.NewHandler(memberSvc)
 	member.RegisterRoutes(protected, memberHandler)
+
+	// Inventory
+	invRepo := inventory.NewRepository(db)
+	invSvc := inventory.NewService(invRepo)
+	invHandler := inventory.NewHandler(invSvc)
+	inventory.RegisterRoutes(protected, invHandler)
 
 	return r
 }
