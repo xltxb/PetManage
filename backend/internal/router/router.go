@@ -13,6 +13,7 @@ import (
 	"pawprint/backend/internal/module/inventory"
 	"pawprint/backend/internal/module/member"
 	"pawprint/backend/internal/module/pet"
+	"pawprint/backend/internal/module/settlement"
 )
 
 func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
@@ -78,6 +79,12 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	invSvc := inventory.NewService(invRepo)
 	invHandler := inventory.NewHandler(invSvc)
 	inventory.RegisterRoutes(protected, invHandler)
+
+	// Settlement
+	setRepo := settlement.NewRepository(db)
+	setSvc := settlement.NewService(setRepo)
+	setHandler := settlement.NewHandler(setSvc)
+	settlement.RegisterRoutes(protected, setHandler)
 
 	return r
 }
