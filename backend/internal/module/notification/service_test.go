@@ -2,11 +2,13 @@ package notification
 
 import (
 	"testing"
+	"time"
 )
 
 type mockRepo struct {
 	logs      []NotificationLog
 	templates map[string]*NotificationTemplate
+	duePets   []VaccineDuePet
 	nextID    int64
 }
 
@@ -18,13 +20,23 @@ func newMockRepo() *mockRepo {
 	}
 }
 
-func (m *mockRepo) CreateLog(log *NotificationLog) error { log.ID = m.nextID; m.nextID++; m.logs = append(m.logs, *log); return nil }
+func (m *mockRepo) CreateLog(log *NotificationLog) error {
+	log.ID = m.nextID
+	m.nextID++
+	m.logs = append(m.logs, *log)
+	return nil
+}
 func (m *mockRepo) FindTemplate(code, channel string) (*NotificationTemplate, error) {
 	t, ok := m.templates[code+":"+channel]
-	if !ok { return nil, nil }
+	if !ok {
+		return nil, nil
+	}
 	return t, nil
 }
 func (m *mockRepo) FindPendingLogs(limit int) ([]NotificationLog, error) { return nil, nil }
+func (m *mockRepo) FindVaccineDue(now time.Time, days int) ([]VaccineDuePet, error) {
+	return m.duePets, nil
+}
 
 func TestSendInApp(t *testing.T) {
 	repo := newMockRepo()
@@ -74,6 +86,36 @@ func TestSendSMSDisabled(t *testing.T) {
 	log := repo.logs[0]
 	if log.Status != "skipped" {
 		t.Errorf("status = %q, want skipped (sms disabled)", log.Status)
+	}
+}
+
+func TestScanVaccineDueCreatesSkippedSMSWhenDisabled(t *testing.T) {
+	repo := newMockRepo()
+	repo.duePets = []VaccineDuePet{{
+		StoreID:    1,
+		CustomerID: 100,
+		PetID:      200,
+		PetName:    "布丁",
+		DueAt:      time.Now().UTC().Add(7 * 24 * time.Hour),
+	}}
+	repo.templates["vaccine_due:sms"] = &NotificationTemplate{
+		Code: "vaccine_due", Channel: "sms", Content: "【爪迹】{petName}疫苗即将到期：{dueAt}",
+	}
+	svc := NewService(repo)
+	svc.SetFeatureFlags(false, false)
+
+	count, err := svc.ScanVaccineDue(time.Now().UTC(), 7)
+	if err != nil {
+		t.Fatalf("ScanVaccineDue error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+	if len(repo.logs) != 1 {
+		t.Fatalf("logs count = %d, want 1", len(repo.logs))
+	}
+	if repo.logs[0].TemplateCode != "vaccine_due" || repo.logs[0].Status != StatusSkipped {
+		t.Fatalf("log = %#v", repo.logs[0])
 	}
 }
 

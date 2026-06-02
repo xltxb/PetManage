@@ -32,6 +32,14 @@ type NotificationLog struct {
 
 func (NotificationLog) TableName() string { return "notification_logs" }
 
+type VaccineDuePet struct {
+	StoreID    int64
+	CustomerID int64
+	PetID      int64
+	PetName    string
+	DueAt      time.Time
+}
+
 // Statuses
 const (
 	StatusPending = "pending"
@@ -42,7 +50,7 @@ const (
 
 // Channels
 const (
-	ChannelInApp   = "inapp"
-	ChannelSMS     = "sms"
+	ChannelInApp    = "inapp"
+	ChannelSMS      = "sms"
 	ChannelWechatMp = "wechat_mp"
 )

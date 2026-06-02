@@ -85,6 +85,28 @@ func (s *Service) Send(req SendRequest) error {
 	return nil
 }
 
+func (s *Service) ScanVaccineDue(now time.Time, days int) (int, error) {
+	rows, err := s.repo.FindVaccineDue(now, days)
+	if err != nil {
+		return 0, apperr.Internal(err)
+	}
+	for _, row := range rows {
+		if err := s.Send(SendRequest{
+			StoreID:      row.StoreID,
+			CustomerID:   row.CustomerID,
+			TemplateCode: "vaccine_due",
+			Channel:      ChannelSMS,
+			Payload: map[string]string{
+				"petName": row.PetName,
+				"dueAt":   row.DueAt.Format("2006-01-02"),
+			},
+		}); err != nil {
+			return 0, err
+		}
+	}
+	return len(rows), nil
+}
+
 func (s *Service) isChannelEnabled(channel string) bool {
 	switch channel {
 	case ChannelInApp:
