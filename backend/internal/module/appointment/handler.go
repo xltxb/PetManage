@@ -73,6 +73,29 @@ func (h *Handler) List(c *gin.Context) {
 	response.List(c, list, total, page, pageSize)
 }
 
+func (h *Handler) WeekSchedule(c *gin.Context) {
+	stationID, _ := strconv.ParseInt(c.Query("station_id"), 10, 64)
+	weekStartStr := c.Query("week_start")
+	if stationID == 0 || weekStartStr == "" {
+		response.Error(c, apperr.BadRequest("请提供 station_id 和 week_start"))
+		return
+	}
+
+	weekStart, err := time.Parse("2006-01-02", weekStartStr)
+	if err != nil {
+		response.Error(c, apperr.BadRequest("week_start 格式无效，应为 YYYY-MM-DD"))
+		return
+	}
+
+	storeID, _ := c.Get("current_store_id")
+	schedule, err := h.svc.GetWeekSchedule(storeID.(int64), stationID, weekStart)
+	if err != nil {
+		response.Error(c, err.(*apperr.AppError))
+		return
+	}
+	response.Success(c, schedule)
+}
+
 // Transition handles POST /api/v1/appointments/:id/transitions.
 func (h *Handler) Transition(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)

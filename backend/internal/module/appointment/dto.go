@@ -43,3 +43,26 @@ type ListRequest struct {
 	Page     int       `form:"page"`
 	PageSize int       `form:"page_size"`
 }
+
+type WeekScheduleResponse struct {
+	StationID int64             `json:"station_id"`
+	WeekStart string            `json:"week_start"`
+	WeekEnd   string            `json:"week_end"`
+	Days      []WeekScheduleDay `json:"days"`
+}
+
+type WeekScheduleDay struct {
+	Date         string                    `json:"date"`
+	Appointments []WeekScheduleAppointment `json:"appointments"`
+}
+
+type WeekScheduleAppointment struct {
+	ID             int64     `json:"id"`
+	Status         string    `json:"status"`
+	ScheduledStart time.Time `json:"scheduled_start"`
+	ScheduledEnd   time.Time `json:"scheduled_end"`
+	CustomerID     *int64    `json:"customer_id"`
+	PetID          *int64    `json:"pet_id"`
+	ContactName    string    `json:"contact_name"`
+	TotalAmount    int64     `json:"total_amount"`
+}

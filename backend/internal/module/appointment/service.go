@@ -182,6 +182,51 @@ func (s *Service) List(storeID int64, status string, start, end time.Time, page,
 	return s.repo.ListByStore(storeID, status, start, end, page, pageSize)
 }
 
+func (s *Service) GetWeekSchedule(storeID, stationID int64, weekStart time.Time) (*WeekScheduleResponse, error) {
+	start := dateStartUTC(weekStart)
+	end := start.AddDate(0, 0, 7)
+	list, _, err := s.repo.ListByStore(storeID, "", start, end, 1, 500)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+
+	days := make([]WeekScheduleDay, 7)
+	dayIndex := make(map[string]int, 7)
+	for i := 0; i < 7; i++ {
+		date := start.AddDate(0, 0, i).Format("2006-01-02")
+		days[i] = WeekScheduleDay{Date: date, Appointments: []WeekScheduleAppointment{}}
+		dayIndex[date] = i
+	}
+
+	for _, a := range list {
+		if a.StationID == nil || *a.StationID != stationID {
+			continue
+		}
+		date := a.ScheduledStart.UTC().Format("2006-01-02")
+		idx, ok := dayIndex[date]
+		if !ok {
+			continue
+		}
+		days[idx].Appointments = append(days[idx].Appointments, WeekScheduleAppointment{
+			ID:             a.ID,
+			Status:         a.Status,
+			ScheduledStart: a.ScheduledStart,
+			ScheduledEnd:   a.ScheduledEnd,
+			CustomerID:     a.CustomerID,
+			PetID:          a.PetID,
+			ContactName:    a.ContactName,
+			TotalAmount:    a.TotalAmount,
+		})
+	}
+
+	return &WeekScheduleResponse{
+		StationID: stationID,
+		WeekStart: start.Format("2006-01-02"),
+		WeekEnd:   end.Format("2006-01-02"),
+		Days:      days,
+	}, nil
+}
+
 // CalculateTotals computes total amount and duration from appointment items.
 func (s *Service) CalculateTotals(items []CreateAppointmentItem) (amount int64, durationMin int) {
 	for _, item := range items {
@@ -239,6 +284,11 @@ func (s *Service) GetAvailableSlots(storeID, stationID int64, date time.Time) ([
 }
 
 type timeBlock struct{ start, end time.Time }
+
+func dateStartUTC(t time.Time) time.Time {
+	u := t.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
+}
 
 func isBlocked(start, end time.Time, blocked []timeBlock) bool {
 	for _, b := range blocked {

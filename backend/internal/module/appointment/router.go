@@ -13,6 +13,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, authSvc *auth.Service, idem 
 	{
 		appointments.GET("", middleware.RequirePermission(authSvc, "appointment:view"), h.List)
 		appointments.POST("", middleware.RequirePermission(authSvc, "appointment:create"), idem, h.Create)
+		appointments.GET("/week", middleware.RequirePermission(authSvc, "appointment:view"), h.WeekSchedule)
 		appointments.GET("/:id", middleware.RequirePermission(authSvc, "appointment:view"), h.Get)
 		appointments.POST("/:id/transitions", middleware.RequirePermission(authSvc, "appointment:transition"), idem, h.Transition)
 		appointments.POST("/:id/cancel", middleware.RequirePermission(authSvc, "appointment:transition"), idem, h.Cancel)

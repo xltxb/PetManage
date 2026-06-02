@@ -67,7 +67,23 @@ func (m *mockRepo) Update(a *Appointment) error {
 func (m *mockRepo) CreateItems(items []AppointmentItem) error                { return nil }
 func (m *mockRepo) FindItems(appointmentID int64) ([]AppointmentItem, error) { return nil, nil }
 func (m *mockRepo) ListByStore(storeID int64, status string, start, end time.Time, page, pageSize int) ([]Appointment, int64, error) {
-	return nil, 0, nil
+	var list []Appointment
+	for _, a := range m.appointments {
+		if a.StoreID != storeID {
+			continue
+		}
+		if status != "" && a.Status != status {
+			continue
+		}
+		if !start.IsZero() && a.ScheduledStart.Before(start) {
+			continue
+		}
+		if !end.IsZero() && !a.ScheduledStart.Before(end) {
+			continue
+		}
+		list = append(list, *a)
+	}
+	return list, int64(len(list)), nil
 }
 
 type fakeNotifier struct {
@@ -216,6 +232,49 @@ func TestCreateAppointmentSendsConfirmationNotification(t *testing.T) {
 	}
 	if len(notifier.sent) != 1 || notifier.sent[0].TemplateCode != "appointment_confirmed" {
 		t.Fatalf("sent notifications = %#v", notifier.sent)
+	}
+}
+
+func TestGetWeekScheduleGroupsStationAppointments(t *testing.T) {
+	repo := newMockRepo()
+	weekStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	stationSeven := int64(7)
+	stationEight := int64(8)
+	repo.appointments[1] = &Appointment{
+		ID: 1, StoreID: 1, Status: StatusPending, StationID: &stationSeven,
+		ScheduledStart: weekStart.Add(10 * time.Hour), ScheduledEnd: weekStart.Add(11 * time.Hour),
+	}
+	repo.appointments[2] = &Appointment{
+		ID: 2, StoreID: 1, Status: StatusArrived, StationID: &stationSeven,
+		ScheduledStart: weekStart.AddDate(0, 0, 2).Add(14 * time.Hour), ScheduledEnd: weekStart.AddDate(0, 0, 2).Add(15 * time.Hour),
+	}
+	repo.appointments[3] = &Appointment{
+		ID: 3, StoreID: 1, Status: StatusPending, StationID: &stationEight,
+		ScheduledStart: weekStart.Add(12 * time.Hour), ScheduledEnd: weekStart.Add(13 * time.Hour),
+	}
+
+	svc := NewService(repo)
+	schedule, err := svc.GetWeekSchedule(1, stationSeven, weekStart)
+	if err != nil {
+		t.Fatalf("GetWeekSchedule error = %v", err)
+	}
+	if schedule.StationID != stationSeven {
+		t.Fatalf("station id = %d, want %d", schedule.StationID, stationSeven)
+	}
+	if len(schedule.Days) != 7 {
+		t.Fatalf("days = %d, want 7", len(schedule.Days))
+	}
+	if got := len(schedule.Days[0].Appointments); got != 1 {
+		t.Fatalf("day 0 appointments = %d, want 1", got)
+	}
+	if schedule.Days[0].Appointments[0].ID != 1 {
+		t.Fatalf("day 0 appointment id = %d, want 1", schedule.Days[0].Appointments[0].ID)
+	}
+	if got := len(schedule.Days[2].Appointments); got != 1 {
+		t.Fatalf("day 2 appointments = %d, want 1", got)
+	}
+	if schedule.Days[2].Appointments[0].ID != 2 {
+		t.Fatalf("day 2 appointment id = %d, want 2", schedule.Days[2].Appointments[0].ID)
 	}
 }
 
