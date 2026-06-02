@@ -11,11 +11,48 @@ import (
 
 // Service handles settlement business logic.
 type Service struct {
-	repo Repository
+	repo      Repository
+	members   MemberEffects
+	inventory InventoryEffects
+	prints    PrintJobs
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+type MemberEffects interface {
+	WalletConsume(customerID, amount, storeID, operatorID int64, remark string) error
+	EarnPoints(customerID, amountPaid, storeID, operatorID int64, refType string, refID int64) (int64, error)
+	ApplyPaidSpend(customerID, amountPaid, storeID, operatorID int64, refType string, refID int64) error
+	ReverseSettlement(customerID, amountPaid, storeID, operatorID int64, refID int64) error
+}
+
+type InventoryEffects interface {
+	SaleOut(storeID, productID int64, quantity int, operatorID int64, refType string, refID int64) error
+	ReverseSaleOut(storeID, productID int64, quantity int, operatorID int64, refType string, refID int64) error
+}
+
+type PrintJobs interface {
+	CreateReceipt(storeID, settlementID, operatorID int64, content map[string]interface{}) error
+}
+
+type Option func(*Service)
+
+func WithMemberEffects(e MemberEffects) Option {
+	return func(s *Service) { s.members = e }
+}
+
+func WithInventoryEffects(e InventoryEffects) Option {
+	return func(s *Service) { s.inventory = e }
+}
+
+func WithPrintJobs(p PrintJobs) Option {
+	return func(s *Service) { s.prints = p }
+}
+
+func NewService(repo Repository, opts ...Option) *Service {
+	s := &Service{repo: repo}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Create creates a new settlement with items.
@@ -75,7 +112,9 @@ func (s *Service) Create(req CreateSettlementRequest) (*Settlement, error) {
 func (s *Service) Pay(id int64, amount int64, method string, operatorID int64) error {
 	settlement, err := s.repo.FindByID(id)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound { return apperr.NotFound("结算单不存在") }
+		if err == gorm.ErrRecordNotFound {
+			return apperr.NotFound("结算单不存在")
+		}
 		return apperr.Internal(err)
 	}
 
@@ -86,6 +125,24 @@ func (s *Service) Pay(id int64, amount int64, method string, operatorID int64) e
 	// Online payment methods return not-enabled error (dev doc §11)
 	if method == PayWechat || method == PayAlipay {
 		return apperr.New(errcode.PaymentNotEnabled, "线上支付未开通，请选择其他方式")
+	}
+
+	if method == PayWallet && settlement.CustomerID != nil && s.members != nil {
+		if err := s.members.WalletConsume(*settlement.CustomerID, amount, settlement.StoreID, operatorID, "结算消费 "+settlement.Code); err != nil {
+			return err
+		}
+	}
+
+	items, err := s.repo.FindItems(id)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	for _, item := range items {
+		if item.SourceType == "product" && s.inventory != nil {
+			if err := s.inventory.SaleOut(settlement.StoreID, item.SourceID, item.Quantity, operatorID, "settlement", settlement.ID); err != nil {
+				return err
+			}
+		}
 	}
 
 	now := time.Now().UTC()
@@ -104,14 +161,36 @@ func (s *Service) Pay(id int64, amount int64, method string, operatorID int64) e
 		Status:       "success",
 		PaidAt:       &now,
 	}
-	return s.repo.CreatePayment(payment)
+	if err := s.repo.CreatePayment(payment); err != nil {
+		return apperr.Internal(err)
+	}
+
+	if settlement.CustomerID != nil && s.members != nil {
+		if err := s.members.ApplyPaidSpend(*settlement.CustomerID, amount, settlement.StoreID, operatorID, "settlement", settlement.ID); err != nil {
+			return err
+		}
+		if _, err := s.members.EarnPoints(*settlement.CustomerID, amount, settlement.StoreID, operatorID, "settlement", settlement.ID); err != nil {
+			return err
+		}
+	}
+
+	if s.prints != nil {
+		return s.prints.CreateReceipt(settlement.StoreID, settlement.ID, operatorID, map[string]interface{}{
+			"code":        settlement.Code,
+			"paid_amount": amount,
+			"method":      method,
+		})
+	}
+	return nil
 }
 
 // Refund refunds a paid settlement and creates a red-ink reversal.
 func (s *Service) Refund(id int64, operatorID int64, reason string) error {
 	settlement, err := s.repo.FindByID(id)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound { return apperr.NotFound("结算单不存在") }
+		if err == gorm.ErrRecordNotFound {
+			return apperr.NotFound("结算单不存在")
+		}
 		return apperr.Internal(err)
 	}
 
@@ -136,7 +215,9 @@ func (s *Service) Refund(id int64, operatorID int64, reason string) error {
 		Remark:      "退款: " + reason + " (原单: " + settlement.Code + ")",
 	}
 	var redOpID *int64
-	if operatorID > 0 { redOpID = &operatorID }
+	if operatorID > 0 {
+		redOpID = &operatorID
+	}
 	reversal.OperatorID = redOpID
 	now := time.Now().UTC()
 	reversal.PaidAt = &now
@@ -148,7 +229,9 @@ func (s *Service) Refund(id int64, operatorID int64, reason string) error {
 func (s *Service) Void(id int64) error {
 	settlement, err := s.repo.FindByID(id)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound { return apperr.NotFound("结算单不存在") }
+		if err == gorm.ErrRecordNotFound {
+			return apperr.NotFound("结算单不存在")
+		}
 		return apperr.Internal(err)
 	}
 

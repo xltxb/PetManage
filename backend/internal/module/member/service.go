@@ -22,7 +22,9 @@ func NewService(repo Repository) *Service {
 func (s *Service) Recharge(customerID, amount, storeID, operatorID int64, remark string) error {
 	c, err := s.repo.FindCustomerByID(customerID)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound { return apperr.NotFound("会员不存在") }
+		if err == gorm.ErrRecordNotFound {
+			return apperr.NotFound("会员不存在")
+		}
 		return apperr.Internal(err)
 	}
 
@@ -34,7 +36,9 @@ func (s *Service) Recharge(customerID, amount, storeID, operatorID int64, remark
 	}
 
 	var opID *int64
-	if operatorID > 0 { opID = &operatorID }
+	if operatorID > 0 {
+		opID = &operatorID
+	}
 
 	tx := &WalletTransaction{
 		CustomerID: customerID, StoreID: storeID, Type: TxRecharge,
@@ -48,7 +52,9 @@ func (s *Service) Recharge(customerID, amount, storeID, operatorID int64, remark
 func (s *Service) WalletConsume(customerID, amount, storeID, operatorID int64, remark string) error {
 	c, err := s.repo.FindCustomerByID(customerID)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound { return apperr.NotFound("会员不存在") }
+		if err == gorm.ErrRecordNotFound {
+			return apperr.NotFound("会员不存在")
+		}
 		return apperr.Internal(err)
 	}
 
@@ -64,7 +70,9 @@ func (s *Service) WalletConsume(customerID, amount, storeID, operatorID int64, r
 	}
 
 	var opID *int64
-	if operatorID > 0 { opID = &operatorID }
+	if operatorID > 0 {
+		opID = &operatorID
+	}
 
 	tx := &WalletTransaction{
 		CustomerID: customerID, StoreID: storeID, Type: TxConsume,
@@ -82,7 +90,9 @@ func (s *Service) WalletAdjust(customerID, amount, storeID, operatorID int64, re
 
 	c, err := s.repo.FindCustomerByID(customerID)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound { return apperr.NotFound("会员不存在") }
+		if err == gorm.ErrRecordNotFound {
+			return apperr.NotFound("会员不存在")
+		}
 		return apperr.Internal(err)
 	}
 
@@ -94,7 +104,9 @@ func (s *Service) WalletAdjust(customerID, amount, storeID, operatorID int64, re
 	}
 
 	var opID *int64
-	if operatorID > 0 { opID = &operatorID }
+	if operatorID > 0 {
+		opID = &operatorID
+	}
 
 	tx := &WalletTransaction{
 		CustomerID: customerID, StoreID: storeID, Type: TxAdjust,
@@ -141,7 +153,9 @@ func (s *Service) EarnPoints(customerID, amountPaid, storeID, operatorID int64, 
 	_ = s.repo.UpdateCustomer(c)
 
 	var opID *int64
-	if operatorID > 0 { opID = &operatorID }
+	if operatorID > 0 {
+		opID = &operatorID
+	}
 
 	ptx := &PointsTransaction{
 		CustomerID: customerID, StoreID: storeID, Type: TxEarn,
@@ -191,11 +205,39 @@ func (s *Service) CheckTierUpgrade(customerID int64, totalSpend int64) (bool, st
 	return false, ""
 }
 
+// ApplyPaidSpend increases total spend after a paid settlement and upgrades tier when eligible.
+func (s *Service) ApplyPaidSpend(customerID, amountPaid, storeID, operatorID int64, refType string, refID int64) error {
+	c, err := s.repo.FindCustomerByID(customerID)
+	if err != nil {
+		return nil
+	}
+	c.TotalSpend += amountPaid
+	if err := s.repo.UpdateCustomer(c); err != nil {
+		return apperr.Internal(err)
+	}
+	s.CheckTierUpgrade(customerID, c.TotalSpend)
+	return nil
+}
+
+// ReverseSettlement reverses coarse member totals for a refunded settlement.
+func (s *Service) ReverseSettlement(customerID, amountPaid, storeID, operatorID int64, refID int64) error {
+	c, err := s.repo.FindCustomerByID(customerID)
+	if err != nil {
+		return nil
+	}
+	if c.TotalSpend >= amountPaid {
+		c.TotalSpend -= amountPaid
+	}
+	return s.repo.UpdateCustomer(c)
+}
+
 // GetCustomer returns a customer by ID.
 func (s *Service) GetCustomer(id int64) (*Customer, error) {
 	c, err := s.repo.FindCustomerByID(id)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound { return nil, apperr.NotFound("会员不存在") }
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperr.NotFound("会员不存在")
+		}
 		return nil, apperr.Internal(err)
 	}
 	return c, nil

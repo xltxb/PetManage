@@ -20,7 +20,9 @@ func NewService(repo Repository) *Service {
 func (s *Service) SaleOut(storeID, productID int64, quantity int, operatorID int64, refType string, refID int64) error {
 	inv, err := s.repo.GetInventory(storeID, productID)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound { return apperr.NotFound("库存记录不存在") }
+		if err == gorm.ErrRecordNotFound {
+			return apperr.NotFound("库存记录不存在")
+		}
 		return apperr.Internal(err)
 	}
 
@@ -37,7 +39,9 @@ func (s *Service) SaleOut(storeID, productID int64, quantity int, operatorID int
 	}
 
 	var opID *int64
-	if operatorID > 0 { opID = &operatorID }
+	if operatorID > 0 {
+		opID = &operatorID
+	}
 
 	tx := &StockTransaction{
 		StoreID: storeID, ProductID: productID, Type: TxSaleOut,
@@ -51,7 +55,9 @@ func (s *Service) SaleOut(storeID, productID int64, quantity int, operatorID int
 func (s *Service) PurchaseIn(storeID, productID int64, quantity int, operatorID int64, refType string, refID int64) error {
 	inv, err := s.repo.GetInventory(storeID, productID)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound { return apperr.NotFound("库存记录不存在") }
+		if err == gorm.ErrRecordNotFound {
+			return apperr.NotFound("库存记录不存在")
+		}
 		return apperr.Internal(err)
 	}
 
@@ -64,7 +70,9 @@ func (s *Service) PurchaseIn(storeID, productID int64, quantity int, operatorID 
 	}
 
 	var opID *int64
-	if operatorID > 0 { opID = &operatorID }
+	if operatorID > 0 {
+		opID = &operatorID
+	}
 
 	tx := &StockTransaction{
 		StoreID: storeID, ProductID: productID, Type: TxPurchaseIn,
@@ -72,6 +80,11 @@ func (s *Service) PurchaseIn(storeID, productID int64, quantity int, operatorID 
 		RefType: refType, RefID: refID, OperatorID: opID,
 	}
 	return s.repo.CreateTransaction(tx)
+}
+
+// ReverseSaleOut restores stock for a refunded sale.
+func (s *Service) ReverseSaleOut(storeID, productID int64, quantity int, operatorID int64, refType string, refID int64) error {
+	return s.PurchaseIn(storeID, productID, quantity, operatorID, refType, refID)
 }
 
 // Adjust adjusts inventory quantity (requires reason).
@@ -82,7 +95,9 @@ func (s *Service) Adjust(storeID, productID int64, delta int, operatorID int64, 
 
 	inv, err := s.repo.GetInventory(storeID, productID)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound { return apperr.NotFound("库存记录不存在") }
+		if err == gorm.ErrRecordNotFound {
+			return apperr.NotFound("库存记录不存在")
+		}
 		return apperr.Internal(err)
 	}
 
@@ -99,7 +114,9 @@ func (s *Service) Adjust(storeID, productID int64, delta int, operatorID int64, 
 	}
 
 	var opID *int64
-	if operatorID > 0 { opID = &operatorID }
+	if operatorID > 0 {
+		opID = &operatorID
+	}
 
 	tx := &StockTransaction{
 		StoreID: storeID, ProductID: productID, Type: TxAdjust,
@@ -110,14 +127,20 @@ func (s *Service) Adjust(storeID, productID int64, delta int, operatorID int64, 
 }
 
 func itoa(n int) string {
-	if n == 0 { return "0" }
+	if n == 0 {
+		return "0"
+	}
 	s := ""
 	neg := n < 0
-	if neg { n = -n }
+	if neg {
+		n = -n
+	}
 	for n > 0 {
 		s = string(rune('0'+n%10)) + s
 		n /= 10
 	}
-	if neg { s = "-" + s }
+	if neg {
+		s = "-" + s
+	}
 	return s
 }

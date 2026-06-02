@@ -102,7 +102,12 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 
 	// Settlement
 	setRepo := settlement.NewRepository(db)
-	setSvc := settlement.NewService(setRepo)
+	setSvc := settlement.NewService(
+		setRepo,
+		settlement.WithMemberEffects(memberSvc),
+		settlement.WithInventoryEffects(invSvc),
+		settlement.WithPrintJobs(setRepo),
+	)
 	setHandler := settlement.NewHandler(setSvc)
 	settlement.RegisterRoutes(protected, setHandler, authSvc, idem)
 

@@ -1,6 +1,7 @@
 package settlement
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -13,7 +14,9 @@ type Repository interface {
 	Create(s *Settlement) error
 	Update(s *Settlement) error
 	CreateItems(items []SettlementItem) error
+	FindItems(settlementID int64) ([]SettlementItem, error)
 	CreatePayment(p *Payment) error
+	CreateReceipt(storeID, settlementID, operatorID int64, content map[string]interface{}) error
 	ListByStore(storeID int64, status string, page, pageSize int) ([]Settlement, int64, error)
 }
 
@@ -43,8 +46,30 @@ func (r *repo) CreateItems(items []SettlementItem) error {
 	return r.db.Create(&items).Error
 }
 
+func (r *repo) FindItems(settlementID int64) ([]SettlementItem, error) {
+	var items []SettlementItem
+	err := r.db.Where("settlement_id = ?", settlementID).Find(&items).Error
+	return items, err
+}
+
 func (r *repo) CreatePayment(p *Payment) error {
 	return r.db.Create(p).Error
+}
+
+func (r *repo) CreateReceipt(storeID, settlementID, operatorID int64, content map[string]interface{}) error {
+	data, err := json.Marshal(content)
+	if err != nil {
+		return err
+	}
+	return r.db.Table("print_jobs").Create(map[string]interface{}{
+		"store_id":    storeID,
+		"type":        "receipt",
+		"ref_type":    "settlement",
+		"ref_id":      settlementID,
+		"content":     json.RawMessage(data),
+		"operator_id": operatorID,
+		"created_at":  time.Now().UTC(),
+	}).Error
 }
 
 func (r *repo) ListByStore(storeID int64, status string, page, pageSize int) ([]Settlement, int64, error) {
