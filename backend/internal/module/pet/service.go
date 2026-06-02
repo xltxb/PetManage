@@ -1,6 +1,7 @@
 package pet
 
 import (
+	"sort"
 	"time"
 
 	"gorm.io/gorm"
@@ -84,8 +85,12 @@ func (s *Service) GetDetail(id int64) (*PetDetailResponse, error) {
 
 	health, _ := s.repo.FindHealthRecords(id)
 	weights, _ := s.repo.FindWeightRecords(id)
-	if health == nil { health = []HealthRecord{} }
-	if weights == nil { weights = []WeightRecord{} }
+	if health == nil {
+		health = []HealthRecord{}
+	}
+	if weights == nil {
+		weights = []WeightRecord{}
+	}
 
 	return &PetDetailResponse{
 		Pet:           p,
@@ -110,11 +115,15 @@ func (s *Service) AddHealthRecord(petID int64, req HealthRecordRequest) error {
 
 	if req.PerformedAt != "" {
 		t, err := time.Parse("2006-01-02", req.PerformedAt)
-		if err == nil { hr.PerformedAt = &t }
+		if err == nil {
+			hr.PerformedAt = &t
+		}
 	}
 	if req.NextDueAt != "" {
 		t, err := time.Parse("2006-01-02", req.NextDueAt)
-		if err == nil { hr.NextDueAt = &t }
+		if err == nil {
+			hr.NextDueAt = &t
+		}
 	}
 	if req.OperatorID > 0 {
 		opID := req.OperatorID
@@ -146,4 +155,24 @@ func (s *Service) AddWeightRecord(petID int64, weightG int) error {
 // ListByCustomer returns all pets for a customer.
 func (s *Service) ListByCustomer(customerID int64) ([]Pet, error) {
 	return s.repo.ListByCustomer(customerID)
+}
+
+func (s *Service) GetConsumptionHistory(petID int64) ([]ConsumptionRecord, error) {
+	if _, err := s.repo.FindByID(petID); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperr.NotFound("宠物不存在")
+		}
+		return nil, apperr.Internal(err)
+	}
+	rows, err := s.repo.FindConsumptionRecords(petID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if rows == nil {
+		return []ConsumptionRecord{}, nil
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return rows[i].OccurredAt.After(rows[j].OccurredAt)
+	})
+	return rows, nil
 }

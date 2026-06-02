@@ -44,6 +44,16 @@ func (h *Handler) Get(c *gin.Context) {
 	response.Success(c, detail)
 }
 
+func (h *Handler) Consumption(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	rows, err := h.svc.GetConsumptionHistory(id)
+	if err != nil {
+		response.Error(c, err.(*apperr.AppError))
+		return
+	}
+	response.Success(c, rows)
+}
+
 // AddHealthRecord handles POST /api/v1/pets/:id/health.
 func (h *Handler) AddHealthRecord(c *gin.Context) {
 	petID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -82,6 +92,8 @@ func (h *Handler) ListByCustomer(c *gin.Context) {
 		response.Error(c, apperr.Internal(err))
 		return
 	}
-	if list == nil { list = []Pet{} }
+	if list == nil {
+		list = []Pet{}
+	}
 	response.Success(c, list)
 }

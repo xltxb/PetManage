@@ -8,14 +8,15 @@ import (
 )
 
 type mockRepo struct {
-	pets           map[int64]*Pet
-	healthRecords  map[int64][]HealthRecord
-	weightRecords  map[int64][]WeightRecord
-	nextPetID      int64
-	nextHealthID   int64
-	nextWeightID   int64
-	findErr        error
-	createErr      error
+	pets          map[int64]*Pet
+	healthRecords map[int64][]HealthRecord
+	weightRecords map[int64][]WeightRecord
+	consumption   map[int64][]ConsumptionRecord
+	nextPetID     int64
+	nextHealthID  int64
+	nextWeightID  int64
+	findErr       error
+	createErr     error
 }
 
 func newMockRepo() *mockRepo {
@@ -23,28 +24,55 @@ func newMockRepo() *mockRepo {
 		pets:          make(map[int64]*Pet),
 		healthRecords: make(map[int64][]HealthRecord),
 		weightRecords: make(map[int64][]WeightRecord),
+		consumption:   make(map[int64][]ConsumptionRecord),
 		nextPetID:     1, nextHealthID: 1, nextWeightID: 1,
 	}
 }
 
-func (m *mockRepo) Create(p *Pet) error { p.ID = m.nextPetID; m.nextPetID++; m.pets[p.ID] = p; return m.createErr }
+func (m *mockRepo) Create(p *Pet) error {
+	p.ID = m.nextPetID
+	m.nextPetID++
+	m.pets[p.ID] = p
+	return m.createErr
+}
 func (m *mockRepo) FindByID(id int64) (*Pet, error) {
 	p, ok := m.pets[id]
-	if !ok { return nil, gorm.ErrRecordNotFound }
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
 	return p, m.findErr
 }
 func (m *mockRepo) Update(p *Pet) error { m.pets[p.ID] = p; return nil }
 func (m *mockRepo) ListByCustomer(customerID int64) ([]Pet, error) {
 	var list []Pet
 	for _, p := range m.pets {
-		if p.CustomerID == customerID { list = append(list, *p) }
+		if p.CustomerID == customerID {
+			list = append(list, *p)
+		}
 	}
 	return list, nil
 }
-func (m *mockRepo) CreateHealthRecord(r *HealthRecord) error { r.ID = m.nextHealthID; m.nextHealthID++; m.healthRecords[r.PetID] = append(m.healthRecords[r.PetID], *r); return nil }
-func (m *mockRepo) FindHealthRecords(petID int64) ([]HealthRecord, error) { return m.healthRecords[petID], nil }
-func (m *mockRepo) CreateWeightRecord(r *WeightRecord) error { r.ID = m.nextWeightID; m.nextWeightID++; m.weightRecords[r.PetID] = append(m.weightRecords[r.PetID], *r); return nil }
-func (m *mockRepo) FindWeightRecords(petID int64) ([]WeightRecord, error) { return m.weightRecords[petID], nil }
+func (m *mockRepo) CreateHealthRecord(r *HealthRecord) error {
+	r.ID = m.nextHealthID
+	m.nextHealthID++
+	m.healthRecords[r.PetID] = append(m.healthRecords[r.PetID], *r)
+	return nil
+}
+func (m *mockRepo) FindHealthRecords(petID int64) ([]HealthRecord, error) {
+	return m.healthRecords[petID], nil
+}
+func (m *mockRepo) CreateWeightRecord(r *WeightRecord) error {
+	r.ID = m.nextWeightID
+	m.nextWeightID++
+	m.weightRecords[r.PetID] = append(m.weightRecords[r.PetID], *r)
+	return nil
+}
+func (m *mockRepo) FindWeightRecords(petID int64) ([]WeightRecord, error) {
+	return m.weightRecords[petID], nil
+}
+func (m *mockRepo) FindConsumptionRecords(petID int64) ([]ConsumptionRecord, error) {
+	return m.consumption[petID], nil
+}
 
 func TestCalculateAge(t *testing.T) {
 	birthday := time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC)
@@ -118,5 +146,43 @@ func TestAddWeightRecord(t *testing.T) {
 	}
 	if repo.pets[1].WeightG != 5200 {
 		t.Errorf("WeightG = %d, want 5200 (updated)", repo.pets[1].WeightG)
+	}
+}
+
+func TestGetConsumptionHistory(t *testing.T) {
+	repo := newMockRepo()
+	repo.pets[1] = &Pet{ID: 1, Name: "布丁"}
+	repo.consumption[1] = []ConsumptionRecord{
+		{
+			Type:       "appointment",
+			SourceID:   10,
+			OccurredAt: time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC),
+			Title:      "全套SPA",
+			Amount:     26800,
+			Status:     "completed",
+		},
+		{
+			Type:       "boarding",
+			SourceID:   20,
+			OccurredAt: time.Date(2026, 6, 3, 18, 0, 0, 0, time.UTC),
+			Title:      "寄养服务",
+			Amount:     50400,
+			Status:     "checked_out",
+		},
+	}
+	svc := NewService(repo)
+
+	rows, err := svc.GetConsumptionHistory(1)
+	if err != nil {
+		t.Fatalf("GetConsumptionHistory() error: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[0].Type != "boarding" || rows[0].SourceID != 20 {
+		t.Fatalf("first row = %#v, want latest boarding row", rows[0])
+	}
+	if rows[1].Type != "appointment" || rows[1].SourceID != 10 {
+		t.Fatalf("second row = %#v, want older appointment row", rows[1])
 	}
 }

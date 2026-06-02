@@ -13,6 +13,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, authSvc *auth.Service, idem 
 	{
 		pets.POST("", middleware.RequirePermission(authSvc, "pet:edit"), idem, h.Create)
 		pets.GET("/:id", middleware.RequirePermission(authSvc, "pet:view"), h.Get)
+		pets.GET("/:id/consumption", middleware.RequirePermission(authSvc, "pet:view"), h.Consumption)
 		pets.POST("/:id/health", middleware.RequirePermission(authSvc, "pet:health"), idem, h.AddHealthRecord)
 		pets.POST("/:id/weights", middleware.RequirePermission(authSvc, "pet:health"), idem, h.AddWeightRecord)
 	}

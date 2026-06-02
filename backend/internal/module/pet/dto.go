@@ -36,9 +36,19 @@ type WeightRecordRequest struct {
 
 // PetDetailResponse is the GET /pets/:id response with age and history.
 type PetDetailResponse struct {
-	Pet            *Pet            `json:"pet"`
-	AgeYears       int             `json:"age_years"`
-	AgeMonths      int             `json:"age_months"`
-	HealthRecords  []HealthRecord  `json:"health_records"`
-	WeightRecords  []WeightRecord  `json:"weight_records"`
+	Pet           *Pet           `json:"pet"`
+	AgeYears      int            `json:"age_years"`
+	AgeMonths     int            `json:"age_months"`
+	HealthRecords []HealthRecord `json:"health_records"`
+	WeightRecords []WeightRecord `json:"weight_records"`
+}
+
+// ConsumptionRecord is one pet-related consumption event.
+type ConsumptionRecord struct {
+	Type       string    `json:"type"`
+	SourceID   int64     `json:"source_id"`
+	OccurredAt time.Time `json:"occurred_at"`
+	Title      string    `json:"title"`
+	Amount     int64     `json:"amount"`
+	Status     string    `json:"status"`
 }
