@@ -18,6 +18,7 @@ import (
 	"pawprint/backend/internal/module/pet"
 	"pawprint/backend/internal/module/setting"
 	"pawprint/backend/internal/module/settlement"
+	"pawprint/backend/internal/module/wx"
 )
 
 func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
@@ -68,6 +69,12 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	apptSvc := appointment.NewService(apptRepo, appointment.WithNotifier(notifSvc))
 	apptHandler := appointment.NewHandler(apptSvc)
 	appointment.RegisterRoutes(protected, apptHandler, authSvc, idem)
+
+	// WeChat mini-program routes (customer-facing)
+	wxRepo := wx.NewRepository(db)
+	wxSvc := wx.NewService(wxRepo, apptSvc)
+	wxHandler := wx.NewHandler(wxSvc)
+	wx.RegisterRoutes(v1, wxHandler, idem)
 
 	// Boarding
 	boardingRepo := boarding.NewRepository(db)
