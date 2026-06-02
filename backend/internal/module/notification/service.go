@@ -91,20 +91,28 @@ func (s *Service) ScanVaccineDue(now time.Time, days int) (int, error) {
 		return 0, apperr.Internal(err)
 	}
 	for _, row := range rows {
-		if err := s.Send(SendRequest{
-			StoreID:      row.StoreID,
-			CustomerID:   row.CustomerID,
-			TemplateCode: "vaccine_due",
-			Channel:      ChannelSMS,
-			Payload: map[string]string{
-				"petName": row.PetName,
-				"dueAt":   row.DueAt.Format("2006-01-02"),
-			},
-		}); err != nil {
-			return 0, err
+		for _, channel := range []string{ChannelSMS, ChannelWechatMp} {
+			if err := s.Send(SendRequest{
+				StoreID:      row.StoreID,
+				CustomerID:   row.CustomerID,
+				TemplateCode: "vaccine_due",
+				Channel:      channel,
+				Payload:      vaccineDuePayload(row),
+			}); err != nil {
+				return 0, err
+			}
 		}
 	}
 	return len(rows), nil
+}
+
+func vaccineDuePayload(row VaccineDuePet) map[string]string {
+	dueAt := row.DueAt.Format("2006-01-02")
+	return map[string]string{
+		"petName": row.PetName,
+		"dueAt":   dueAt,
+		"dueDate": dueAt,
+	}
 }
 
 func (s *Service) isChannelEnabled(channel string) bool {

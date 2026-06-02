@@ -111,11 +111,59 @@ func TestScanVaccineDueCreatesSkippedSMSWhenDisabled(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("count = %d, want 1", count)
 	}
-	if len(repo.logs) != 1 {
-		t.Fatalf("logs count = %d, want 1", len(repo.logs))
+	if len(repo.logs) != 2 {
+		t.Fatalf("logs count = %d, want 2", len(repo.logs))
 	}
-	if repo.logs[0].TemplateCode != "vaccine_due" || repo.logs[0].Status != StatusSkipped {
-		t.Fatalf("log = %#v", repo.logs[0])
+	var foundSMS bool
+	for _, log := range repo.logs {
+		if log.TemplateCode == "vaccine_due" && log.Channel == ChannelSMS {
+			foundSMS = true
+			if log.Status != StatusSkipped {
+				t.Fatalf("sms log status = %q, want %q", log.Status, StatusSkipped)
+			}
+		}
+	}
+	if !foundSMS {
+		t.Fatalf("sms vaccine_due log not found in %#v", repo.logs)
+	}
+}
+
+func TestScanVaccineDueSendsWechatWhenEnabled(t *testing.T) {
+	repo := newMockRepo()
+	repo.duePets = []VaccineDuePet{{
+		StoreID:    1,
+		CustomerID: 100,
+		PetID:      200,
+		PetName:    "布丁",
+		DueAt:      time.Now().UTC().Add(7 * 24 * time.Hour),
+	}}
+	repo.templates["vaccine_due:sms"] = &NotificationTemplate{
+		Code: "vaccine_due", Channel: "sms", Content: "【爪迹】{petName}疫苗即将到期：{dueAt}",
+	}
+	repo.templates["vaccine_due:wechat_mp"] = &NotificationTemplate{
+		Code: "vaccine_due", Channel: "wechat_mp", Content: "{petName}疫苗即将到期：{dueAt}",
+	}
+	svc := NewService(repo)
+	svc.SetFeatureFlags(false, true)
+
+	count, err := svc.ScanVaccineDue(time.Now().UTC(), 7)
+	if err != nil {
+		t.Fatalf("ScanVaccineDue error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+	var foundWechat bool
+	for _, log := range repo.logs {
+		if log.TemplateCode == "vaccine_due" && log.Channel == ChannelWechatMp {
+			foundWechat = true
+			if log.Status != StatusSent {
+				t.Fatalf("wechat log status = %q, want %q", log.Status, StatusSent)
+			}
+		}
+	}
+	if !foundWechat {
+		t.Fatalf("wechat_mp vaccine_due log not found in %#v", repo.logs)
 	}
 }
 
