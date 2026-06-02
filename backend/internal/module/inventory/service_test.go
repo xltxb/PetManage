@@ -4,20 +4,22 @@ import (
 	"testing"
 
 	"gorm.io/gorm"
+
+	"pawprint/backend/internal/module/notification"
 )
 
 type mockRepo struct {
-	inventory     map[int64]*InventoryItem
-	transactions  []StockTransaction
-	nextTxID      int64
-	findErr       error
-	updateErr     error
+	inventory    map[int64]*InventoryItem
+	transactions []StockTransaction
+	nextTxID     int64
+	findErr      error
+	updateErr    error
 }
 
 func newMockRepo() *mockRepo {
 	return &mockRepo{
-		inventory:    make(map[int64]*InventoryItem),
-		nextTxID:     1,
+		inventory: make(map[int64]*InventoryItem),
+		nextTxID:  1,
 	}
 }
 
@@ -29,9 +31,30 @@ func (m *mockRepo) GetInventory(storeID, productID int64) (*InventoryItem, error
 	}
 	return inv, m.findErr
 }
-func (m *mockRepo) UpdateInventory(inv *InventoryItem) error { m.inventory[inv.ProductID] = inv; return m.updateErr }
-func (m *mockRepo) CreateTransaction(tx *StockTransaction) error { tx.ID = m.nextTxID; m.nextTxID++; m.transactions = append(m.transactions, *tx); return nil }
+func (m *mockRepo) GetInventoryForUpdate(storeID, productID int64) (*InventoryItem, error) {
+	return m.GetInventory(storeID, productID)
+}
+func (m *mockRepo) UpdateInventory(inv *InventoryItem) error {
+	m.inventory[inv.ProductID] = inv
+	return m.updateErr
+}
+func (m *mockRepo) CreateTransaction(tx *StockTransaction) error {
+	tx.ID = m.nextTxID
+	m.nextTxID++
+	m.transactions = append(m.transactions, *tx)
+	return nil
+}
 func (m *mockRepo) CheckSafetyStock(storeID int64) ([]InventoryAlert, error) { return nil, nil }
+func (m *mockRepo) WithTx(fn func(Repository) error) error                   { return fn(m) }
+
+type fakeNotifier struct {
+	sent []notification.SendRequest
+}
+
+func (f *fakeNotifier) Send(req notification.SendRequest) error {
+	f.sent = append(f.sent, req)
+	return nil
+}
 
 func TestSaleOut(t *testing.T) {
 	repo := newMockRepo()
@@ -80,6 +103,24 @@ func TestSaleOutTriggersSafetyAlert(t *testing.T) {
 	}
 	if !repo.inventory[1].HasAlert {
 		t.Error("expected safety stock alert triggered (6 <= 10)")
+	}
+}
+
+func TestSaleOutCreatesStockLowNotification(t *testing.T) {
+	repo := newMockRepo()
+	repo.inventory[1] = &InventoryItem{ID: 1, StoreID: 1, ProductID: 1, Quantity: 6, SafetyStock: 8}
+	notifier := &fakeNotifier{}
+	svc := NewService(repo, WithNotifier(notifier))
+
+	err := svc.SaleOut(1, 1, 2, 3, "sale", 100)
+	if err != nil {
+		t.Fatalf("SaleOut() error: %v", err)
+	}
+	if len(notifier.sent) != 1 {
+		t.Fatalf("notifications count = %d, want 1", len(notifier.sent))
+	}
+	if notifier.sent[0].TemplateCode != "stock_low" || notifier.sent[0].Channel != notification.ChannelInApp {
+		t.Fatalf("notification = %#v", notifier.sent[0])
 	}
 }
 

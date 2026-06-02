@@ -1,13 +1,18 @@
 package inventory
 
-import "gorm.io/gorm"
+import (
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
 
 // Repository defines the data access interface for inventory.
 type Repository interface {
 	GetInventory(storeID, productID int64) (*InventoryItem, error)
+	GetInventoryForUpdate(storeID, productID int64) (*InventoryItem, error)
 	UpdateInventory(inv *InventoryItem) error
 	CreateTransaction(tx *StockTransaction) error
 	CheckSafetyStock(storeID int64) ([]InventoryAlert, error)
+	WithTx(fn func(Repository) error) error
 }
 
 type repo struct {
@@ -21,6 +26,14 @@ func NewRepository(db *gorm.DB) Repository {
 func (r *repo) GetInventory(storeID, productID int64) (*InventoryItem, error) {
 	var inv InventoryItem
 	err := r.db.Where("store_id = ? AND product_id = ?", storeID, productID).First(&inv).Error
+	return &inv, err
+}
+
+func (r *repo) GetInventoryForUpdate(storeID, productID int64) (*InventoryItem, error) {
+	var inv InventoryItem
+	err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("store_id = ? AND product_id = ?", storeID, productID).
+		First(&inv).Error
 	return &inv, err
 }
 
@@ -40,4 +53,10 @@ func (r *repo) CheckSafetyStock(storeID int64) ([]InventoryAlert, error) {
 		Where("i.store_id = ? AND i.quantity <= i.safety_stock AND i.safety_stock > 0", storeID).
 		Scan(&alerts).Error
 	return alerts, err
+}
+
+func (r *repo) WithTx(fn func(Repository) error) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		return fn(&repo{db: tx})
+	})
 }

@@ -96,7 +96,7 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 
 	// Inventory
 	invRepo := inventory.NewRepository(db)
-	invSvc := inventory.NewService(invRepo)
+	invSvc := inventory.NewService(invRepo, inventory.WithNotifier(notifSvc))
 	invHandler := inventory.NewHandler(invSvc)
 	inventory.RegisterRoutes(protected, invHandler, authSvc, idem)
 
