@@ -58,6 +58,12 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	notifHandler := notification.NewHandler(notifSvc)
 	notification.RegisterRoutes(protected, notifHandler, authSvc, idem)
 
+	// Settings
+	settingRepo := setting.NewRepository(db)
+	settingSvc := setting.NewService(settingRepo)
+	settingHandler := setting.NewHandler(settingSvc)
+	setting.RegisterRoutes(protected, settingHandler, authSvc, idem)
+
 	// Dashboard
 	dashRepo := dashboard.NewRepository(db)
 	dashSvc := dashboard.NewService(dashRepo, cfg.Timezone)
@@ -66,13 +72,13 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 
 	// Appointment
 	apptRepo := appointment.NewRepository(db)
-	apptSvc := appointment.NewService(apptRepo, appointment.WithNotifier(notifSvc))
+	apptSvc := appointment.NewService(apptRepo, appointment.WithNotifier(notifSvc), appointment.WithSettings(settingSvc))
 	apptHandler := appointment.NewHandler(apptSvc)
 	appointment.RegisterRoutes(protected, apptHandler, authSvc, idem)
 
 	// WeChat mini-program routes (customer-facing)
 	wxRepo := wx.NewRepository(db)
-	wxSvc := wx.NewService(wxRepo, apptSvc)
+	wxSvc := wx.NewService(wxRepo, apptSvc, wx.WithSettings(settingSvc))
 	wxHandler := wx.NewHandler(wxSvc)
 	wx.RegisterRoutes(v1, wxHandler, idem)
 
@@ -84,13 +90,13 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 
 	// Member
 	memberRepo := member.NewRepository(db)
-	memberSvc := member.NewService(memberRepo)
+	memberSvc := member.NewService(memberRepo, member.WithSettings(settingSvc))
 	memberHandler := member.NewHandler(memberSvc)
 	member.RegisterRoutes(protected, memberHandler, authSvc, idem)
 
 	// Inventory
 	invRepo := inventory.NewRepository(db)
-	invSvc := inventory.NewService(invRepo, inventory.WithNotifier(notifSvc))
+	invSvc := inventory.NewService(invRepo, inventory.WithNotifier(notifSvc), inventory.WithSettings(settingSvc))
 	invHandler := inventory.NewHandler(invSvc)
 	inventory.RegisterRoutes(protected, invHandler, authSvc, idem)
 
@@ -116,12 +122,6 @@ func Setup(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	analyticsSvc := analytics.NewService(analyticsRepo)
 	analyticsHandler := analytics.NewHandler(analyticsSvc)
 	analytics.RegisterRoutes(protected, analyticsHandler, authSvc)
-
-	// Settings
-	settingRepo := setting.NewRepository(db)
-	settingSvc := setting.NewService(settingRepo)
-	settingHandler := setting.NewHandler(settingSvc)
-	setting.RegisterRoutes(protected, settingHandler, authSvc, idem)
 
 	return r
 }

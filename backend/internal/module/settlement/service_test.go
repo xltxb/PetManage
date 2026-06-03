@@ -59,9 +59,10 @@ func (m *mockRepo) ListByStore(storeID int64, status string, page, pageSize int)
 }
 
 type fakeMemberEffects struct {
-	walletAmount int64
-	pointsAmount int64
-	spendAmount  int64
+	walletAmount  int64
+	pointsAmount  int64
+	spendAmount   int64
+	reverseAmount int64
 }
 
 func (f *fakeMemberEffects) WalletConsume(customerID, amount, storeID, operatorID int64, remark string) error {
@@ -80,12 +81,15 @@ func (f *fakeMemberEffects) ApplyPaidSpend(customerID, amountPaid, storeID, oper
 }
 
 func (f *fakeMemberEffects) ReverseSettlement(customerID, amountPaid, storeID, operatorID int64, refID int64) error {
+	f.reverseAmount = amountPaid
 	return nil
 }
 
 type fakeInventoryEffects struct {
-	productID int64
-	quantity  int
+	productID         int64
+	quantity          int
+	reversedProductID int64
+	reversedQuantity  int
 }
 
 func (f *fakeInventoryEffects) SaleOut(storeID, productID int64, quantity int, operatorID int64, refType string, refID int64) error {
@@ -95,6 +99,8 @@ func (f *fakeInventoryEffects) SaleOut(storeID, productID int64, quantity int, o
 }
 
 func (f *fakeInventoryEffects) ReverseSaleOut(storeID, productID int64, quantity int, operatorID int64, refType string, refID int64) error {
+	f.reversedProductID = productID
+	f.reversedQuantity = quantity
 	return nil
 }
 
@@ -135,6 +141,28 @@ func TestCreateSettlement(t *testing.T) {
 	}
 	if s.TotalAmount != 26800 {
 		t.Errorf("TotalAmount = %d, want 26800", s.TotalAmount)
+	}
+}
+
+func TestGenerateCodeDoesNotCollideInBurst(t *testing.T) {
+	seen := make(map[string]bool, 2000)
+	for i := 0; i < 2000; i++ {
+		code := GenerateCode()
+		if seen[code] {
+			t.Fatalf("duplicate settlement code generated: %s", code)
+		}
+		seen[code] = true
+	}
+}
+
+func TestPrintJobOperatorIDValueOmitsZero(t *testing.T) {
+	if got := printJobOperatorIDValue(0); got != nil {
+		t.Fatalf("operator id value for 0 = %#v, want nil", got)
+	}
+	value := printJobOperatorIDValue(9)
+	ptr, ok := value.(*int64)
+	if !ok || ptr == nil || *ptr != 9 {
+		t.Fatalf("operator id value for 9 = %#v, want *int64(9)", value)
 	}
 }
 
@@ -220,6 +248,39 @@ func TestRefundSettlement(t *testing.T) {
 	}
 	if redInk.PaidAmount != -26800 {
 		t.Errorf("red-ink PaidAmount = %d, want -26800", redInk.PaidAmount)
+	}
+}
+
+func TestRefundSettlementReversesMemberAndProductEffects(t *testing.T) {
+	customerID := int64(100)
+	repo := newMockRepo()
+	repo.settlements[1] = &Settlement{
+		ID: 1, StoreID: 1, CustomerID: &customerID,
+		Status: StatusPaid, TotalAmount: 26800, PaidAmount: 26800,
+	}
+	repo.items[1] = []SettlementItem{{
+		SettlementID: 1,
+		SourceType:   "product",
+		SourceID:     10,
+		Name:         "犬粮",
+		UnitPrice:    26800,
+		Quantity:     2,
+		Amount:       53600,
+	}}
+	memberSvc := &fakeMemberEffects{}
+	inventorySvc := &fakeInventoryEffects{}
+	svc := NewService(repo, WithMemberEffects(memberSvc), WithInventoryEffects(inventorySvc))
+
+	err := svc.Refund(1, 9, "顾客要求退款")
+	if err != nil {
+		t.Fatalf("Refund error = %v", err)
+	}
+	if memberSvc.reverseAmount != 26800 {
+		t.Fatalf("member reverse amount = %d, want 26800", memberSvc.reverseAmount)
+	}
+	if inventorySvc.reversedProductID != 10 || inventorySvc.reversedQuantity != 2 {
+		t.Fatalf("inventory reverse = product %d quantity %d, want product 10 quantity 2",
+			inventorySvc.reversedProductID, inventorySvc.reversedQuantity)
 	}
 }
 

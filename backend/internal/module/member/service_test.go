@@ -31,15 +31,32 @@ func newMockRepo() *mockRepo {
 
 func (m *mockRepo) FindCustomerByID(id int64) (*Customer, error) {
 	c, ok := m.customers[id]
-	if !ok { return nil, gorm.ErrRecordNotFound }
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
 	return c, m.findErr
 }
 func (m *mockRepo) UpdateCustomer(c *Customer) error { m.customers[c.ID] = c; return nil }
-func (m *mockRepo) CreateWalletTx(tx *WalletTransaction) error { m.txLogs = append(m.txLogs, *tx); return nil }
-func (m *mockRepo) CreatePointsTx(tx *PointsTransaction) error { m.ptsLogs = append(m.ptsLogs, *tx); return nil }
+func (m *mockRepo) CreateWalletTx(tx *WalletTransaction) error {
+	m.txLogs = append(m.txLogs, *tx)
+	return nil
+}
+func (m *mockRepo) CreatePointsTx(tx *PointsTransaction) error {
+	m.ptsLogs = append(m.ptsLogs, *tx)
+	return nil
+}
 func (m *mockRepo) GetTiers() ([]MembershipTier, error) { return m.tiers, nil }
 func (m *mockRepo) ListCustomers(storeID int64, keyword string, page, pageSize int) ([]Customer, int64, error) {
 	return nil, 0, nil
+}
+
+type fakeSettingsProvider struct {
+	settings map[string]interface{}
+	err      error
+}
+
+func (f fakeSettingsProvider) GetAll(storeID int64) (map[string]interface{}, error) {
+	return f.settings, f.err
 }
 
 // --- Wallet Tests ---
@@ -118,6 +135,82 @@ func TestEarnPoints(t *testing.T) {
 	}
 	if repo.customers[1].PointsBalance != 300 {
 		t.Errorf("PointsBalance = %d, want 300", repo.customers[1].PointsBalance)
+	}
+}
+
+func TestEarnPointsUsesConfiguredPointsRule(t *testing.T) {
+	repo := newMockRepo()
+	repo.customers[1] = &Customer{ID: 1, PointsBalance: 0, TierID: 3, TotalSpend: 800000}
+	svc := NewService(repo, WithSettings(fakeSettingsProvider{
+		settings: map[string]interface{}{
+			"points.rule": map[string]interface{}{
+				"per_yuan":      float64(2),
+				"by_tier_rate":  false,
+				"recharge_earn": false,
+			},
+		},
+	}))
+
+	pts, err := svc.EarnPoints(1, 20000, 1, 3, "settlement", 100)
+	if err != nil {
+		t.Fatalf("EarnPoints() error: %v", err)
+	}
+	if pts != 400 {
+		t.Fatalf("points earned = %d, want 400", pts)
+	}
+	if repo.customers[1].PointsBalance != 400 {
+		t.Fatalf("PointsBalance = %d, want 400", repo.customers[1].PointsBalance)
+	}
+}
+
+func TestReverseSettlementDeductsEarnedPoints(t *testing.T) {
+	repo := newMockRepo()
+	repo.customers[1] = &Customer{ID: 1, PointsBalance: 300, TierID: 3, TotalSpend: 820000}
+	svc := NewService(repo)
+
+	err := svc.ReverseSettlement(1, 20000, 1, 9, 100)
+	if err != nil {
+		t.Fatalf("ReverseSettlement() error: %v", err)
+	}
+	if repo.customers[1].TotalSpend != 800000 {
+		t.Fatalf("TotalSpend = %d, want 800000", repo.customers[1].TotalSpend)
+	}
+	if repo.customers[1].PointsBalance != 0 {
+		t.Fatalf("PointsBalance = %d, want 0", repo.customers[1].PointsBalance)
+	}
+	if len(repo.ptsLogs) != 1 {
+		t.Fatalf("points tx count = %d, want 1", len(repo.ptsLogs))
+	}
+	if repo.ptsLogs[0].Type != TxAdjust || repo.ptsLogs[0].Amount != -300 || repo.ptsLogs[0].BalanceAfter != 0 {
+		t.Fatalf("points refund tx = %#v, want adjust -300 balance 0", repo.ptsLogs[0])
+	}
+}
+
+func TestReverseSettlementUsesConfiguredPointsRule(t *testing.T) {
+	repo := newMockRepo()
+	repo.customers[1] = &Customer{ID: 1, PointsBalance: 400, TierID: 3, TotalSpend: 820000}
+	svc := NewService(repo, WithSettings(fakeSettingsProvider{
+		settings: map[string]interface{}{
+			"points.rule": map[string]interface{}{
+				"per_yuan":      float64(2),
+				"by_tier_rate":  false,
+				"recharge_earn": false,
+			},
+		},
+	}))
+
+	err := svc.ReverseSettlement(1, 20000, 1, 9, 100)
+	if err != nil {
+		t.Fatalf("ReverseSettlement() error: %v", err)
+	}
+	if repo.customers[1].PointsBalance != 0 {
+		t.Fatalf("PointsBalance = %d, want 0", repo.customers[1].PointsBalance)
+	}
+	if len(repo.ptsLogs) != 1 {
+		t.Fatalf("points tx count = %d, want 1", len(repo.ptsLogs))
+	}
+	if repo.ptsLogs[0].Amount != -400 {
+		t.Fatalf("points refund amount = %d, want -400", repo.ptsLogs[0].Amount)
 	}
 }
 

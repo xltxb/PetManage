@@ -11,11 +11,28 @@ import (
 
 // Service handles member business logic.
 type Service struct {
-	repo Repository
+	repo     Repository
+	settings SettingsProvider
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+type SettingsProvider interface {
+	GetAll(storeID int64) (map[string]interface{}, error)
+}
+
+type Option func(*Service)
+
+func WithSettings(p SettingsProvider) Option {
+	return func(s *Service) {
+		s.settings = p
+	}
+}
+
+func NewService(repo Repository, opts ...Option) *Service {
+	s := &Service{repo: repo}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Recharge adds stored value to a customer's wallet.
@@ -141,8 +158,10 @@ func (s *Service) EarnPoints(customerID, amountPaid, storeID, operatorID int64, 
 		tier = &tiers[0] // default to first tier
 	}
 
-	yuan := float64(amountPaid) / 100.0
-	pts := int64(math.Floor(yuan * tier.PointsRate))
+	pts, err := s.pointsForAmount(storeID, amountPaid, tier)
+	if err != nil {
+		return 0, err
+	}
 
 	if pts <= 0 {
 		return 0, nil
@@ -167,6 +186,55 @@ func (s *Service) EarnPoints(customerID, amountPaid, storeID, operatorID int64, 
 	}
 
 	return pts, nil
+}
+
+func (s *Service) pointsForAmount(storeID int64, amountPaid int64, tier *MembershipTier) (int64, error) {
+	rule := pointsRule{perYuan: 1, byTierRate: true}
+	if s.settings != nil {
+		settings, err := s.settings.GetAll(storeID)
+		if err != nil {
+			return 0, apperr.Internal(err)
+		}
+		rule = parsePointsRule(settings["points.rule"], rule)
+	}
+
+	rate := rule.perYuan
+	if rule.byTierRate && tier != nil {
+		rate *= tier.PointsRate
+	}
+	return int64(math.Floor(float64(amountPaid) / 100.0 * rate)), nil
+}
+
+type pointsRule struct {
+	perYuan    float64
+	byTierRate bool
+}
+
+func parsePointsRule(value interface{}, fallback pointsRule) pointsRule {
+	obj, ok := value.(map[string]interface{})
+	if !ok {
+		return fallback
+	}
+	if perYuan, ok := numericSetting(obj["per_yuan"]); ok {
+		fallback.perYuan = perYuan
+	}
+	if byTierRate, ok := obj["by_tier_rate"].(bool); ok {
+		fallback.byTierRate = byTierRate
+	}
+	return fallback
+}
+
+func numericSetting(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case float64:
+		return v, true
+	default:
+		return 0, false
+	}
 }
 
 // CheckTierUpgrade checks if total_spend qualifies for a higher tier.
@@ -228,7 +296,54 @@ func (s *Service) ReverseSettlement(customerID, amountPaid, storeID, operatorID 
 	if c.TotalSpend >= amountPaid {
 		c.TotalSpend -= amountPaid
 	}
-	return s.repo.UpdateCustomer(c)
+
+	tiers, err := s.repo.GetTiers()
+	if err != nil {
+		return apperr.Internal(err)
+	}
+
+	var tier *MembershipTier
+	for i := range tiers {
+		if tiers[i].ID == c.TierID {
+			tier = &tiers[i]
+			break
+		}
+	}
+
+	pointsToReverse, err := s.pointsForAmount(storeID, amountPaid, tier)
+	if err != nil {
+		return err
+	}
+	if pointsToReverse > c.PointsBalance {
+		pointsToReverse = c.PointsBalance
+	}
+	if pointsToReverse > 0 {
+		c.PointsBalance -= pointsToReverse
+	}
+
+	if err := s.repo.UpdateCustomer(c); err != nil {
+		return apperr.Internal(err)
+	}
+
+	if pointsToReverse <= 0 {
+		return nil
+	}
+
+	var opID *int64
+	if operatorID > 0 {
+		opID = &operatorID
+	}
+
+	ptx := &PointsTransaction{
+		CustomerID: customerID, StoreID: storeID, Type: TxAdjust,
+		Amount: -pointsToReverse, BalanceAfter: c.PointsBalance,
+		RefType: "settlement", RefID: refID, OperatorID: opID,
+		Remark: "退款扣回积分",
+	}
+	if err := s.repo.CreatePointsTx(ptx); err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
 }
 
 // GetCustomer returns a customer by ID.

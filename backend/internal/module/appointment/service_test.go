@@ -95,6 +95,15 @@ func (f *fakeNotifier) Send(req notification.SendRequest) error {
 	return nil
 }
 
+type fakeSettingsProvider struct {
+	settings map[string]interface{}
+	err      error
+}
+
+func (f fakeSettingsProvider) GetAll(storeID int64) (map[string]interface{}, error) {
+	return f.settings, f.err
+}
+
 // --- State Machine Tests ---
 
 func TestStateMachineValidTransitions(t *testing.T) {
@@ -313,5 +322,29 @@ func TestCalculateTotalAmount(t *testing.T) {
 	}
 	if duration != 135 {
 		t.Errorf("duration = %d, want 135", duration)
+	}
+}
+
+func TestGetAvailableSlotsUsesConfiguredBusinessHours(t *testing.T) {
+	repo := newMockRepo()
+	svc := NewService(repo, WithSettings(fakeSettingsProvider{
+		settings: map[string]interface{}{
+			"store.business_hours": map[string]interface{}{"open": "10:00", "close": "12:00"},
+		},
+	}))
+
+	slots, err := svc.GetAvailableSlots(1, 1, time.Date(2026, 6, 3, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("GetAvailableSlots error = %v", err)
+	}
+
+	want := []string{"10:00-10:30", "10:30-11:00", "11:00-11:30", "11:30-12:00"}
+	if len(slots) != len(want) {
+		t.Fatalf("slots = %#v, want %#v", slots, want)
+	}
+	for i := range want {
+		if slots[i] != want[i] {
+			t.Fatalf("slots = %#v, want %#v", slots, want)
+		}
 	}
 }

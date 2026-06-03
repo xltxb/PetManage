@@ -27,7 +27,27 @@ func (r *repo) FindCustomerByID(id int64) (*Customer, error) {
 }
 
 func (r *repo) UpdateCustomer(c *Customer) error {
-	return r.db.Save(c).Error
+	return r.db.Model(&Customer{}).Where("id = ?", c.ID).Updates(customerUpdateFields(c)).Error
+}
+
+func customerUpdateFields(c *Customer) map[string]interface{} {
+	fields := map[string]interface{}{
+		"name":              c.Name,
+		"phone":             c.Phone,
+		"gender":            c.Gender,
+		"tier_id":           c.TierID,
+		"wallet_balance":    c.WalletBalance,
+		"points_balance":    c.PointsBalance,
+		"total_spend":       c.TotalSpend,
+		"source":            c.Source,
+		"register_store_id": c.RegisterStoreID,
+		"last_visit_at":     c.LastVisitAt,
+		"note":              c.Note,
+	}
+	if c.WechatOpenID != "" {
+		fields["wechat_openid"] = c.WechatOpenID
+	}
+	return fields
 }
 
 func (r *repo) CreateWalletTx(tx *WalletTransaction) error {

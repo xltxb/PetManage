@@ -56,6 +56,15 @@ func (f *fakeNotifier) Send(req notification.SendRequest) error {
 	return nil
 }
 
+type fakeSettingsProvider struct {
+	settings map[string]interface{}
+	err      error
+}
+
+func (f fakeSettingsProvider) GetAll(storeID int64) (map[string]interface{}, error) {
+	return f.settings, f.err
+}
+
 func TestSaleOut(t *testing.T) {
 	repo := newMockRepo()
 	repo.inventory[1] = &InventoryItem{StoreID: 1, ProductID: 1, Quantity: 6, SafetyStock: 8}
@@ -89,6 +98,28 @@ func TestSaleOutInsufficientStock(t *testing.T) {
 	}
 	if repo.inventory[1].Quantity != 4 {
 		t.Errorf("Quantity should not change on error, got %d", repo.inventory[1].Quantity)
+	}
+}
+
+func TestSaleOutAllowsNegativeStockWhenConfigured(t *testing.T) {
+	repo := newMockRepo()
+	repo.inventory[1] = &InventoryItem{StoreID: 1, ProductID: 1, Quantity: 4, SafetyStock: 8}
+	svc := NewService(repo, WithSettings(fakeSettingsProvider{
+		settings: map[string]interface{}{"inventory.allow_negative": true},
+	}))
+
+	err := svc.SaleOut(1, 1, 10, 3, "sale", 100)
+	if err != nil {
+		t.Fatalf("SaleOut() error: %v", err)
+	}
+	if repo.inventory[1].Quantity != -6 {
+		t.Fatalf("Quantity = %d, want -6", repo.inventory[1].Quantity)
+	}
+	if len(repo.transactions) != 1 {
+		t.Fatalf("transactions count = %d, want 1", len(repo.transactions))
+	}
+	if repo.transactions[0].BalanceAfter != -6 {
+		t.Fatalf("BalanceAfter = %d, want -6", repo.transactions[0].BalanceAfter)
 	}
 }
 

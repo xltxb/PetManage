@@ -20,7 +20,7 @@ func NewRepository(db *gorm.DB) Repository {
 func (r *repo) GetAll(storeID int64) ([]SystemSetting, error) {
 	var settings []SystemSetting
 	err := r.db.Where("store_id = ? OR store_id IS NULL", storeID).
-		Order("key ASC").Find(&settings).Error
+		Order("key ASC, CASE WHEN store_id IS NULL THEN 0 ELSE 1 END ASC").Find(&settings).Error
 	return settings, err
 }
 
@@ -35,12 +35,16 @@ func (r *repo) Get(storeID int64, key string) (*SystemSetting, error) {
 }
 
 func (r *repo) Upsert(s *SystemSetting) error {
-	return r.db.Where("key = ? AND (store_id = ? OR (store_id IS NULL AND ? IS NULL))",
-		s.Key, s.StoreID, s.StoreID).
-		Assign(map[string]interface{}{
-			"value":      s.Value,
-			"updated_by": s.UpdatedBy,
-			"updated_at": gorm.Expr("now()"),
-		}).
-		FirstOrCreate(s).Error
+	query := r.db.Where("key = ?", s.Key)
+	if s.StoreID == nil {
+		query = query.Where("store_id IS NULL")
+	} else {
+		query = query.Where("store_id = ?", *s.StoreID)
+	}
+
+	return query.Assign(map[string]interface{}{
+		"value":      s.Value,
+		"updated_by": s.UpdatedBy,
+		"updated_at": gorm.Expr("now()"),
+	}).FirstOrCreate(s).Error
 }

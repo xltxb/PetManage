@@ -1,103 +1,260 @@
 <template>
   <div class="space-y-4">
     <div class="flex items-center justify-between">
-      <h3 class="text-lg font-semibold" style="color: var(--color-ink)">系统设置</h3>
-      <button class="soft-btn" :disabled="loading" @click="load">刷新</button>
+      <div>
+        <h3 class="text-lg font-semibold" style="color: var(--color-ink)">系统设置</h3>
+        <p class="muted mt-1">按门店保存运营参数，无需编辑 JSON。</p>
+      </div>
+      <button class="soft-btn" :disabled="loading" @click="() => load()">刷新</button>
     </div>
 
     <p v-if="error" class="text-sm" style="color: var(--color-berry)">{{ error }}</p>
+    <p v-if="success" class="text-sm" style="color: var(--color-pine)">{{ success }}</p>
 
-    <div class="grid grid-cols-[1fr_1.1fr] gap-4">
-      <section class="kpi-card">
-        <h4 class="text-sm font-semibold mb-3">配置项</h4>
-        <div v-if="loading" class="muted">加载中...</div>
-        <button v-for="item in visibleSettings" :key="item.key" class="setting-row" @click="select(item.key)">
+    <div class="settings-grid">
+      <section class="kpi-card setting-section">
+        <h4>功能开关</h4>
+        <label class="toggle-row">
           <span>
-            <strong>{{ label(item.key) }}</strong>
-            <small>{{ item.key }}</small>
+            <strong>短信通知</strong>
+            <small>控制 sms 渠道是否实际发送。</small>
           </span>
-          <code>{{ valueSummary(item.value) }}</code>
-        </button>
+          <input v-model="form.smsEnabled" type="checkbox" />
+        </label>
+        <label class="toggle-row">
+          <span>
+            <strong>微信公众号通知</strong>
+            <small>开启后 mock WeChat MP 通知记为 sent。</small>
+          </span>
+          <input v-model="form.wechatEnabled" type="checkbox" />
+        </label>
+        <label class="toggle-row">
+          <span>
+            <strong>线上预约</strong>
+            <small>允许顾客端提交自助预约。</small>
+          </span>
+          <input v-model="form.onlineBookingEnabled" type="checkbox" />
+        </label>
       </section>
 
-      <section class="kpi-card space-y-3">
-        <div class="flex items-center justify-between">
-          <h4 class="font-semibold">编辑配置</h4>
-          <select v-model="selectedKey" class="field key-select" @change="select(selectedKey)">
-            <option v-for="key in keyOptions" :key="key" :value="key">{{ label(key) }}</option>
-          </select>
+      <section class="kpi-card setting-section">
+        <h4>营业与预约</h4>
+        <div class="field-grid two">
+          <label class="label">开门时间<input v-model="form.businessOpen" type="time" class="field" /></label>
+          <label class="label">打烊时间<input v-model="form.businessClose" type="time" class="field" /></label>
         </div>
-        <label class="label">配置键<input v-model.trim="selectedKey" class="field" /></label>
-        <label class="label">配置值 JSON<textarea v-model="editor" class="field editor" spellcheck="false" /></label>
-        <div class="quick-grid">
-          <button class="soft-btn" @click="setBoolean(true)">true</button>
-          <button class="soft-btn" @click="setBoolean(false)">false</button>
-          <button class="soft-btn" @click="formatEditor">格式化</button>
+        <div class="field-grid three">
+          <label class="label">取消截止小时<input v-model.number="form.cancelDeadlineHours" type="number" min="0" max="720" step="1" class="field" /></label>
+          <label class="label">到店提醒提前小时<input v-model.number="form.visitReminderHours" type="number" min="0" max="720" step="1" class="field" /></label>
+          <label class="label">疫苗提醒天数<input v-model.number="form.vaccineRemindDays" type="number" min="1" max="3650" step="1" class="field" /></label>
         </div>
-        <button class="primary-btn" :disabled="saving || !selectedKey" @click="save">保存设置</button>
       </section>
+
+      <section class="kpi-card setting-section">
+        <h4>寄养退房规则</h4>
+        <div class="field-grid two">
+          <label class="label">计费取整
+            <select v-model="form.checkoutRound" class="field">
+              <option value="ceil">向上取整</option>
+              <option value="floor">向下取整</option>
+              <option value="round">四舍五入</option>
+            </select>
+          </label>
+          <label class="label">最少计费晚数<input v-model.number="form.minNights" type="number" min="1" max="365" step="1" class="field" /></label>
+        </div>
+        <label class="toggle-row compact">
+          <span>
+            <strong>寄养参与会员折扣</strong>
+            <small>默认关闭，寄养按原价计费。</small>
+          </span>
+          <input v-model="form.applyMemberDiscount" type="checkbox" />
+        </label>
+      </section>
+
+      <section class="kpi-card setting-section">
+        <h4>库存、会员与积分</h4>
+        <label class="toggle-row">
+          <span>
+            <strong>允许负库存</strong>
+            <small>关闭时库存不足会阻止出库。</small>
+          </span>
+          <input v-model="form.allowNegativeInventory" type="checkbox" />
+        </label>
+        <label class="toggle-row">
+          <span>
+            <strong>允许会员降级</strong>
+            <small>关闭时会员等级只升不降。</small>
+          </span>
+          <input v-model="form.allowMemberDowngrade" type="checkbox" />
+        </label>
+        <div class="field-grid three">
+          <label class="label">沉默会员天数<input v-model.number="form.churnDays" type="number" min="1" max="3650" step="1" class="field" /></label>
+          <label class="label">每元积分<input v-model.number="form.pointsPerYuan" type="number" min="0" max="100" step="0.1" class="field" /></label>
+          <label class="label">按等级倍率
+            <select v-model="form.pointsByTierRate" class="field">
+              <option :value="true">开启</option>
+              <option :value="false">关闭</option>
+            </select>
+          </label>
+        </div>
+        <label class="toggle-row compact">
+          <span>
+            <strong>充值赠送积分</strong>
+            <small>默认关闭，充值不计积分。</small>
+          </span>
+          <input v-model="form.rechargeEarnPoints" type="checkbox" />
+        </label>
+      </section>
+    </div>
+
+    <div class="save-bar">
+      <button class="primary-btn" :disabled="loading || saving" @click="saveAllSettings">
+        {{ saving ? '保存中...' : '保存全部设置' }}
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import client from '../../api/client'
 
-type SettingValue = boolean | number | string | Record<string, unknown> | unknown[]
+type SettingsResponse = Record<string, unknown>
 
-const commonKeys = [
-  'feature.sms_enabled',
-  'feature.wechat_enabled',
-  'feature.online_booking_enabled',
-  'store.business_hours',
-  'boarding.checkout_rule',
-  'appointment.cancel_deadline_hours',
-  'appointment.visit_reminder_hours',
-  'pet.vaccine_remind_days',
-  'inventory.allow_negative',
-  'member.allow_downgrade',
-  'member.churn_days',
-  'points.rule',
-]
+interface SettingForm {
+  smsEnabled: boolean
+  wechatEnabled: boolean
+  onlineBookingEnabled: boolean
+  businessOpen: string
+  businessClose: string
+  checkoutRound: 'ceil' | 'floor' | 'round'
+  minNights: number
+  applyMemberDiscount: boolean
+  cancelDeadlineHours: number
+  visitReminderHours: number
+  vaccineRemindDays: number
+  allowNegativeInventory: boolean
+  allowMemberDowngrade: boolean
+  churnDays: number
+  pointsPerYuan: number
+  pointsByTierRate: boolean
+  rechargeEarnPoints: boolean
+}
 
-const settings = ref<Record<string, SettingValue>>({})
-const selectedKey = ref(commonKeys[0])
-const editor = ref('false')
+const form = reactive<SettingForm>({
+  smsEnabled: false,
+  wechatEnabled: false,
+  onlineBookingEnabled: true,
+  businessOpen: '09:00',
+  businessClose: '21:00',
+  checkoutRound: 'ceil',
+  minNights: 1,
+  applyMemberDiscount: false,
+  cancelDeadlineHours: 2,
+  visitReminderHours: 24,
+  vaccineRemindDays: 7,
+  allowNegativeInventory: false,
+  allowMemberDowngrade: false,
+  churnDays: 30,
+  pointsPerYuan: 1,
+  pointsByTierRate: true,
+  rechargeEarnPoints: false,
+})
+
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
+const success = ref('')
 
-const keyOptions = computed(() => Array.from(new Set([...commonKeys, ...Object.keys(settings.value)])).sort())
-const visibleSettings = computed(() => keyOptions.value.map((key) => ({ key, value: settings.value[key] })))
+function boolValue(value: unknown, fallback: boolean) {
+  return typeof value === 'boolean' ? value : fallback
+}
 
-function label(key: string) {
-  const map: Record<string, string> = {
-    'feature.sms_enabled': '短信开关',
-    'feature.wechat_enabled': '微信开关',
-    'feature.online_booking_enabled': '线上预约',
-    'store.business_hours': '营业时间',
-    'boarding.checkout_rule': '寄养退房规则',
-    'appointment.cancel_deadline_hours': '预约取消时限',
-    'appointment.visit_reminder_hours': '到店提醒提前量',
-    'pet.vaccine_remind_days': '疫苗提醒天数',
-    'inventory.allow_negative': '库存允许负数',
-    'member.allow_downgrade': '会员允许降级',
-    'member.churn_days': '沉默会员天数',
-    'points.rule': '积分规则',
+function numberValue(value: unknown, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function objectValue(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function applySettings(settings: SettingsResponse) {
+  form.smsEnabled = boolValue(settings['feature.sms_enabled'], false)
+  form.wechatEnabled = boolValue(settings['feature.wechat_enabled'], false)
+  form.onlineBookingEnabled = boolValue(settings['feature.online_booking_enabled'], true)
+
+  const hours = objectValue(settings['store.business_hours'])
+  form.businessOpen = typeof hours.open === 'string' ? hours.open : '09:00'
+  form.businessClose = typeof hours.close === 'string' ? hours.close : '21:00'
+
+  const checkout = objectValue(settings['boarding.checkout_rule'])
+  form.checkoutRound = checkout.round === 'floor' || checkout.round === 'round' ? checkout.round : 'ceil'
+  form.minNights = numberValue(checkout.min_nights, 1)
+  form.applyMemberDiscount = boolValue(checkout.apply_member_discount, false)
+
+  form.cancelDeadlineHours = numberValue(settings['appointment.cancel_deadline_hours'], 2)
+  form.visitReminderHours = numberValue(settings['appointment.visit_reminder_hours'], 24)
+  form.vaccineRemindDays = numberValue(settings['pet.vaccine_remind_days'], 7)
+  form.allowNegativeInventory = boolValue(settings['inventory.allow_negative'], false)
+  form.allowMemberDowngrade = boolValue(settings['member.allow_downgrade'], false)
+  form.churnDays = numberValue(settings['member.churn_days'], 30)
+
+  const points = objectValue(settings['points.rule'])
+  form.pointsPerYuan = numberValue(points.per_yuan, 1)
+  form.pointsByTierRate = boolValue(points.by_tier_rate, true)
+  form.rechargeEarnPoints = boolValue(points.recharge_earn, false)
+}
+
+function settingsPayload() {
+  return {
+    'feature.sms_enabled': form.smsEnabled,
+    'feature.wechat_enabled': form.wechatEnabled,
+    'feature.online_booking_enabled': form.onlineBookingEnabled,
+    'store.business_hours': { open: form.businessOpen, close: form.businessClose },
+    'boarding.checkout_rule': {
+      round: form.checkoutRound,
+      min_nights: form.minNights,
+      apply_member_discount: form.applyMemberDiscount,
+    },
+    'appointment.cancel_deadline_hours': form.cancelDeadlineHours,
+    'appointment.visit_reminder_hours': form.visitReminderHours,
+    'pet.vaccine_remind_days': form.vaccineRemindDays,
+    'inventory.allow_negative': form.allowNegativeInventory,
+    'member.allow_downgrade': form.allowMemberDowngrade,
+    'member.churn_days': form.churnDays,
+    'points.rule': {
+      per_yuan: form.pointsPerYuan,
+      by_tier_rate: form.pointsByTierRate,
+      recharge_earn: form.rechargeEarnPoints,
+    },
   }
-  return map[key] || key
 }
 
-function valueSummary(value: SettingValue | undefined) {
-  if (value === undefined) return '未设置'
-  const text = typeof value === 'string' ? value : JSON.stringify(value)
-  return text.length > 42 ? `${text.slice(0, 42)}...` : text
+function isWholeNumber(value: number) {
+  return Number.isFinite(value) && Math.trunc(value) === value
 }
 
-function stringify(value: SettingValue | undefined) {
-  if (value === undefined) return 'null'
-  return JSON.stringify(value, null, 2)
+function validateIntegerRange(label: string, value: number, min: number, max: number) {
+  if (!isWholeNumber(value) || value < min || value > max) {
+    return `${label}必须是 ${min}-${max} 的整数`
+  }
+  return ''
+}
+
+function validateForm() {
+  const problems = [
+    form.businessOpen && form.businessClose ? '' : '营业时间不能为空',
+    form.businessOpen === form.businessClose ? '开门时间和打烊时间不能相同' : '',
+    validateIntegerRange('最少计费晚数', form.minNights, 1, 365),
+    validateIntegerRange('取消截止小时', form.cancelDeadlineHours, 0, 720),
+    validateIntegerRange('到店提醒提前小时', form.visitReminderHours, 0, 720),
+    validateIntegerRange('疫苗提醒天数', form.vaccineRemindDays, 1, 3650),
+    validateIntegerRange('沉默会员天数', form.churnDays, 1, 3650),
+    Number.isFinite(form.pointsPerYuan) && form.pointsPerYuan >= 0 && form.pointsPerYuan <= 100
+      ? ''
+      : '每元积分必须是 0-100 的数字',
+  ].filter(Boolean)
+  return problems[0] || ''
 }
 
 function errorMessage(err: unknown) {
@@ -109,13 +266,15 @@ function idem(action: string) {
   return { headers: { 'Idempotency-Key': `${action}-${Date.now()}-${Math.random().toString(16).slice(2)}` } }
 }
 
-async function load() {
+async function load(clearFeedback = true) {
   loading.value = true
-  error.value = ''
+  if (clearFeedback) {
+    error.value = ''
+    success.value = ''
+  }
   try {
     const { data } = await client.get('/settings')
-    settings.value = data.data || {}
-    select(selectedKey.value)
+    applySettings(data.data || {})
   } catch (err) {
     error.value = errorMessage(err)
   } finally {
@@ -123,38 +282,24 @@ async function load() {
   }
 }
 
-function select(key: string) {
-  selectedKey.value = key
-  editor.value = stringify(settings.value[key])
-}
-
-function setBoolean(value: boolean) {
-  editor.value = JSON.stringify(value)
-}
-
-function formatEditor() {
-  try {
-    editor.value = JSON.stringify(JSON.parse(editor.value), null, 2)
-    error.value = ''
-  } catch {
-    error.value = '配置值不是合法 JSON'
-  }
-}
-
-function parseValue(raw: string) {
-  try {
-    return JSON.parse(raw)
-  } catch {
-    return raw
-  }
-}
-
-async function save() {
-  saving.value = true
+async function saveAllSettings() {
   error.value = ''
+  success.value = ''
+  const validationError = validateForm()
+  if (validationError) {
+    error.value = validationError
+    return
+  }
+  saving.value = true
   try {
-    await client.put(`/settings/${selectedKey.value}`, { value: parseValue(editor.value), updated_by: 0 }, idem('setting-save'))
-    await load()
+    const payload = settingsPayload()
+    await Promise.all(
+      Object.entries(payload).map(([key, value]) =>
+        client.put(`/settings/${key}`, { value, updated_by: 0 }, idem(`setting-${key}`)),
+      ),
+    )
+    success.value = '设置已保存'
+    await load(false)
   } catch (err) {
     error.value = errorMessage(err)
   } finally {
@@ -166,6 +311,37 @@ onMounted(load)
 </script>
 
 <style scoped>
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.setting-section {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.setting-section h4 {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.field-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.field-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .field {
   width: 100%;
   border: 1px solid rgba(35, 30, 24, 0.12);
@@ -176,64 +352,56 @@ onMounted(load)
   color: var(--color-ink);
 }
 
-.key-select {
-  width: 200px;
-}
-
-.editor {
-  min-height: 220px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  line-height: 1.5;
-  resize: vertical;
-}
-
 .label {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 6px;
   font-size: 12px;
   color: rgba(35, 30, 24, 0.7);
 }
 
-.muted {
-  font-size: 14px;
-  opacity: 0.55;
-}
-
-.setting-row {
+.toggle-row {
   display: flex;
-  width: 100%;
+  align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 12px 0;
-  text-align: left;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  gap: 16px;
+  border-bottom: 1px solid rgba(35, 30, 24, 0.06);
+  padding-bottom: 12px;
 }
 
-.setting-row span {
+.toggle-row.compact {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.toggle-row span {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
-.setting-row small {
-  opacity: 0.55;
+.toggle-row strong {
+  font-size: 14px;
 }
 
-.setting-row code {
-  max-width: 46%;
-  overflow: hidden;
-  color: var(--color-pine);
+.toggle-row small,
+.muted {
+  color: rgba(35, 30, 24, 0.58);
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.quick-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+.toggle-row input[type='checkbox'] {
+  width: 42px;
+  height: 22px;
+  flex: 0 0 auto;
+  accent-color: var(--color-coral);
+}
+
+.save-bar {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .primary-btn,
@@ -245,7 +413,7 @@ onMounted(load)
 }
 
 .primary-btn {
-  width: 100%;
+  min-width: 160px;
   color: white;
   background: var(--color-coral);
 }
@@ -258,8 +426,15 @@ button:disabled {
   opacity: 0.6;
 }
 
-@media (max-width: 960px) {
-  .grid {
+@media (max-width: 1100px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .field-grid.two,
+  .field-grid.three {
     grid-template-columns: 1fr;
   }
 }

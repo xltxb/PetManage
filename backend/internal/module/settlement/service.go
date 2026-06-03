@@ -198,9 +198,28 @@ func (s *Service) Refund(id int64, operatorID int64, reason string) error {
 		return apperr.New(errcode.StateTransitionInvalid, "仅可对已支付结算单进行退款")
 	}
 
+	items, err := s.repo.FindItems(id)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+
 	settlement.Status = StatusRefunded
 	if err := s.repo.Update(settlement); err != nil {
 		return apperr.Internal(err)
+	}
+
+	if settlement.CustomerID != nil && s.members != nil {
+		if err := s.members.ReverseSettlement(*settlement.CustomerID, settlement.PaidAmount, settlement.StoreID, operatorID, settlement.ID); err != nil {
+			return err
+		}
+	}
+
+	for _, item := range items {
+		if item.SourceType == "product" && s.inventory != nil {
+			if err := s.inventory.ReverseSaleOut(settlement.StoreID, item.SourceID, item.Quantity, operatorID, "settlement_refund", settlement.ID); err != nil {
+				return err
+			}
+		}
 	}
 
 	// Create red-ink reversal settlement

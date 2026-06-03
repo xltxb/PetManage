@@ -2,7 +2,9 @@ package appointment
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -16,10 +18,15 @@ import (
 type Service struct {
 	repo     Repository
 	notifier Notifier
+	settings SettingsProvider
 }
 
 type Notifier interface {
 	Send(notification.SendRequest) error
+}
+
+type SettingsProvider interface {
+	GetAll(storeID int64) (map[string]interface{}, error)
 }
 
 type Option func(*Service)
@@ -27,6 +34,12 @@ type Option func(*Service)
 func WithNotifier(n Notifier) Option {
 	return func(s *Service) {
 		s.notifier = n
+	}
+}
+
+func WithSettings(p SettingsProvider) Option {
+	return func(s *Service) {
+		s.settings = p
 	}
 }
 
@@ -238,14 +251,17 @@ func (s *Service) CalculateTotals(items []CreateAppointmentItem) (amount int64, 
 
 // GetAvailableSlots returns available 30-minute time slots for a station on a date.
 func (s *Service) GetAvailableSlots(storeID, stationID int64, date time.Time) ([]string, error) {
-	// Business hours 09:00-21:00 (from system_settings, default here)
 	loc, _ := time.LoadLocation("Asia/Shanghai")
-	openTime := time.Date(date.Year(), date.Month(), date.Day(), 9, 0, 0, 0, loc)
-	closeTime := time.Date(date.Year(), date.Month(), date.Day(), 21, 0, 0, 0, loc)
+	openHour, openMinute, closeHour, closeMinute, err := s.businessHours(storeID)
+	if err != nil {
+		return nil, err
+	}
+	openTime := time.Date(date.Year(), date.Month(), date.Day(), openHour, openMinute, 0, 0, loc)
+	closeTime := time.Date(date.Year(), date.Month(), date.Day(), closeHour, closeMinute, 0, 0, loc)
 
 	// Get existing appointments for the station on this day
 	var existing []Appointment
-	existing, _, err := s.repo.ListByStore(storeID, "", openTime, closeTime, 1, 200)
+	existing, _, err = s.repo.ListByStore(storeID, "", openTime, closeTime, 1, 200)
 	if err != nil {
 		return nil, err
 	}
@@ -281,6 +297,58 @@ func (s *Service) GetAvailableSlots(storeID, stationID int64, date time.Time) ([
 		return filtered, nil
 	}
 	return slots, nil
+}
+
+func (s *Service) businessHours(storeID int64) (int, int, int, int, error) {
+	if s.settings == nil {
+		return 9, 0, 21, 0, nil
+	}
+
+	settings, err := s.settings.GetAll(storeID)
+	if err != nil {
+		return 0, 0, 0, 0, apperr.Internal(err)
+	}
+	hours, ok := settings["store.business_hours"].(map[string]interface{})
+	if !ok {
+		return 9, 0, 21, 0, nil
+	}
+	open, ok := hours["open"].(string)
+	if !ok {
+		return 9, 0, 21, 0, nil
+	}
+	closeAt, ok := hours["close"].(string)
+	if !ok {
+		return 9, 0, 21, 0, nil
+	}
+
+	openHour, openMinute, err := parseHourMinute(open)
+	if err != nil {
+		return 0, 0, 0, 0, apperr.BadRequest("营业开始时间配置无效")
+	}
+	closeHour, closeMinute, err := parseHourMinute(closeAt)
+	if err != nil {
+		return 0, 0, 0, 0, apperr.BadRequest("营业结束时间配置无效")
+	}
+	return openHour, openMinute, closeHour, closeMinute, nil
+}
+
+func parseHourMinute(value string) (int, int, error) {
+	parts := strings.Split(value, ":")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid time of day %q", value)
+	}
+	hour, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	minute, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, 0, fmt.Errorf("invalid time of day %q", value)
+	}
+	return hour, minute, nil
 }
 
 type timeBlock struct{ start, end time.Time }

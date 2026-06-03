@@ -14,10 +14,15 @@ import (
 type Service struct {
 	repo     Repository
 	notifier Notifier
+	settings SettingsProvider
 }
 
 type Notifier interface {
 	Send(notification.SendRequest) error
+}
+
+type SettingsProvider interface {
+	GetAll(storeID int64) (map[string]interface{}, error)
 }
 
 type Option func(*Service)
@@ -25,6 +30,12 @@ type Option func(*Service)
 func WithNotifier(n Notifier) Option {
 	return func(s *Service) {
 		s.notifier = n
+	}
+}
+
+func WithSettings(p SettingsProvider) Option {
+	return func(s *Service) {
+		s.settings = p
 	}
 }
 
@@ -47,7 +58,11 @@ func (s *Service) SaleOut(storeID, productID int64, quantity int, operatorID int
 			return apperr.Internal(err)
 		}
 
-		if inv.Quantity < quantity {
+		allowNegative, err := s.allowNegativeStock(storeID)
+		if err != nil {
+			return err
+		}
+		if inv.Quantity < quantity && !allowNegative {
 			return apperr.New(errcode.InsufficientStock, "库存不足，当前库存: "+itoa(inv.Quantity))
 		}
 
@@ -86,6 +101,21 @@ func (s *Service) SaleOut(storeID, productID int64, quantity int, operatorID int
 		}
 		return nil
 	})
+}
+
+func (s *Service) allowNegativeStock(storeID int64) (bool, error) {
+	if s.settings == nil {
+		return false, nil
+	}
+	settings, err := s.settings.GetAll(storeID)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	allowNegative, ok := settings["inventory.allow_negative"].(bool)
+	if !ok {
+		return false, nil
+	}
+	return allowNegative, nil
 }
 
 // PurchaseIn adds quantity to inventory.

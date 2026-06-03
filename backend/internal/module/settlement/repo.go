@@ -3,6 +3,7 @@ package settlement
 import (
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"gorm.io/gorm"
@@ -23,6 +24,8 @@ type Repository interface {
 type repo struct {
 	db *gorm.DB
 }
+
+var settlementCodeSeq atomic.Uint64
 
 func NewRepository(db *gorm.DB) Repository {
 	return &repo{db: db}
@@ -67,9 +70,16 @@ func (r *repo) CreateReceipt(storeID, settlementID, operatorID int64, content ma
 		"ref_type":    "settlement",
 		"ref_id":      settlementID,
 		"content":     json.RawMessage(data),
-		"operator_id": operatorID,
+		"operator_id": printJobOperatorIDValue(operatorID),
 		"created_at":  time.Now().UTC(),
 	}).Error
+}
+
+func printJobOperatorIDValue(operatorID int64) interface{} {
+	if operatorID <= 0 {
+		return nil
+	}
+	return &operatorID
 }
 
 func (r *repo) ListByStore(storeID int64, status string, page, pageSize int) ([]Settlement, int64, error) {
@@ -85,9 +95,9 @@ func (r *repo) ListByStore(storeID int64, status string, page, pageSize int) ([]
 	return list, total, err
 }
 
-// GenerateCode creates a unique settlement code like S20260602001.
+// GenerateCode creates a high-entropy settlement code with the current date prefix.
 func GenerateCode() string {
 	now := time.Now()
-	prefix := now.Format("20060102")
-	return fmt.Sprintf("S%s%03d", prefix, now.UnixNano()%1000)
+	seq := settlementCodeSeq.Add(1) % 1000
+	return fmt.Sprintf("S%s%09d%03d", now.Format("20060102"), now.UnixNano()%1_000_000_000, seq)
 }

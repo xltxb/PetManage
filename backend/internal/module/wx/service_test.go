@@ -55,6 +55,15 @@ func (f *fakeAppointmentCreator) Create(req appointment.CreateAppointmentRequest
 	return &appointment.Appointment{ID: 99, StoreID: req.StoreID, CustomerID: &req.CustomerID, Source: req.Source}, nil
 }
 
+type fakeSettingsProvider struct {
+	settings map[string]interface{}
+	err      error
+}
+
+func (f fakeSettingsProvider) GetAll(storeID int64) (map[string]interface{}, error) {
+	return f.settings, f.err
+}
+
 func TestMockLoginCreatesCustomerForCode(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo, nil)
@@ -88,6 +97,24 @@ func TestCreateAppointmentUsesAppointmentRules(t *testing.T) {
 	}
 }
 
+func TestCreateAppointmentRejectsWhenOnlineBookingDisabled(t *testing.T) {
+	repo := newFakeRepo()
+	appt := &fakeAppointmentCreator{}
+	svc := NewService(repo, appt, WithSettings(fakeSettingsProvider{
+		settings: map[string]interface{}{"feature.online_booking_enabled": false},
+	}))
+
+	_, err := svc.CreateAppointment(1, CreateAppointmentRequest{
+		StoreID: 1, PetID: 2, ScheduledStart: time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC), ServiceOfferingID: 8,
+	})
+	if err == nil {
+		t.Fatal("expected online booking disabled error")
+	}
+	if appt.req.StoreID != 0 {
+		t.Fatalf("appointment should not be created when online booking is disabled: %#v", appt.req)
+	}
+}
+
 func TestCancelAppointmentRejectsLateCancellation(t *testing.T) {
 	svc := NewService(newFakeRepo(), &fakeLateCancelAppointmentService{
 		appt: &appointment.Appointment{ID: 99, StoreID: 1, ScheduledStart: time.Now().UTC().Add(90 * time.Minute)},
@@ -96,6 +123,19 @@ func TestCancelAppointmentRejectsLateCancellation(t *testing.T) {
 	err := svc.CancelAppointment(1, 99, time.Now().UTC())
 	if err == nil {
 		t.Fatal("expected late cancellation error")
+	}
+}
+
+func TestCancelAppointmentUsesConfiguredDeadline(t *testing.T) {
+	svc := NewService(newFakeRepo(), &fakeLateCancelAppointmentService{
+		appt: &appointment.Appointment{ID: 99, StoreID: 1, ScheduledStart: time.Now().UTC().Add(90 * time.Minute)},
+	}, WithSettings(fakeSettingsProvider{
+		settings: map[string]interface{}{"appointment.cancel_deadline_hours": float64(1)},
+	}))
+
+	err := svc.CancelAppointment(1, 99, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("CancelAppointment error = %v", err)
 	}
 }
 
